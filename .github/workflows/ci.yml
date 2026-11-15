@@ -126,6 +126,9 @@ jobs:
       - run: make pilot-hostile
       # D-109: the public fixed seed must not be able to sign for the network the site publishes.
       - run: make published-root-check
+      # Two issuers, one verifier cut off from both: issuer A's withdrawal refuses its agent and leaves issuer B's
+      # allowed. Where the runner forbids unprivileged network namespaces the run says so and uses its weaker cut.
+      - run: make crossed-withdrawal
       - run: make skills-replay
       - run: make personhood-test
       - run: make signature-agent-check

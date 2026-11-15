@@ -10,6 +10,15 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — a drill for the question platforms ask first: two issuers, one verifier, no network
+
+- `make crossed-withdrawal`: two registrars under one TEST root, one agent from each, and a verifier started in a
+  network namespace with no interface. One issuer revokes its agent; from status a courier left as plain files the
+  verifier refuses that agent and still allows the other issuer's. It then measures what offline costs (a withdrawn
+  agent lasts at most the verifier's own class: 30 seconds, 5 minutes or a day), shows that a mirror cannot change
+  or swap a list, and checks the signed decision record of every answer. Hermetic; the witness runs first.
+  [docs/drills/CROSSED-WITHDRAWAL.md](docs/drills/CROSSED-WITHDRAWAL.md).
+
 ### Added — a security.txt on the site
 
 - `https://ainra.org/.well-known/security.txt` (RFC 9116) answered 404. It now gives the two ways to report a
