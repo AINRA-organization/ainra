@@ -3330,6 +3330,9 @@ The record had also grown to 80 passports, 53 of them revoked, nearly all left b
 *Status:* ACCEPTED 2026-11-13, on the operator's instruction to go ahead with R3. Built, run and published the same
 day. Incident INC-2026-012 (MEDIUM); post-mortem in `SECURITY.md`.
 
+*Amended 2026-11-15:* the first limit above no longer holds for the published network. Its root was replaced by one
+from a private seed (D-109).
+
 ## D-108 — Link accepts P-256 keys, as ES256 (M55 step 1)
 
 *Problem:* the operator's instruction of 13 November 2026 is that AINRA be the root for the agent identities other
@@ -3383,3 +3386,66 @@ root (step 5). Linking a key says who answers for it; it does not say the system
 *Not changed:* the Standard, the passport, every earlier vector and verdict, the link record's fields.
 
 *Status:* ACCEPTED 2026-11-14, on the operator's instruction to continue. Plan: PLAN-M55.
+
+## D-109 — The published test network's root is not the one written in the source (M55)
+
+*Problem:* D-107 gave the staging registrars keys nobody can recompute, and said in its limits that the root above
+them was still a fixed seed in the `accredit` tool. That seed is in the source so a hermetic testbed is
+reproducible. The staging network used the same one, and its roots are what `ainra.org` publishes. So one command
+gave anyone a directory, naming registrar keys of their own, that verified under the published roots, and under
+that directory any passport they cared to sign. A stranger's gate that trusted the roots on the site (the watch
+kit's first run does) could be shown VALID for anything. D-107's own post-mortem says a network whose record we
+publish does not run on keys anyone can recompute, test network or not. The root was the same case.
+
+*Decision:*
+
+1. **`accredit` takes its root from a private seed when given one.** `AINRA_ROOT_SEED_FILE` names a file of 32 bytes
+   from the OS (raw, or 64 hex characters), which must be readable by its owner only. The same file gives the same
+   root at every epoch. Without it the tool uses the public seed, as before, and says so on stderr.
+2. **The staging network makes such a seed once and keeps it beside its state** (`tools/stage.sh`; mode 0600; never
+   printed; `AINRA_STAGE_ROOT_SEED` names another place). The operator keeps a copy off the machine's working tree.
+3. **A change of root is deliberate, in both places it can happen.** `tools/stage.sh` and `tools/site-net.sh` each
+   compare the root about to be used with the one already published and stop if they differ, unless told
+   (`AINRA_STAGE_NEW_ROOT=1`, `AINRA_SITE_NEW_ROOT=1`). When told, the history under the old root is kept, under its
+   fingerprint, in `previous-root/`, with the day it was retired, and a new history starts at epoch 1. A directory's
+   epochs belong to one root; they are not carried across.
+4. **The published test network changed root on 15 November 2026.** The root in `site/net/roots.json` is the new
+   one. The retired root's two epochs are at `site/net/previous-root/`.
+5. **`make published-root-check` runs the forgery against ourselves**: a directory over the published registrars,
+   signed with the public seed, must not verify under the published roots. Its witness asks the same of the sample
+   artifacts, which are under the public seed on purpose, and there it must verify.
+
+*Rejected:*
+- **Leaving it until the production ceremony.** That was the plan. It leaves a published VALID that anyone can
+  manufacture, for as long as the ceremony takes to arrange.
+- **Removing the public seed altogether.** Hermetic drills, the sample artifacts and the conformance material depend
+  on a root that anyone can reproduce. They are labelled as such and publish no network.
+- **Carrying the epoch history across the change.** The old epochs are signed by the old root. Presenting them under
+  the new one would be a history the new root never signed.
+- **A threshold key for the test root, with shares on several machines.** That is the production ceremony. Doing a
+  small version of it for a test network would look like the real thing and not be it.
+
+*Witnesses:*
+- `crates/ainra-ceremony/tests/accredit_root_seed.rs` runs the real binary: a seed file gives a root that is not the
+  public one and is the same at epochs 1 and 2; raw and hex forms agree; two files give two roots; a file others can
+  read, a short one and a missing one are each refused with nothing written and nothing of the seed on stderr.
+- `make published-root-check`, a row on the board. Pointed at the roots published before this change it is red.
+- Both scripts were run without their flag first and refused, changing nothing; then with it.
+- `make site-net-check` and `make record-agrees` after the change: the site, the network and both registrars agree
+  on all 8 passports.
+
+*Limits:*
+- **It is still a TEST root.** One machine holds the whole of it. Whoever controls that machine can sign for the test
+  network, and losing the seed file means another change of root. A production root leaves no party with more than
+  a share (PLAN-M55 step 5); nothing here moves trust towards it.
+- **A verifier that kept the retired roots refuses the new directory.** That is correct. It takes the roots from the
+  site again; for a test network that is the only source there is.
+- A verifier that still trusts the retired roots can still be shown forgeries under them. Retiring a root on our
+  side does not reach into anyone's saved copy; the news entry and this record are the notice.
+- The wall-clock drill network (`make live-up`) and every hermetic drill still use the public seed. They publish
+  nothing.
+
+*Not changed:* the Standard, the vectors, the sample artifacts, any verdict, the registrars' keys or passports.
+
+*Status:* ACCEPTED 2026-11-15, by the operator's choice to replace it now and not wait for the ceremony. Built and
+run the same day.

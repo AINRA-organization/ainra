@@ -15,5 +15,10 @@
   them. `make stage-install` then signs the directory at the NEXT epoch (`tools/stage.sh` reads the epoch from the
   network's published history, and the earlier epochs stay in it). Afterwards: `make site-net`, `make site`,
   `make site-net-check`, and deploy. `make record-agrees` is red until the site carries the new record.
+- **The staging network's root seed:** `stage/genesis/root.seed`, 32 bytes, mode 0600, made by `tools/stage.sh` the
+  first time it accredits (D-109). **Keep a copy somewhere else.** If it is lost the network needs a new root:
+  `AINRA_STAGE_NEW_ROOT=1 bash tools/stage.sh accredit`, then `AINRA_SITE_NEW_ROOT=1 make site-net`, `make site`,
+  `make site-net-check`, deploy, and a news entry, because everyone who saved the old roots must fetch the new ones.
+  Without the flags both scripts stop at a root they did not expect and change nothing.
 - **The TEST-ROOT itself:** not rotated in staging; the production root is a separate, ceremony-born key
   (docs/SECURITY-STAGING.md). Never reuse staging key material for production.

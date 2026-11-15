@@ -41,7 +41,8 @@ RSA, agreed by the three implementations and the three gates; a 1024-bit key is 
 makes the consent, and shows the agent attributed and then switched off. It reads certificates; it issues none.
 WITNESS: the kit run end to end in `make live-drills` against a certificate made by a standard tool.
 
-**5. The root itself.** Everything above runs under a TEST root, whose key is a fixed seed (D-107, limits). Nobody
+**5. The root itself.** Everything above runs under a TEST root. Since D-109 the published one is no longer the
+seed written in the source, so strangers cannot sign under it, but one machine still holds the whole of it. Nobody
 can be the root of anything real under it. A production root needs a legal entity, nine independent custodians and
 three standby, five recovery-key holders, a second host for the record, a named incident deputy, and a recorded
 ceremony (D-094 lists what is still undecided). This step is the operator's; code cannot shorten it. Until it is

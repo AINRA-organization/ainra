@@ -15,6 +15,41 @@ use rand_core::SeedableRng;
 
 const NOW: u64 = 1_775_865_600 - 3600; // ceremony time, just before the demo window opens
 
+/// Read a 32-byte root seed: raw, or 64 hex characters with optional trailing whitespace. Refused when anyone but
+/// the owner can read it, and never echoed.
+fn root_seed(path: &Path) -> Result<[u8; 32], String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)
+            .map_err(|e| format!("cannot read ({e})"))?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "others can read it (mode {:o}); chmod 600 it",
+                mode & 0o777
+            ));
+        }
+    }
+    let raw = std::fs::read(path).map_err(|e| format!("cannot read ({e})"))?;
+    if raw.len() == 32 {
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&raw);
+        return Ok(seed);
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let hex = text.trim();
+    if hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let mut seed = [0u8; 32];
+        for (i, byte) in seed.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|e| e.to_string())?;
+        }
+        return Ok(seed);
+    }
+    Err("it must hold exactly 32 bytes, raw or as 64 hex characters".to_string())
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let out = args.next().unwrap_or_else(|| {
@@ -63,8 +98,24 @@ fn main() {
         std::process::exit(2);
     }
 
-    // Deterministic (seeded) so the testbed is reproducible; a real ceremony uses live custodian entropy.
-    let mut rng = ChaCha20Rng::seed_from_u64(0x0ACC_ED17_E5ED);
+    // Where the root comes from. By default a PUBLIC fixed seed, so a hermetic testbed is reproducible: anyone can
+    // recompute that root and sign a directory under it, which is right for a drill and wrong for a network whose
+    // record is published (D-109). `AINRA_ROOT_SEED_FILE` names a file of 32 bytes from the OS instead (raw, or 64
+    // hex characters), readable by its owner only; the same file gives the same root at every epoch. It is still a
+    // TEST root: one machine holds the whole of it, where a real ceremony leaves no party with more than a share.
+    let mut rng = match std::env::var("AINRA_ROOT_SEED_FILE") {
+        Err(_) => {
+            eprintln!("accredit: TEST root from the public fixed seed (anyone can recompute it)");
+            ChaCha20Rng::seed_from_u64(0x0ACC_ED17_E5ED)
+        }
+        Ok(path) => match root_seed(Path::new(&path)) {
+            Ok(seed) => ChaCha20Rng::from_seed(seed),
+            Err(why) => {
+                eprintln!("accredit: AINRA_ROOT_SEED_FILE {path}: {why}");
+                std::process::exit(2);
+            }
+        },
+    };
     let n = entries.len();
     // The epoch this directory is signed at. A network that changed its registrars' keys publishes the NEXT epoch;
     // it does not put a second directory at one it already published (D-107). Stated by the caller, never guessed.

@@ -21,6 +21,17 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 - The seed in `tools/stage.sh` now reads every answer. One seeded passport had been silently refused since D-089, and
   a failed accreditation used to leave the previous directory in place to be published.
 
+### Changed — the published test network has a root nobody else can sign under (D-109)
+
+- **The staging network's root no longer comes from the seed written in the source.** With that seed anyone could
+  sign a directory that verified under the roots `ainra.org` publishes. `accredit` takes a private seed file
+  (`AINRA_ROOT_SEED_FILE`); the staging network makes one and keeps it. **If you saved the test network's roots
+  before 15 November 2026, fetch them again**: the old ones are retired and their history is at
+  `site/net/previous-root/`.
+- A change of root is refused by `tools/stage.sh` and `tools/site-net.sh` unless asked for by name.
+- `make published-root-check`, a row on the board: the public seed must not be able to sign for the published
+  network. Hermetic drills, the sample artifacts and the vectors keep the public seed and publish no network.
+
 ### Fixed — the pilot outlives requests it cannot read (INC-2026-013)
 
 - **`kits/pilot` without `--watch` could be stopped by one request**: a `Host` no URL can hold beside a

@@ -132,11 +132,43 @@ accredit_net(){ # ask each running registrar for its accreditation and sign the 
   fetch "$REG1_ADDR/accreditation" "$STAGE/genesis/acc-$REG1_ID.json" \
     && fetch "$REG2_ADDR/accreditation" "$STAGE/genesis/acc-$REG2_ID.json" \
     || { echo "stage: a registrar did not give its accreditation — nothing accredited, nothing published"; return 1; }
+  # D-109: this network's root comes from 32 bytes of the OS's own randomness, made once and kept beside the
+  # network's state, readable by its owner only. Until 15 November 2026 it came from a public fixed seed, so anyone
+  # could sign a directory that verified under the roots this network publishes. Losing the file means a new root
+  # (see the runbook); it is never printed. AINRA_STAGE_ROOT_SEED names another place for it.
+  local seedfile="${AINRA_STAGE_ROOT_SEED:-$STAGE/genesis/root.seed}"
+  if [ ! -s "$seedfile" ]; then
+    ( umask 077; head -c 32 /dev/urandom > "$seedfile" ) || { echo "stage: cannot write the root seed at $seedfile"; return 1; }
+    echo "stage: made a new root seed at $seedfile (0600). Back it up: without it this network needs a new root."
+  fi
+  # A directory's epochs belong to one root. If the root about to sign is not the root this network has published,
+  # that is a change of root, and it happens only when someone says so (AINRA_STAGE_NEW_ROOT=1): the history under
+  # the old root is kept beside the new one, under its fingerprint, and a new history starts at epoch 1.
+  if [ -f "$PUB/roots.json" ] && [ -f "$PUB/epochs.json" ]; then
+    rm -rf "$STAGE/genesis/.probe"; mkdir -p "$STAGE/genesis/.probe"
+    AINRA_ROOT_SEED_FILE="$seedfile" ./target/release/accredit "$STAGE/genesis/.probe" "$STAGE/genesis/acc-$REG1_ID.json" "$STAGE/genesis/acc-$REG2_ID.json" >/dev/null 2>&1 \
+      || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; rm -rf "$STAGE/genesis/.probe"; return 1; }
+    if ! node -e 'const fs=require("fs"),j=(p)=>JSON.stringify(JSON.parse(fs.readFileSync(p,"utf8")));process.exit(j(process.argv[1])===j(process.argv[2])?0:1)' "$STAGE/genesis/.probe/roots.json" "$PUB/roots.json"; then
+      local oldfp; oldfp=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).root_ed25519.slice(0,16))' "$PUB/roots.json")
+      if [ "${AINRA_STAGE_NEW_ROOT:-0}" != 1 ]; then
+        rm -rf "$STAGE/genesis/.probe"
+        echo "stage: the root that would sign is not the root this network has published (genesis:$oldfp)."
+        echo "stage: a change of root is deliberate — set AINRA_STAGE_NEW_ROOT=1 to make it. Nothing accredited, nothing published."
+        return 1
+      fi
+      mkdir -p "$PUB/previous-root/$oldfp"
+      mv "$PUB/epochs" "$PUB/epochs.json" "$PUB/previous-root/$oldfp/" 2>/dev/null
+      [ -f "$PUB/epoch-log.json" ] && mv "$PUB/epoch-log.json" "$PUB/previous-root/$oldfp/"
+      cp "$PUB/roots.json" "$PUB/previous-root/$oldfp/roots.json"
+      echo "stage: NEW ROOT. The history under genesis:$oldfp is kept at $PUB/previous-root/$oldfp/; a new one starts at epoch 1."
+    fi
+    rm -rf "$STAGE/genesis/.probe"
+  fi
   local last epoch
   last=$(node -e 'try{const e=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).epochs||[];console.log(Math.max(0,...e.map(x=>x.epoch)))}catch{console.log(0)}' "$PUB/epochs.json")
   epoch=$(( last >= 1 ? last : 1 ))
   sign_at(){ rm -f "$STAGE/genesis/directory.json"
-    AINRA_DIRECTORY_EPOCH="$1" ./target/release/accredit "$STAGE/genesis" "$STAGE/genesis/acc-$REG1_ID.json" "$STAGE/genesis/acc-$REG2_ID.json" >/dev/null \
+    AINRA_ROOT_SEED_FILE="$seedfile" AINRA_DIRECTORY_EPOCH="$1" ./target/release/accredit "$STAGE/genesis" "$STAGE/genesis/acc-$REG1_ID.json" "$STAGE/genesis/acc-$REG2_ID.json" >/dev/null \
       && [ -s "$STAGE/genesis/directory.json" ]; }
   same_as_archived(){ node -e 'const fs=require("fs"),j=(p)=>JSON.stringify(JSON.parse(fs.readFileSync(p,"utf8")));process.exit(j(process.argv[1])===j(process.argv[2])?0:1)' "$STAGE/genesis/directory.json" "$PUB/epochs/$1.json" 2>/dev/null; }
   sign_at "$epoch" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }

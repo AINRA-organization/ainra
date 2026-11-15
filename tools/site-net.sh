@@ -99,6 +99,25 @@ fi
 # The archive refuses anything unsigned, an older epoch, and a second directory at an archived epoch, so a republish
 # can only add to the history, never rewrite it.
 [ -x target/release/ainra ] || cargo build --release -q -p ainra-cli-rs
+# A directory's epochs belong to one root. If the network's root is not the one the site has published, that is a
+# change of root, and the site makes it only when someone says so (AINRA_SITE_NEW_ROOT=1, D-109). The history under
+# the old root stays published, under its fingerprint, with the day it was retired; a new history starts beside it.
+if [ -f "$DEST/roots.json" ] && [ -f "$DEST/epochs.json" ] \
+   && ! node -e 'const fs=require("fs"),j=(p)=>JSON.stringify(JSON.parse(fs.readFileSync(p,"utf8")));process.exit(j(process.argv[1])===j(process.argv[2])?0:1)' "$TMP/roots.json" "$DEST/roots.json"; then
+  OLDFP=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).root_ed25519.slice(0,16))' "$DEST/roots.json")
+  if [ "${AINRA_SITE_NEW_ROOT:-0}" != 1 ]; then
+    echo "site-net: the network's root is not the root this site has published (genesis:$OLDFP)."
+    echo "site-net: a change of root is deliberate — set AINRA_SITE_NEW_ROOT=1 to publish it. Nothing was changed."
+    exit 1
+  fi
+  mkdir -p "$DEST/previous-root/$OLDFP"
+  mv "$DEST/epochs" "$DEST/epochs.json" "$DEST/previous-root/$OLDFP/"
+  [ -f "$DEST/epoch-log.json" ] && mv "$DEST/epoch-log.json" "$DEST/previous-root/$OLDFP/"
+  cp "$DEST/roots.json" "$DEST/previous-root/$OLDFP/roots.json"
+  printf '{\n  "retired_at_iso": "%s",\n  "note": "The root this network used until that day. Its epochs are kept here as they were published. The root in ../../roots.json replaced it; docs/DECISIONS.md says why."\n}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEST/previous-root/$OLDFP/retired.json"
+  echo "site-net: NEW ROOT. The history under genesis:$OLDFP is kept at $DEST/previous-root/$OLDFP/."
+fi
 ./target/release/ainra directory archive "$TMP/directory.json" --roots "$TMP/roots.json" --into "$DEST" \
   || { echo "site-net: the directory the network serves cannot join the epoch history — refusing to publish it"; exit 1; }
 for f in $FILES; do cp "$TMP/$f" "$DEST/$f"; done

@@ -124,6 +124,8 @@ jobs:
       - run: make presentation-diff
       # INC-2026-013: the pilot in front of a service outlives requests it cannot read, and forwards none.
       - run: make pilot-hostile
+      # D-109: the public fixed seed must not be able to sign for the network the site publishes.
+      - run: make published-root-check
       - run: make skills-replay
       - run: make personhood-test
       - run: make signature-agent-check

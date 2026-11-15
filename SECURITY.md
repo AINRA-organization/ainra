@@ -312,6 +312,9 @@ anyone can recompute, test network or not: a page that says VALID is read as a c
 **What is still true.** The TEST root is a fixed seed, so anyone can sign a TEST directory. A TEST root carries no
 trust by design, and D-107 says so in its limits.
 
+**Since then (15 November 2026).** The published test network's root was replaced by one from a private seed
+(D-109), and `make published-root-check` runs the forgery against ourselves on every board.
+
 ---
 
 ## Post-mortem: both command-line tools printed a stranger's text as written (fixed 13 November 2026)
