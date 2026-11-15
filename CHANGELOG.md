@@ -10,6 +10,13 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — a security.txt on the site
+
+- `https://ainra.org/.well-known/security.txt` (RFC 9116) answered 404. It now gives the two ways to report a
+  problem that `SECURITY.md` already names, in the same order: the repository's private advisory form, then the
+  public mailbox. `make site-check` fails sixty days before the file's `Expires` date, so it is renewed before it
+  goes stale and not found stale after (`tools/security-txt.mjs`, with a drill).
+
 ### Fixed — the test network's keys, and a record that disagreed with its registrar (D-107, INC-2026-012)
 
 - **The TEST staging registrars ran on keys derived from their public ids** (D-104 named it on 7 November), and the
