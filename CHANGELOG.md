@@ -21,6 +21,14 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 - The seed in `tools/stage.sh` now reads every answer. One seeded passport had been silently refused since D-089, and
   a failed accreditation used to leave the previous directory in place to be published.
 
+### Fixed — the pilot outlives requests it cannot read (INC-2026-013)
+
+- **`kits/pilot` without `--watch` could be stopped by one request**: a `Host` no URL can hold beside a
+  `Signature-Agent` header, a `Signature-Agent` value that does not parse, a body abandoned half-way, or a service
+  that failed mid-answer. In every tag from v0.5.0. Such a request is now refused and never passed on; a body is held
+  up to `--max-body` (8 MiB by default, 413 beyond); a failing service ends one connection. `make pilot-hostile`
+  holds it, as a row on the board. Post-mortem in `SECURITY.md`.
+
 ### Added — links for P-256 keys (D-108, PLAN-M55 step 1)
 
 - **A link can attach a NIST P-256 key** (`alg: "ES256"`, RFC 7518): the kind of key certificates, signed agent

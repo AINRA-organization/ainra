@@ -3242,6 +3242,9 @@ here.
 *Status:* ACCEPTED 2026-11-13, by the operator's instruction to release it. Built 2026-11-12; released in 0.8.1.
 Incident INC-2026-011 (MEDIUM); post-mortem in `SECURITY.md`.
 
+*Amended 2026-11-15:* the limit above about `kits/pilot` without `--watch` no longer holds. It is fixed on main
+(INC-2026-013; `make pilot-hostile`).
+
 ## D-107 — A published network's registrar keys come from the OS, and its record is held to its registrars (M53 R3)
 
 *Problem:* five things, found together.

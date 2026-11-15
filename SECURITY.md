@@ -249,6 +249,34 @@ requests (with `--watch` it cannot); it is a kit run from a checkout, not a publ
 
 ---
 
+## Post-mortem: the pilot could be stopped by a request it could not read (fixed 15 November 2026)
+
+**What was wrong.** `kits/pilot` without `--watch` sits in front of a service. Its handler waited for the body, the
+signature and the gate with nothing around them, so anything that threw there ended the process, and the service
+behind it went dark for everyone. One request was enough: a `Host` no URL can hold beside a `Signature-Agent`
+header, a `Signature-Agent` value that does not parse, or a body its sender abandoned half-way. An error while the
+service was answering had no listener either. The body was also held whole with no limit. In every tag from v0.5.0.
+
+**What was not wrong.** Nothing was let through that should have been refused. `--watch` mode, added in 0.8.1, was
+built with these cases in mind and was not affected. The pilot is a kit run from a checkout; no published package
+contains it.
+
+**How it was found.** By the project's own review on 12 November 2026, while the same fault was being fixed in the
+gate's header (D-106). D-106 named it on 13 November as not yet fixed.
+
+**The fix.** What cannot be read is refused and never passed on: an unreadable signature is no signature, and the
+gate says so by its own named reason; anything else is answered 400. A body is held up to `--max-body` (8 MiB by
+default) and a larger one is answered 413. A failure in the service's answer ends that one connection.
+`make pilot-hostile` sends each of these to a real pilot in both modes and is a row on the board; against the
+earlier code it reports the process gone at the first case. The live drill cuts a service's answer half-way and
+checks the next request is served.
+
+**What we changed in how we work.** A program that stands in front of something else is tested with requests no
+well-behaved client can send, before it ships, and the test checks two things: that it is still there, and that it
+passed nothing on.
+
+---
+
 ## Post-mortem: the site showed four test passports as VALID that their registrar refused (D-107, fixed 13 November 2026)
 
 **What was wrong.** The record on `ainra.org` is a copy of what the TEST staging network serves. For four passports

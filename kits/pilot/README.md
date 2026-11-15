@@ -25,6 +25,23 @@ every `--head-every` decisions (100) or `--head-seconds` (300), whichever comes 
 `truncated` ([D-081](../../docs/DECISION-RECORDS.md)). Records after the latest logged head are what it could still
 lose, so the interval is that bound.
 
+## A request it cannot read
+
+In front of a service the pilot is in the path, so it has to outlive every request. Three rules:
+
+- **What cannot be read is refused, never passed on.** A signature that cannot be read is no signature, and the gate
+  refuses it by its usual named reason (`sig_invalid`, `presentation_unsigned`). Anything else that goes wrong while
+  handling a request is answered `400`, and the first of each kind is written to stderr.
+- **A body is held up to `--max-body` bytes** (default 8 MiB), because the gate needs the whole body to check a
+  signature that covers it. A larger one is answered `413` and not read further. Raise it if your service takes
+  bigger uploads through this route.
+- **If the service fails half-way through an answer**, that client's connection ends with it. Nothing else does.
+
+`make pilot-hostile` sends the requests that used to end the process (a Host no URL can hold, a Signature-Agent
+header that does not parse, a body its sender abandons) and checks, after each, that the pilot still answers and
+that the service saw nothing. Before 15 November 2026 the first of them stopped the pilot; see the post-mortem in
+[SECURITY.md](../../SECURITY.md).
+
 ## Watch mode
 
 To try the check alone, beside one route, before it can refuse anything. `--watch` puts the gate beside the route

@@ -130,6 +130,9 @@ async function keysAt(uri) {
   dirCache.set(uri, { keys, until: now() + (watch ? Math.min(age, DIR_AGE) : age) });
   return keys;
 }
+// Throws when the request's signature cannot even be read (a Host no URL can hold, a header line a Request refuses,
+// a Signature-Agent value that does not parse). The two callers mean different things by that, so each decides: in
+// front of a service it is an unsigned request and is refused; a watch records that its check failed (D-105).
 async function signedBy(req) {
   const header = req.headers["signature-agent"];
   if (!header) return null;
@@ -177,8 +180,34 @@ if (mode === "link") {
   prime = ainraPrime(verifier, { store: watch ? inOrder(store) : store });
 } else { console.error("--mode is link or passport"); process.exit(2); }
 
-const server = http.createServer(async (req, res) => {
-  const chunks = []; for await (const c of req) chunks.push(c);
+// ── in front of a service (no --watch): every request gets an answer, and the pilot outlives every request ────────
+// The pilot is IN the path here, so a request that stops it stops the service behind it for everyone. Until
+// 15 November 2026 this handler awaited the body, the signature and the gate with nothing around them: an abandoned
+// body, a Host no URL can hold, or a Signature-Agent header that does not parse ended the process (in every tag from
+// v0.5.0; `make pilot-hostile` is the test). Three rules now:
+//   · what cannot be read is refused, never passed on — an unreadable signature is no signature, and the gate says so
+//     by its own named reason; anything else that throws is answered 400 here;
+//   · a body is held only up to --max-body (default 8 MiB), because the gate needs the whole body to check a
+//     signature that covers it; a larger one is answered 413 and not read further;
+//   · the service's answer is passed on only if Node will send it; if the service fails mid-answer the client's
+//     connection ends with it, and nothing else does.
+const MAX_FRONT_BODY = Number(opt("max-body", String(8 << 20)));
+if (!Number.isSafeInteger(MAX_FRONT_BODY) || MAX_FRONT_BODY < 1) { console.error("--max-body is a whole number of bytes, 1 or more"); process.exit(2); }
+const seenTrouble = new Set();
+const refuse = (res, code, error) => {
+  if (res.headersSent) return void res.destroy();
+  try { res.statusCode = code; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ error })); }
+  catch { res.destroy(); }
+};
+async function front(req, res) {
+  const chunks = [];
+  let size = 0;
+  try {
+    for await (const c of req) {
+      if ((size += c.length) > MAX_FRONT_BODY) return refuse(res, 413, `ainra pilot: a body over ${MAX_FRONT_BODY} bytes is not held; it was not passed on (--max-body)`);
+      chunks.push(c);
+    }
+  } catch { return void res.destroy(); } // the sender went away
   const body = Buffer.concat(chunks);
   if (req.method === "GET" && req.url.split("?")[0] === "/.well-known/ainra-decisions-head") {
     res.setHeader("content-type", "application/json");
@@ -195,7 +224,8 @@ const server = http.createServer(async (req, res) => {
     try { req.body = JSON.parse(body.toString("utf8")); } catch { req.body = undefined; }
     return prime(req, shim);
   }
-  if (mode === "link") req.ainraVerifiedKey = await signedBy(req);
+  // A signature that cannot be read is no signature: the gate refuses it by its own named reason.
+  if (mode === "link") req.ainraVerifiedKey = await signedBy(req).catch(() => null);
   await gate(req, shim, () => {
     // Forward, stripping the AINRA presentation headers and naming who was admitted.
     const a = req.ainraLink ?? null, p = req.ainra?.event ?? null;
@@ -203,12 +233,23 @@ const server = http.createServer(async (req, res) => {
     for (const h of ["x-ainra-passport", "x-ainra-pop", "x-ainra-operator", "x-ainra-passport-name"]) delete headers[h];
     if (a) { headers["x-ainra-operator"] = a.operator; headers["x-ainra-passport-name"] = a.passport; }
     if (p?.name) { headers["x-ainra-passport-name"] = p.name; headers["x-ainra-operator"] = p.name.split(":")[2]; }
-    const up = http.request({ hostname: upstream.hostname, port: upstream.port, path: req.url, method: req.method, headers }, (ur) => {
-      res.writeHead(ur.statusCode ?? 502, ur.headers);
-      ur.pipe(res);
-    });
-    up.on("error", () => { res.statusCode = 502; res.end(); });
+    let up;
+    try {
+      up = http.request({ hostname: upstream.hostname, port: upstream.port, path: req.url, method: req.method, headers }, (ur) => {
+        try { res.writeHead(ur.statusCode ?? 502, ur.headers); }
+        catch { ur.destroy(); return refuse(res, 502, "ainra pilot: the service's answer could not be passed on"); }
+        pipeline(ur, res, () => {}); // either side failing ends the other, as on one connection
+      });
+    } catch { return refuse(res, 502, "ainra pilot: the request could not be sent to the service"); }
+    up.on("error", () => refuse(res, 502, "ainra pilot: the service did not answer"));
     up.end(body);
+  });
+}
+const server = http.createServer((req, res) => {
+  front(req, res).catch((e) => {
+    const kind = String(e?.code ?? e?.name ?? "error");
+    if (!seenTrouble.has(kind) && seenTrouble.size < 32) { seenTrouble.add(kind); console.error(`ainra pilot: a request could not be handled (${kind}); it was refused, not passed on. Said once per kind.`); }
+    refuse(res, 400, "ainra pilot: this request could not be read; it was not passed on");
   });
 });
 if (isMainThread && !watch) server.listen(Number(port), host, () => console.log(`ainra pilot (${mode}) on http://${host}:${port} → ${upstream.origin}${decisions ? " · decisions → " + opt("decisions") : ""}`));

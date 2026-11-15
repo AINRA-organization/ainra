@@ -99,6 +99,8 @@ async function demoIssue(body) {
 let reached = 0;
 const upstream = http.createServer({ maxHeaderSize: 256 << 10 }, (req, res) => {
   reached++;
+  // A service that fails half-way through its answer: the head and some of the body, then the connection is cut.
+  if (req.url === "/dies") { res.writeHead(200, { "content-type": "application/json", "content-length": "1000" }); res.write('{"half":'); return void setTimeout(() => res.socket.destroy(), 50); }
   let bytes = 0;
   req.on("data", (c) => { bytes += c.length; });
   req.on("end", () => {
@@ -144,8 +146,8 @@ const PILOT = `http://127.0.0.1:${pilotPort}`;
 for (let i = 0; i < 100; i++) { try { await fetch(PILOT + "/.well-known/ainra-decisions-head"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
 ok(`the pilot in front of the upstream: ${PILOT} → 127.0.0.1:${upPort}`);
 
-async function send(a, base = PILOT) {
-  const url = `${base}/orders`;
+async function send(a, base = PILOT, path = "/orders") {
+  const url = `${base}${path}`;
   const h = new Headers({ "signature-agent": `sig1="${AGENT}"` });
   const f = await sign(new Request(url, { headers: h }), { signer: a.signer, label: "sig1", expires: new Date((now() + 300) * 1000) });
   const sent = appendSignature(h, f);
@@ -160,6 +162,17 @@ async function send(a, base = PILOT) {
   r.status === 200 && r.body?.operator === "specimen" && reached === before + 1 ? ok(`A → 200 from the upstream, which saw x-ainra-operator: ${r.body.operator}`) : fail(`A: ${JSON.stringify(r)}`);
   const rb = await send(B);
   rb.status === 403 && rb.reason === "not_linked" && reached === before + 1 ? ok("B → 403 not_linked, and the upstream never saw it") : fail(`B: ${JSON.stringify(rb)}`);
+}
+// 4b · the service fails half-way through an answer to an admitted request: that client's connection ends, the
+// pilot does not (until 15 November 2026 an error on the service's answer had no listener, and ended the process)
+{
+  const before = reached;
+  let cut = false;
+  try { const r = await send(A, PILOT, "/dies"); cut = r.body === null; } catch { cut = true; }
+  const after = await send(A).catch(() => null);
+  cut && after?.status === 200 && reached === before + 2
+    ? ok("the upstream cut its answer half-way → that request failed for its sender; the next one → 200, the pilot is still in front")
+    : fail(`upstream cut mid-answer: cut=${cut} next=${JSON.stringify(after?.status)} reached +${reached - before}`);
 }
 // 5 · revoke A
 {
@@ -176,7 +189,7 @@ async function send(a, base = PILOT) {
   const head = await (await fetch(PILOT + "/.well-known/ainra-decisions-head")).json();
   const chain = verifyDecisionChain(lines, Buffer.from(head.gate_key, "base64url"));
   const last = createHash("sha256").update(lines.at(-1)).digest("base64url");
-  chain.ok && chain.count === 3 && head.head === last
+  chain.ok && chain.count === 5 && head.head === last
     ? ok(`the decision log: ${chain.count} signed, chained records (${lines.map((l) => JSON.parse(l).reason ?? "valid").join(", ")}); its last line is the published head`)
     : fail(`log: ${JSON.stringify(chain)} head ${head.head} last ${last}`);
 }
