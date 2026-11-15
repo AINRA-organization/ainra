@@ -609,11 +609,24 @@ field: the last sweep is the one dated 12 November. One limit is stated per entr
   identifier changes." The identifier travels in an `Agent-ID` header on every request of a transport meant to carry
   agent traffic in place of HTTP. It is verified "against the governance platform's public key"; the article names no
   authority shared between platforms and does not say how an identifier is revoked. A companion "Merchant Genesis"
-  gives the receiving side the same kind of identity. *Read from the author's article of 23 April 2026 only; the
-  draft itself was not read, so absence here is absence in the article.* **Relation:** the same instinct as a
-  passport's log leaf — an identity that is the hash of its signed birth record — without a root that different
-  platforms share, which is the part the Standard's first section says nobody can build alone.
+  gives the receiving side the same kind of identity. *First read from the author's article of 23 April 2026 only.*
+  **Re-read from the Internet-Drafts on 15 November 2026** (`draft-hood-independent-agtp-10` and
+  `draft-hood-agtp-identity-document-00`, both dated 30 October 2026), which correct the line above on revocation:
+  the identity document has lifecycle states and a REVOKE method that retires an agent for good; an agent's status
+  is a sub-resource read from the agent's own host; and "Servers SHOULD propagate REVOKE events to subscribing
+  registries and Agent Name Service operators within 60 seconds". Whether a relying party trusts the key of the
+  registrar that issued a document "is a deployment-policy concern (trust anchors, allowlists, or out-of-band
+  attestation)", and a federation model for issuers is left to a later revision of the family's trust draft. The
+  base draft also carries a notice that parts of it, the derivation of the identifier among them, may be covered by
+  the author's pending patent applications, with a royalty-free licence offered under RFC 8179. *Two of the family's
+  drafts were read, not all of them, and the identity draft names its final state "retired" in one section and
+  "Revoked" in another.* **Relation:** the same instinct as a passport's log leaf — an identity that is the hash of
+  its signed birth record. It differs in two places: each relying party keeps its own list of whom it trusts, where
+  the Standard's first section asks for a root that different platforms share; and a revocation is read online from
+  the agent's own host, where a passport's is one bit in a signed list a verifier can hold and check with no
+  connection to the issuer.
   <https://chrishood.com/the-canonical-agent-id-the-most-important-number-an-agent-will-have/>
+  <https://www.ietf.org/archive/id/draft-hood-agtp-identity-document-00.txt>
 - **A third-party map: "Seven Lanes, 38 Players, One Question"** (the same author, 23 June 2026). It sorts 38
   products, protocols and bodies into enterprise identity, cloud and workload identity, developer auth, non-human
   identity security, decentralised identifiers, protocols, and governance bodies, and concludes that verifying an
