@@ -41,7 +41,9 @@ const LIVE = [
   { page: "/foundation.html", label: "witness operators (the split-view gap)",
     read: (t) => (/0 OPERATORS — GAP/.test(t) ? "0" : "nonzero-or-absent"), expect: () => String(truth.witnesses) },
   { page: "/foundation.html", label: "footer witness statement",
-    read: (t) => (/WITNESSES: 0 — SPLIT-VIEW GUARANTEE NOT IN FORCE/.test(t) ? "0" : "absent"), expect: () => String(truth.witnesses) },
+    // Read as text: since 12 November 2026 the site wraps words that must not break ("SPLIT-VIEW") in a span, and
+    // this read the markup, so it answered "absent" for a statement that was on the page.
+    read: (t) => (/WITNESSES: 0 — SPLIT-VIEW GUARANTEE NOT IN FORCE/.test(t.replace(/<[^>]+>/g, "")) ? "0" : "absent"), expect: () => String(truth.witnesses) },
   { page: "/docs.html", label: "the instance path is documented",
     read: (t) => (/id="integrate-instance"/.test(t) ? "present" : "absent"), expect: () => "present" },
   { page: "/llms.txt", label: "the agent index knows the rung",
