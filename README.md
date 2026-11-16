@@ -92,7 +92,7 @@ make genesis-status   # the honest §29 DoD board — a row is ✅ ONLY when a s
 Today that board reads **7/12** — the 7 laptop-provable rows are green; the 5 external rows are ⏳ pending real people
 running the events (see [outreach/](outreach/), [docs/DOD.md](docs/DOD.md), [GENESIS-CHECKLIST.md](GENESIS-CHECKLIST.md)).
 
-> Nothing here is asserted; if it says green, a `make` target proves it. Logs sealed by the real root: **0** — the
+> Every green mark here has a `make` target behind it that you can run. Logs sealed by the real root: **0** — the
 > Genesis ceremony has not happened yet, and we say so.
 
 ## Clone it and it works

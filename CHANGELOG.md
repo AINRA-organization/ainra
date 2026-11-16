@@ -10,6 +10,14 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Changed — the site says less, and says it plainly
+
+- The home page no longer carries the block of four record numbers under its lead. The record is on the Network
+  page, where it can be looked up.
+- The corner marks around figures and dark buttons are gone from every page.
+- The Network page's heading says what the page is ("The test network's public record"), and the sentences that
+  repeated "real" on the Network and Verify pages, and the test-network banner, now say what a reader can do there.
+
 ### Added — issuer links: one link for the key an identity system issues with (D-110, PLAN-M55 step 2)
 
 - Most agents do not sign their own requests; they carry a token signed by an identity system's key. A link can now
