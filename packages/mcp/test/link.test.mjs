@@ -17,11 +17,17 @@ test("the tool exists and is read-only", () => {
 
 test("every vectors/v1-link entry, through the MCP tool, decides as the core recorded", async () => {
   for (const v of vectors) {
-    const call = () => tool.handler({ key: v.presented_key, link: v.link, directory: v.directory, roots: v.roots, freshness: v.freshness, now: v.now, capability: v.capability ?? undefined });
+    // A vector that carries `issuer` (D-110): the key signed a token naming it, not the request.
+    const call = () => tool.handler({ key: v.presented_key, link: v.link, directory: v.directory, roots: v.roots, freshness: v.freshness, now: v.now, capability: v.capability ?? undefined, issuer: v.issuer ?? undefined });
     if (v.expect.verdict === "no_gate") { await assert.rejects(call(), /does not verify/, v.name); continue; }
     const r = await call();
     assert.equal(r.verdict, v.expect.verdict, v.name);
-    if (v.expect.verdict === "valid") assert.equal(r.operator, v.expect.operator, v.name);
+    if (v.expect.verdict === "valid") {
+      assert.equal(r.operator, v.expect.operator, v.name);
+      assert.equal(r.issuer, v.expect.issuer, v.name);
+      // The issuer's name is the issuer's text: a field, never part of the sentence an agent reads.
+      if (v.expect.issuer) assert.ok(!r.explanation.includes(v.expect.issuer), v.name);
+    }
     else assert.equal(r.reason, v.expect.reason, v.name);
   }
 });

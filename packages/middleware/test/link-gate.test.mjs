@@ -67,3 +67,39 @@ test("D-079: link decisions are recorded, signed and chained", async () => {
   assert.equal(b.reason, "not_linked");
   assert.equal(b.operator, undefined);
 });
+
+// ── D-110: the token door ──────────────────────────────────────────────────────────────────────────────────────
+test("the token door: a token's issuer is answered for; the link is consent to that use and no other", async () => {
+  const v = vec("l54-issuer");
+  const verifier = Verifier.fromDirectoryB64(v.directory, v.roots.root_ed25519, v.roots.root_slh, v.freshness);
+  const common = { source: () => served(v), now: () => v.now };
+  // The caller's own token check hands over the issuer key that verified the token and the issuer name in it.
+  const tokens = (issuer) => ainraLinkGate(verifier, { ...common, verifiedToken: (req) => ({ key: req.key, issuer }) });
+  const ok = await call(tokens(v.issuer), b64(v.presented_key));
+  assert.equal(ok.status, 200);
+  assert.equal(ok.req.ainraLink.operator, "acme");
+  assert.equal(ok.req.ainraLink.issuer, v.issuer);
+  // A token naming another issuer, signed by the same key.
+  assert.equal((await call(tokens("https://other.example"), b64(v.presented_key))).body.reason, "sig_invalid");
+  // The issuer key through the REQUEST door: it agreed to answer for its tokens, not to act.
+  const requests = ainraLinkGate(verifier, { ...common, verifiedKey: (req) => req.key });
+  assert.equal((await call(requests, b64(v.presented_key))).body.reason, "sig_invalid");
+  // A token check that did not verify, or that hands back something that is not a key and a name: no key verified.
+  for (const bad of [null, { key: b64(v.presented_key) }, { key: "not bytes", issuer: v.issuer }, { key: b64(v.presented_key), issuer: 7 }]) {
+    const g = ainraLinkGate(verifier, { ...common, verifiedToken: () => bad });
+    assert.equal((await call(g, null)).body.reason, "sig_invalid", JSON.stringify(bad));
+  }
+  // An ordinary link does not answer for tokens its key signs.
+  const k = vec("l01-valid");
+  const kv = Verifier.fromDirectoryB64(k.directory, k.roots.root_ed25519, k.roots.root_slh, k.freshness);
+  const g = ainraLinkGate(kv, { source: () => served(k), now: () => k.now, verifiedToken: (req) => ({ key: req.key, issuer: "https://issuer.example" }) });
+  assert.equal((await call(g, b64(k.presented_key))).body.reason, "sig_invalid");
+});
+
+test("a link gate has exactly one door", () => {
+  const v = vec("l54-issuer");
+  const verifier = Verifier.fromDirectoryB64(v.directory, v.roots.root_ed25519, v.roots.root_slh, v.freshness);
+  const source = () => served(v);
+  assert.throws(() => ainraLinkGate(verifier, { source }), /one of them/);
+  assert.throws(() => ainraLinkGate(verifier, { source, verifiedKey: () => null, verifiedToken: () => null }), /one of them/);
+});

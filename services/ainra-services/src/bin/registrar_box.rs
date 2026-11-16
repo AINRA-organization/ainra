@@ -865,6 +865,14 @@ fn main() {
                         )
                     }
                 };
+                // An issuer link carries a name of the caller's choosing, and this door is open: a stranger could put
+                // any issuer's name into the published index. The door links keys; issuer links go through `/link`.
+                if spec.issuer.is_some() {
+                    return (
+                        403,
+                        r#"{"error":"the public door links keys, not issuers"}"#.to_string(),
+                    );
+                }
                 if let Some(full) = demo_room(&st.rb) {
                     return full;
                 }
@@ -973,8 +981,9 @@ fn main() {
             },
 
             // D-078 AINRA Link: link a key the agent already has to one of this registrar's passports. Body: a
-            // LinkSpec {passport, key, pop, scope?, nbf, exp}; `pop` is the key's own signature over the frozen
-            // consent bytes, so nobody can link a key they do not hold. Write endpoint (auth + rate limited).
+            // LinkSpec {passport, key, pop, scope?, nbf, exp, issuer?}; `pop` is the key's own signature over the
+            // frozen consent bytes, so nobody can link a key they do not hold. With `issuer` it is an issuer link
+            // (D-110) and the consent is the issuer one. Write endpoint (auth + rate limited).
             ("POST", "/link") => {
                 if !write_authorized(req, &st.issue_token, open_writes) {
                     return (

@@ -26,6 +26,7 @@ from ._canon import canonicalize
 from .delta import verify_delta, verify_head
 from .directory import verify_directory
 from .link import jwk_thumbprint_ed25519, link_from_index
+from .link import issuer_pop_signing_bytes as issuer_link_pop_signing_bytes
 from .link import pop_signing_bytes as link_pop_signing_bytes
 from .instance import (
     INSTANCE_CRED_DEFAULT_SECS,
@@ -57,6 +58,7 @@ __all__ = [
     # D-078 — AINRA Link: who stands behind a key an agent already has (verify with Verifier.verify_link).
     "jwk_thumbprint_ed25519",
     "link_pop_signing_bytes",
+    "issuer_link_pop_signing_bytes",
     "link_from_index",
     "Verifier",
     "Verdict",

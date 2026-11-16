@@ -190,8 +190,9 @@ pub fn run_gate_vector(vector_json: &str) -> String {
     ainra_adapter::run_gate_vector_json(vector_json)
 }
 
-/// AINRA Link (D-078): who stands behind `presented_key` (base64url Ed25519), a key the host has ALREADY verified the
-/// request's signature with. `link_json` is the link as a gate receives it; `capability` is "" for none.
+/// AINRA Link (D-078): who stands behind `presented_key` (base64url), a key the host has ALREADY verified a
+/// signature with. `link_json` is the link as a gate receives it; `capability` is "" for none. `issuer` is absent
+/// when the key signed the request; when it signed a token instead, it is the issuer named in that token (D-110).
 #[cfg(feature = "edge")]
 #[wasm_bindgen]
 pub fn link_check(
@@ -201,6 +202,7 @@ pub fn link_check(
     now_secs: f64,
     freshness: &str,
     capability: &str,
+    issuer: Option<String>,
 ) -> String {
     ainra_adapter::link_check_json(
         link_json,
@@ -209,6 +211,7 @@ pub fn link_check(
         clamp_secs(now_secs),
         freshness,
         capability,
+        issuer.as_deref(),
     )
 }
 

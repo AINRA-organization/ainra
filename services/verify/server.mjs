@@ -24,7 +24,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import {
-  Verifier, signDecision, decisionRequestDigest, jwkThumbprintEd25519, strictB64u, verifyDirectoryAtLeast,
+  Verifier, signDecision, decisionRequestDigest, jwkThumbprintEd25519, presentedKeyThumbprint, strictB64u, verifyDirectoryAtLeast,
 } from "../../packages/sdk-ts/dist/index.js";
 
 const sdkRequire = createRequire(new URL("../../packages/sdk-ts/package.json", import.meta.url));
@@ -117,13 +117,17 @@ function decide(body, bodyText) {
     return { decision, reason: v.verdict === "valid" ? null : v.reason, subject: name, operator: operator ?? null, receipt: rec };
   }
   if (body && typeof body === "object" && body.link && typeof body.key === "string") {
+    // A key of any Link algorithm, by length: 32 bytes Ed25519, 33 a compressed secp256k1 point (D-082), 65 an
+    // uncompressed P-256 point (D-108). Until 16 November 2026 this took 32-byte keys only.
     const key = strictB64u(body.key);
-    if (!key || key.length !== 32) return { decision: "refuse", reason: "schema_violation", receipt: null };
-    const v = verifier.verifyLink(body.link, key, t, typeof body.capability === "string" ? body.capability : undefined);
-    const tp = jwkThumbprintEd25519(key);
+    const tp = key ? presentedKeyThumbprint(key) : null;
+    // `issuer` (D-110): absent when the key signed the request; the issuer name when it signed a token instead.
+    if (!key || tp === null || (body.issuer !== undefined && typeof body.issuer !== "string"))
+      return { decision: "refuse", reason: "schema_violation", receipt: null };
+    const v = verifier.verifyLink(body.link, key, t, typeof body.capability === "string" ? body.capability : undefined, body.issuer);
     const rec = receipt({ at: t, kind: "link", subject: tp, ...(v.verdict === "valid" ? { passport: v.passport, operator: v.operator } : {}), verdict: v.verdict, ...(v.verdict === "valid" ? {} : { reason: v.reason }), ...relied(body.link) }, bodyText);
     return v.verdict === "valid"
-      ? { decision: "accept", operator: v.operator, passport: v.passport, registrar: v.registrar, scope: v.scope, receipt: rec }
+      ? { decision: "accept", operator: v.operator, passport: v.passport, registrar: v.registrar, scope: v.scope, ...(v.issuer !== undefined ? { issuer: v.issuer } : {}), receipt: rec }
       : { decision: "refuse", reason: v.reason, receipt: rec };
   }
   return { decision: "refuse", reason: "schema_violation", receipt: null };

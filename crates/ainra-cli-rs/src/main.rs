@@ -903,7 +903,8 @@ Time is explicit (the core has no clock): pass --now <unix-seconds>; the default
 
 fn cmd_link(a: &[String]) -> i32 {
     let usage =
-        "usage: ainra link <dir> --passport P --key K --pop S --nbf T --exp T [--alg Ed25519|ES256K|ES256] [--scope C ...]";
+        "usage: ainra link <dir> --passport P --key K --pop S --nbf T --exp T [--alg Ed25519|ES256K|ES256] [--scope C ...]\n       \
+         [--issuer NAME]   an issuer link: the key signs tokens naming other agents, as this issuer (D-110)";
     let (Some(dir), Some(passport), Some(key), Some(pop), Some(nbf), Some(exp)) = (
         pos(a, 0),
         opt(a, "passport"),
@@ -925,6 +926,7 @@ fn cmd_link(a: &[String]) -> i32 {
         key: key.to_string(),
         pop: pop.to_string(),
         scope: opt_multi(a, "scope"),
+        issuer: opt(a, "issuer").map(String::from),
         nbf,
         exp,
     };
@@ -1016,7 +1018,8 @@ fn cmd_links(a: &[String]) -> i32 {
 }
 
 fn cmd_verify_link(a: &[String]) -> i32 {
-    let usage = "usage: ainra verify-link --link L --directory D --roots R --key K [--now T] [--freshness F2] [--capability C]";
+    let usage = "usage: ainra verify-link --link L --directory D --roots R --key K [--now T] [--freshness F2] [--capability C]\n       \
+                 [--issuer NAME]   the key signed a token naming this issuer, not the request itself";
     let (Some(l), Some(d), Some(r), Some(key)) = (
         opt(a, "link"),
         opt(a, "directory"),
@@ -1057,9 +1060,21 @@ fn cmd_verify_link(a: &[String]) -> i32 {
         now,
         opt(a, "freshness").unwrap_or("F2"),
         opt(a, "capability").unwrap_or(""),
+        opt(a, "issuer"),
     ))
     .unwrap_or_default();
     if out["verdict"] == serde_json::json!("valid") {
+        if let Some(iss) = out["issuer"].as_str() {
+            // An issuer link answers for the issuer. It says nothing about the agent a token names.
+            println!(
+                "ACCEPT — issuer {} is answered for by operator {} under {} (registrar {})",
+                shown(iss),
+                shown(out["operator"].as_str().unwrap_or("?")),
+                shown(out["passport"].as_str().unwrap_or("?")),
+                shown(out["registrar"].as_str().unwrap_or("?"))
+            );
+            return 0;
+        }
         println!(
             "ACCEPT — key acts for operator {} under {} (registrar {})",
             shown(out["operator"].as_str().unwrap_or("?")),

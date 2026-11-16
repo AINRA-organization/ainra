@@ -10,6 +10,32 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — issuer links: one link for the key an identity system issues with (D-110, PLAN-M55 step 2)
+
+- Most agents do not sign their own requests; they carry a token signed by an identity system's key. A link can now
+  be for that key: `subject.kind` is `issuer`, with the one issuer name (`iss`) the key signs as. A gate checks the
+  token the way it always has, then asks who answers for the issuer. Revoking the link refuses every token the key
+  signs as that issuer.
+- The key consents with a statement of its own (`ainra-issuer-link-pop-1`, naming the issuer), so neither kind of
+  link can be made from the other's consent. Every link check takes one more input, `issuer`: absent when the key
+  verified the request, the token's issuer name when it verified a token. Presented for the other use, a link is
+  refused (`sig_invalid`). An absent `issuer` is the behaviour there has always been.
+- What it means and does not mean is in D-110. In short: the operator answers for the issuer; the link does not say
+  the key belongs to that issuer, and does not vouch for any agent a token names. A gate takes the key from the
+  issuer and finds the link by the key.
+- In the Rust core, `@ainra/sdk` (`verifyLink(…, issuer)`, `issuerLinkPopSigningBytes`), the Python package
+  (`verify_link(…, issuer)`, `issuer_link_pop_signing_bytes`), the three gates (`verifiedToken` /
+  `verified_token` / a fourth argument at the edge), the registrar (`POST /link` takes `issuer`; the open demo door
+  refuses issuer links), the CLI (`--issuer`), the MCP tool and the hosted verifier.
+- `vectors/v1-link` grows from 53 to 75; the 53 earlier vectors are byte-identical. `make issuer-link-e2e`
+  ([`kits/issuer-link`](kits/issuer-link)) runs the whole path live with a token issuer that has no AINRA code.
+- Limits: no outside system has linked a key; one issuer name per key; RSA keys cannot be linked yet.
+
+### Fixed — the hosted verifier refused every link that was not for an Ed25519 key
+
+- `services/verify` took 32-byte keys only, so since ES256K links (D-082) it answered `schema_violation` for every
+  secp256k1 and P-256 link. It now takes a key of any link algorithm. It refused; it did not accept anything wrongly.
+
 ### Added — a drill for the question platforms ask first: two issuers, one verifier, no network
 
 - `make crossed-withdrawal`: two registrars under one TEST root, one agent from each, and a verifier started in a

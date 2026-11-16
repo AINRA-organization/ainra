@@ -199,7 +199,7 @@ draft.
 (This section is to be removed before publication, per {{RFC7942}}.)
 
 A reference implementation with three independently written verifiers (Rust, TypeScript, Python) and a shared corpus of
-53 conformance vectors for link verification, covering all three key algorithms, is available under open-source licences. It includes a registrar, gates
+conformance vectors for link verification, 53 of them for the record defined here, covering all three key algorithms, is available under open-source licences. (The implementation also has a second subject kind, for a key that signs tokens naming other agents; it is outside this document.) It includes a registrar, gates
 for HTTP servers and edge runtimes, and an interoperability test in which independent Token Status List and JOSE
 libraries read the status list. It runs on a test network; no production deployment exists.
 

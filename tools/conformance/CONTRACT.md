@@ -41,13 +41,17 @@ presenter's status passes every one of them. That is the hole of D-072, D-074 an
 | `directory` | `vectors/v1-directory` | `{"accept":true,"registrars":<n>}` | `{"accept":false}` |
 | `presentation` | `vectors/v1-presentation` | `{"ok":true,"created":<t>,"nonce":"…"}` | `{"ok":false,"reason":"<reason>"}` |
 | `gate` | `vectors/v1-gate` | `{"verdict":"valid"}` | `{"verdict":"invalid","reason":"<reason>"}` or `{"verdict":"no_gate"}` |
-| `link` | `vectors/v1-link` | `{"verdict":"valid","registrar","operator","passport","scope"}` | `{"verdict":"invalid","reason":"<reason>"}` or `{"verdict":"no_gate"}` |
+| `link` | `vectors/v1-link` | `{"verdict":"valid","registrar","operator","passport","scope"}`, and `"issuer"` when the link is an issuer link | `{"verdict":"invalid","reason":"<reason>"}` or `{"verdict":"no_gate"}` |
 | `decision` | `vectors/v1-decision` | `{"ok":true,"count":<n>}` or `{"ok":true,"head":"…"}` | `{"ok":false,"index":<i>,"problem":"…"}` |
 | `directory-epoch` | `vectors/v1-directory-epoch` | an array, one `{"accept":true,"epoch","registrars"}` per directory offered | `{"accept":false,"refusal":"…"}` in that array |
 | `currency` | `vectors/v1-currency` | an array, one `{"verdict":"valid"}` per step of ONE currency gate | `{"verdict":"invalid","reason":"<reason>"}` in that array, or `{"verdict":"no_gate"}` |
 
 Each vector carries what it means in `description` and the exact answer in `expect`; the per-kind specifications are
-`docs/PRESENTATION.md`, `docs/DECISIONS.md` (D-073, D-078, D-079, D-081, D-083) and `docs/LINKS.md`.
+`docs/PRESENTATION.md`, `docs/DECISIONS.md` (D-073, D-078, D-079, D-081, D-083, D-110) and `docs/LINKS.md`.
+
+A `link` vector may carry an `issuer` member (from `l54`, D-110). Absent or `null`: the gate verified the request with
+`presented_key`. A string, the empty string included: the gate verified a token with that key, and this is the issuer
+name written in the token. An implementation that ignores the member answers `l54` and `l59`, among others, wrongly.
 
 `<reason>` is one of the 21 frozen reason strings (`docs/reasons.json`: the 20 the verify returns, and `denied_by_policy`, which only a gate with its own policy returns, D-100). This is the SAME shape every AINRA surface
 already emits (`docs/PRESENTATION.md`; `ainra._vector_runner` prints exactly `<name>\t<result-json>`), so an existing

@@ -338,7 +338,12 @@ class AinraLinkGate:
     behind the key. Requests whose key is linked to an accountable operator, and not revoked, pass with
     ``scope["ainra_link"]`` set; everything else gets 403 and a named reason, ``not_linked`` included.
 
-    * ``verified_key(scope, headers) -> bytes | None`` — the Ed25519 key that verified THIS request, or None.
+    * ``verified_key(scope, headers) -> bytes | None`` — the key that verified THIS request, or None.
+    * ``verified_token(scope, headers) -> (key, issuer) | None`` — in place of ``verified_key`` (pass it ``None``),
+      for a request that carries a TOKEN (D-110): you verify the token the way you already do, against the keys its
+      issuer publishes, and return the issuer key that verified it and the issuer name written in it (``iss``). A
+      pass then means the ISSUER has an accountable operator and is not revoked (``scope["ainra_link"]["issuer"]``);
+      it says nothing about the agent the token names. Take the key from the issuer, never from a link.
     * ``source() -> (index, status)`` — the registrar's link index and signed status publication (GET /links,
       GET /status-list); cache them as you like, inside the verifier's freshness class.
     * ``capability(scope) -> str | None`` — the capability the request exercises, if links may be narrowed.
@@ -346,7 +351,10 @@ class AinraLinkGate:
     """
 
     def __init__(self, app, verifier: Verifier, verified_key, source, now=None, *, capability=None,
-                 decisions=None) -> None:
+                 decisions=None, verified_token=None) -> None:
+        if (verified_key is None) == (verified_token is None):
+            raise ValueError("AinraLinkGate: give verified_key or verified_token, one of them")
+        self.verified_token = verified_token
         self.app, self.verifier, self.verified_key, self.source = app, verifier, verified_key, source
         self.capability, self.decisions = capability, decisions
         self._now = (lambda: int(time.time())) if now is None else (now if callable(now) else (lambda: int(now)))
@@ -362,10 +370,18 @@ class AinraLinkGate:
             name, value = k.decode("latin1").lower(), v.decode("latin1")
             headers[name] = f"{headers[name]}, {value}" if name in headers else value
         now = self._now()
+        # issuer None: the key signed the request. A string: it signed a token naming this issuer (D-110).
+        key, issuer = None, None
         try:
-            key = self.verified_key(scope, headers)
+            if self.verified_token is not None:
+                tok = self.verified_token(scope, headers)
+                if (isinstance(tok, (tuple, list)) and len(tok) == 2 and isinstance(tok[0], (bytes, bytearray))
+                        and isinstance(tok[1], str)):
+                    key, issuer = tok[0], tok[1]
+            else:
+                key = self.verified_key(scope, headers)
         except Exception:
-            key = None
+            key, issuer = None, None
         # A key of any Link algorithm: 32 bytes Ed25519, 33 a compressed secp256k1 point (D-082), 65 an
         # uncompressed P-256 point (D-108).
         tp = presented_key_thumbprint(bytes(key)) if isinstance(key, (bytes, bytearray)) else None
@@ -378,7 +394,7 @@ class AinraLinkGate:
             except Exception:
                 link = None
             cap = self.capability(scope) if self.capability else None
-            result = self.verifier.verify_link(link, bytes(key), now, cap) if link else \
+            result = self.verifier.verify_link(link, bytes(key), now, cap, issuer) if link else \
                 {"verdict": "invalid", "reason": "not_linked"}
         if self.decisions is not None and tp is not None:
             try:

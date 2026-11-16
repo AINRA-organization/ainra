@@ -185,7 +185,7 @@ export const TOOLS = [
   {
     name: "ainra_verify_link",
     title: "Who stands behind this agent key?",
-    description: "AINRA Link (D-078): after you have verified a signature with an agent's key — Ed25519, secp256k1 as ES256K (D-082), or P-256 as ES256 (D-108) — ask which accountable operator stands behind that key and whether the link is still good. Pass the key (`key`, base64url), and either the `link` as a gate receives it, or the registrar's link `index` (GET /links) and its signed `status` publication (GET /status-list), from which the link for your key is found. Trust is YOURS: the signed `directory` and the two `roots` (omit both to use AINRA_TARGET's). The status list is authenticated before it is read; the clock, freshness class and capability are yours. Returns `decision` (accept or refuse), the operator and passport on accept, or the named reason. Read-only. A key with no link at all is refused as not_linked.",
+    description: "AINRA Link (D-078): after you have verified a signature with an agent's key — Ed25519, secp256k1 as ES256K (D-082), or P-256 as ES256 (D-108) — ask which accountable operator stands behind that key and whether the link is still good. Pass the key (`key`, base64url), and either the `link` as a gate receives it, or the registrar's link `index` (GET /links) and its signed `status` publication (GET /status-list), from which the link for your key is found. Trust is YOURS: the signed `directory` and the two `roots` (omit both to use AINRA_TARGET's). The status list is authenticated before it is read; the clock, freshness class and capability are yours. Returns `decision` (accept or refuse), the operator and passport on accept, or the named reason. Read-only. A key with no link at all is refused as not_linked. ISSUER LINKS (D-110): if the key signed a TOKEN (a JWT from an identity system) and not the request itself, also pass `issuer`: the issuer name written in that token (`iss`), which you have already matched to the key from the keys that issuer publishes. Accept then means the ISSUER has an accountable operator and is not revoked; it says nothing about the agent the token names. Never take the key from a link: find the link by the key.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: {
       type: "object",
@@ -197,6 +197,7 @@ export const TOOLS = [
         directory: { type: "object", description: "The dual-root-signed directory of the network you trust." },
         roots: { type: "object", description: "The two ceremony root keys, { root_ed25519, root_slh }, obtained out of band." },
         capability: { type: "string", description: "The capability the request exercises, if the link may be narrowed (e.g. read:invoices)." },
+        issuer: { type: "string", description: "Only when the key signed a TOKEN, not the request: the issuer name written in that token (`iss`). Leave it out when the key signed the request itself. A link answers for one use only; the other is refused as sig_invalid." },
         freshness: { type: "string", enum: ["F1", "F2", "F3"], description: "How old a status publication you accept: F1 30 s, F2 5 min (default), F3 24 h." },
         now: { type: "integer", description: "Your clock, unix seconds. Defaults to this server's clock." },
       },
@@ -233,7 +234,14 @@ export const TOOLS = [
       const verifier = Verifier.fromDirectoryB64(directory, roots.root_ed25519, roots.root_slh, freshness);
       if (!verifier) throw new Error("the directory does not verify against the roots — nothing in it can be trusted, so nothing was verified.");
       const now = Number.isInteger(input.now) ? input.now : Math.floor(Date.now() / 1000);
-      const v = verifier.verifyLink(link, keyBytes, now, input.capability);
+      if (input.issuer !== undefined && typeof input.issuer !== "string") throw new Error("`issuer` must be a string: the issuer name in the token you verified. Nothing was verified.");
+      const v = verifier.verifyLink(link, keyBytes, now, input.capability, input.issuer);
+      // An issuer link (D-110): the name is the issuer's own text, so it is returned as a field and never written
+      // into the explanation.
+      if (v.verdict === "valid" && v.issuer !== undefined)
+        return { decision: "accept", verdict: "valid", operator: v.operator, passport: v.passport, registrar: v.registrar, scope: v.scope, issuer: v.issuer,
+                 explanation: `Operator "${v.operator}" (${v.passport}) answers for the issuer in \`issuer\`, and that link has not been revoked. This is about the issuer only: it does not vouch for the agent the token names.`,
+                 policy: { now, freshness, capability: input.capability ?? null, trust } };
       return v.verdict === "valid"
         ? { decision: "accept", verdict: "valid", operator: v.operator, passport: v.passport, registrar: v.registrar, scope: v.scope,
             explanation: `This key acts for operator "${v.operator}" under ${v.passport}, and the link has not been revoked.`,

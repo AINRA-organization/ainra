@@ -4,7 +4,9 @@
 // gate (@ainra/middleware ainraLinkGate), the edge engine (@ainra/edge createAinraLinkCheck, the Rust core in
 // WebAssembly) and the Python link gate (ainra.AinraLinkGate), exactly as a registrar would serve it: a link index
 // keyed by thumbprint and a signed status publication. All three must give the same status, the same named reason,
-// and on acceptance the same operator. Hermetic: no network.
+// and on acceptance the same operator (and, for an issuer link, the same issuer). A vector that carries `issuer`
+// (D-110) goes in through each gate's TOKEN door: the gate verified a token with the key, not the request.
+// Hermetic: no network.
 //
 // WITNESS: could this fail? Yes, and it has: with the Python link verifier's scope check removed, vector
 // l13-outside-scope reads 200 there and 403 ceiling_exceeded in the other two, and this goes red (2026-10-29). Any
@@ -31,32 +33,35 @@ const served = (v) => {
 await initAinra(readFileSync(ROOT + "packages/edge/wasm/ainra_wasm_bg.wasm"));
 const { presentedKeyThumbprint } = await import("../packages/sdk-ts/dist/index.js");
 
+// Did the gate verify a token (an issuer name is given, the empty string included) or the request itself?
+const token = (v) => typeof v.issuer === "string";
 async function node(v) {
   const verifier = Verifier.fromDirectoryB64(v.directory, v.roots.root_ed25519, v.roots.root_slh, v.freshness);
-  if (!verifier) return { status: "no_gate", reason: null, operator: null };
-  const gate = ainraLinkGate(verifier, { verifiedKey: () => b64(v.presented_key), source: () => served(v), now: () => v.now, capability: () => v.capability ?? undefined });
+  if (!verifier) return { status: "no_gate", reason: null, operator: null, issuer: null };
+  const how = token(v) ? { verifiedToken: () => ({ key: b64(v.presented_key), issuer: v.issuer }) } : { verifiedKey: () => b64(v.presented_key) };
+  const gate = ainraLinkGate(verifier, { ...how, source: () => served(v), now: () => v.now, capability: () => v.capability ?? undefined });
   return new Promise((resolve) => {
     const req = { method: "GET", url: "/", headers: { host: "x.example" } };
     let status = 200;
-    const res = { status(c) { status = c; return res; }, json(b) { resolve({ status, reason: b.reason, operator: null }); }, setHeader() {} };
-    gate(req, res, () => resolve({ status: 200, reason: null, operator: req.ainraLink.operator }));
+    const res = { status(c) { status = c; return res; }, json(b) { resolve({ status, reason: b.reason, operator: null, issuer: null }); }, setHeader() {} };
+    gate(req, res, () => resolve({ status: 200, reason: null, operator: req.ainraLink.operator, issuer: req.ainraLink.issuer ?? null }));
   });
 }
 async function edge(v) {
   let check;
   try { check = await createAinraLinkCheck({ directory: v.directory, roots: v.roots, freshness: v.freshness, now: () => v.now }); }
-  catch { return { status: "no_gate", reason: null, operator: null }; }
+  catch { return { status: "no_gate", reason: null, operator: null, issuer: null }; }
   const { index, status } = served(v);
   // As the Node and Python gates do: the key's thumbprint by its length (D-082), and no thumbprint, no key.
   const tp = presentedKeyThumbprint(b64(v.presented_key));
-  if (tp === null) return { status: 403, reason: "sig_invalid", operator: null };
+  if (tp === null) return { status: 403, reason: "sig_invalid", operator: null, issuer: null };
   const link = edgeLinkFromIndex(index, status, tp);
-  if (!link) return { status: 403, reason: "not_linked", operator: null };
-  const r = check(link, v.presented_key, v.capability ?? "");
-  return r.verdict === "valid" ? { status: 200, reason: null, operator: r.operator } : { status: 403, reason: r.reason, operator: null };
+  if (!link) return { status: 403, reason: "not_linked", operator: null, issuer: null };
+  const r = check(link, v.presented_key, v.capability ?? "", token(v) ? v.issuer : undefined);
+  return r.verdict === "valid" ? { status: 200, reason: null, operator: r.operator, issuer: r.issuer ?? null } : { status: 403, reason: r.reason, operator: null, issuer: null };
 }
 const py = new Map(execFileSync("python3", [ROOT + "tools/link-parity.py", DIR], { encoding: "utf8" })
-  .trim().split("\n").map((l) => JSON.parse(l)).map((r) => [r.name, { status: r.status, reason: r.reason, operator: r.operator }]));
+  .trim().split("\n").map((l) => JSON.parse(l)).map((r) => [r.name, { status: r.status, reason: r.reason, operator: r.operator, issuer: r.issuer ?? null }]));
 
 let bad = 0, n = 0;
 for (const f of readdirSync(DIR).filter((x) => x.endsWith(".json") && x !== "manifest.json").sort()) {
@@ -67,4 +72,4 @@ for (const f of readdirSync(DIR).filter((x) => x.endsWith(".json") && x !== "man
   if (s(a) !== s(b) || s(a) !== s(c)) { bad++; console.error(`  ✗ ${v.name}: node ${s(a)} · edge ${s(b)} · python ${s(c)}`); }
 }
 if (bad) { console.error(`LINK-PARITY FAILED: ${bad}/${n} vectors read differently across the three gates`); process.exit(1); }
-console.log(`LINK-PARITY OK: ${n} link vectors, 3 gates (node, edge, python) — the same status, reason and operator on every one.`);
+console.log(`LINK-PARITY OK: ${n} link vectors, 3 gates (node, edge, python) — the same status, reason, operator and issuer on every one.`);

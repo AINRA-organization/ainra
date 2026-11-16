@@ -297,14 +297,25 @@ class Verifier:
         return apply_gate_policy(_verify(self._anchors, pres, now), pres.get("claims"), self._directory_issued_at, now,
                                  self._policy)
 
-    def verify_link(self, link: dict, presented_key: bytes, now: int, capability: str | None = None) -> dict:
-        """AINRA Link (D-078): who stands behind ``presented_key``, the 32-byte Ed25519 key this gate has ALREADY
-        verified the request's signature with. Uses this verifier's anchors, revoked delegates and freshness class,
-        and always authenticates the status publication — a link has no fixture mode. Never raises.
+    def verify_link(self, link: dict, presented_key: bytes, now: int, capability: str | None = None,
+                    issuer: str | None = None) -> dict:
+        """AINRA Link (D-078): who stands behind ``presented_key``, a key this gate has ALREADY verified a signature
+        with (32 bytes Ed25519, 33 a compressed secp256k1 point, 65 an uncompressed P-256 point). Uses this
+        verifier's anchors, revoked delegates and freshness class, and always authenticates the status publication:
+        a link has no fixture mode. Never raises.
 
-        Returns ``{"verdict": "valid", "registrar", "operator", "passport", "scope"}`` or
+        ``issuer`` says how the gate used the key (D-110). Leave it ``None`` when the key signed the REQUEST. Pass
+        the issuer name when the key signed a TOKEN instead: the name written in that token (its ``iss``), which the
+        gate has already matched to the key from the keys that issuer publishes. A link is consent to one use: an
+        issuer link presented for a request, an ordinary link presented for a token, or a token naming another
+        issuer is ``sig_invalid``. Take the key from the issuer, never from a link, and find the link by that key,
+        never by the issuer's name.
+
+        Returns ``{"verdict": "valid", "registrar", "operator", "passport", "scope"}`` (and ``"issuer"`` for an
+        issuer link: the operator answers for the issuer, not for the agent a token names) or
         ``{"verdict": "invalid", "reason": ...}``. A key with no link at all is the caller's outcome ("not linked").
         """
         from .link import verify_link
 
-        return verify_link(self._anchors, self._revoked, link, presented_key, now, self._freshness, capability)
+        return verify_link(self._anchors, self._revoked, link, presented_key, now, self._freshness, capability,
+                           issuer)

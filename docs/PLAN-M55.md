@@ -25,13 +25,15 @@ certificates, signed agent cards, token issuers, hardware and platform keystores
 could be linked. WITNESS: `vectors/v1-link` l44 to l53, agreed by the three implementations (`make diff`) and the
 three gates (`make link-parity`); removing the low-S rule turns l45 red.
 
-**2. Issuer links.** One link for the key a system *issues with*, saying so, so a gate that has verified an agent's
-token or certificate against that issuer key in the ordinary way can ask who stands behind the issuer and whether
-that is still true. Revoking the issuer's link refuses everything it issued. A kit shows the whole path with a token
-from an issuer the project does not run. Needs a decision record: what an issuer link may and may not be read to
-mean (it attributes the issuer; it does not vouch for each agent the issuer names). WITNESS: a token from a linked
-issuer is attributed; the same token after the issuer's link is revoked is refused; a token from an unlinked issuer
-is "not linked", never "valid".
+**2. Issuer links** (D-110). **Done 16 November 2026.** One link for the key a system *issues with*, saying so, so a
+gate that has verified an agent's token against that issuer key in the ordinary way can ask who stands behind the
+issuer and whether that is still true. Revoking the issuer's link refuses everything it issued. D-110 says what an
+issuer link may and may not be read to mean: it attributes the issuer; it does not say the key belongs to that
+issuer, and it does not vouch for any agent the issuer names. WITNESS: `vectors/v1-link` l54 to l75 in the three
+implementations and the three gates; `make issuer-link-e2e`, where a token from a linked issuer is attributed, the
+same token after the issuer's link is revoked is refused, and a token from an unlinked issuer is "not linked", never
+"valid". The issuer in that drill has no AINRA code in it, but the drill starts it: no outside system has linked a
+key yet.
 
 **3. RSA issuer keys.** The large identity providers sign with RSA (RS256, PS256). Needs a library choice made
 against the advisory database on the day, and an answer to key size (2048 bits and up). WITNESS: link vectors for

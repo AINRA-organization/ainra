@@ -8,6 +8,12 @@ request; it never makes one genuine.
 Written from D-078 and the frozen order of ``ainra_core::link::verify_link``, independently of the TypeScript
 SDK, and held to ``vectors/v1-link`` in ``make diff``. No I/O, no clock: the caller supplies ``now`` and every
 artefact, and the trusted inputs come from a dual-root-signed directory (:meth:`Verifier.from_directory`).
+
+Two kinds of link (D-110). A ``jwk`` link is for a key that signs requests. An ``issuer`` link is for a key that signs
+tokens naming other agents, and carries the one issuer name (``iss``) it signs as. The key consents to one kind, and a
+link presented for the other use is refused. An issuer link says who answers for the issuer; it does not say the key
+belongs to that issuer (a gate learns that from the keys the issuer publishes, and finds the link by the key, never by
+the name), and it says nothing about the agent a token names.
 """
 
 from __future__ import annotations
@@ -26,9 +32,15 @@ from .verify import FRESHNESS, MAX_CAPABILITIES, MAX_STATUS_BITS, _verify_delega
 
 LINK_V = "ainra-link-1"
 LINK_POP_PURPOSE = "ainra-link-pop-1"
+#: D-110: what an issuer key signs over. Not LINK_POP_PURPOSE: agreeing to be linked as itself is not agreeing to
+#: answer for every token it signs, and the reverse.
+ISSUER_LINK_POP_PURPOSE = "ainra-issuer-link-pop-1"
+#: Longest issuer name a link may carry, in bytes.
+MAX_ISSUER_LEN = 255
 _TOP = frozenset(("v", "registrar", "passport", "subject", "scope", "nbf", "exp", "status", "passport_status",
                   "pop", "log"))
 _SUBJECT = frozenset(("kind", "alg", "thumbprint"))
+_SUBJECT_ISSUER = _SUBJECT | {"iss"}
 _STATUSREF = frozenset(("uri", "idx"))
 _LOG = frozenset(("leaf",))
 #: The name grammar as the core states it (name.rs): 1–63 of a-z 0-9 '-', not starting or ending with '-'.
@@ -56,6 +68,12 @@ def _str(v: object) -> str:
     if not isinstance(v, str):
         raise _Reject(R.SCHEMA_VIOLATION)
     return v
+
+
+def issuer_name_ok(iss: object) -> bool:
+    """An issuer name a link may carry: 1 to 255 bytes of visible ASCII (0x21 to 0x7E). No space, no control
+    character, nothing outside ASCII, so two names that look the same are the same bytes."""
+    return isinstance(iss, str) and 0 < len(iss) <= MAX_ISSUER_LEN and all(0x21 <= ord(ch) <= 0x7E for ch in iss)
 
 
 def _label(s: str) -> bool:
@@ -86,7 +104,12 @@ def _parse_checked(raw: bytes) -> dict:
     except Exception:
         raise _Reject(R.SCHEMA_VIOLATION) from None
     _exact(o, _TOP)
-    subject = _exact(o["subject"], _SUBJECT)
+    # `iss` is the one optional member (D-110): with it the subject has four fields, without it three.
+    subject = o["subject"]
+    subject = _exact(subject, _SUBJECT_ISSUER if isinstance(subject, dict) and "iss" in subject else _SUBJECT)
+    iss = subject.get("iss")
+    if "iss" in subject:
+        _str(iss)  # present, it is a string: null is not the canonical bytes of any link
     status = _exact(o["status"], _STATUSREF)
     pstatus = _exact(o["passport_status"], _STATUSREF)
     log = _exact(o["log"], _LOG)
@@ -103,7 +126,11 @@ def _parse_checked(raw: bytes) -> dict:
             raise _Reject(R.SCHEMA_VIOLATION)
     except CanonError:
         raise _Reject(R.SCHEMA_VIOLATION) from None
-    if o["v"] != LINK_V or subject["kind"] != "jwk" or subject["alg"] not in ("Ed25519", "ES256K", "ES256"):
+    if o["v"] != LINK_V or subject["alg"] not in ("Ed25519", "ES256K", "ES256"):
+        raise _Reject(R.SCHEMA_VIOLATION)
+    # A `jwk` link names no issuer; an `issuer` link names exactly one, well-formed (D-110).
+    if not ((subject["kind"] == "jwk" and "iss" not in subject)
+            or (subject["kind"] == "issuer" and issuer_name_ok(iss))):
         raise _Reject(R.SCHEMA_VIOLATION)
     tp, pop, leaf = b64d(subject["thumbprint"]), b64d(o["pop"]), b64d(log["leaf"])
     if tp is None or len(tp) != 32 or pop is None or len(pop) != 64 or leaf is None or len(leaf) != 32:
@@ -183,6 +210,13 @@ def pop_signing_bytes(registrar: str, passport: str, thumbprint: str, nbf: int) 
                         "thumbprint": thumbprint, "nbf": nbf})
 
 
+def issuer_pop_signing_bytes(registrar: str, passport: str, thumbprint: str, iss: str, nbf: int) -> bytes:
+    """What an issuer key signs to consent to an issuer link (D-110). Frozen. It names the issuer, so a consent given
+    for one name is not a consent for another."""
+    return canon_bytes({"purpose": ISSUER_LINK_POP_PURPOSE, "registrar": registrar, "passport": passport,
+                        "thumbprint": thumbprint, "iss": iss, "nbf": nbf})
+
+
 def _authenticate_publication(info: dict, claimed_uri: str, link: dict) -> None:
     """The status publication must be the one the registrar signed (D-020), bound three ways by URI."""
     if not info.get("status_ed25519") or not info.get("status_mldsa65"):
@@ -231,7 +265,7 @@ def _bit(bits: bytes, n: int, idx: int) -> bool:
 
 
 def _verify(anchors: dict, revoked_delegates: list, link: dict, presented_key: bytes, now: int,
-            freshness: str, capability: str | None) -> dict:
+            freshness: str, capability: str | None, issuer: str | None = None) -> dict:
     if not isinstance(link, dict):
         raise _Reject(R.SCHEMA_VIOLATION)
     raw = b64d(link.get("claims"))
@@ -278,7 +312,15 @@ def _verify(anchors: dict, revoked_delegates: list, link: dict, presented_key: b
     tp, alg = c["subject"]["thumbprint"], presented_key_alg(presented_key)
     if alg is None or alg != c["subject"]["alg"] or presented_key_thumbprint(presented_key) != tp:
         raise _Reject(R.SIG_INVALID)
-    consent = pop_signing_bytes(c["registrar"], c["passport"], tp, c["nbf"])
+    # …and it was used as the link says (D-110): a request's key for a `jwk` link; a token's issuer key, under
+    # this issuer name, for an `issuer` link. The consent is over exactly that.
+    named = c["subject"].get("iss")
+    if named is None and issuer is None:
+        consent = pop_signing_bytes(c["registrar"], c["passport"], tp, c["nbf"])
+    elif named is not None and issuer is not None and named == issuer:
+        consent = issuer_pop_signing_bytes(c["registrar"], c["passport"], tp, named, c["nbf"])
+    else:
+        raise _Reject(R.SIG_INVALID)
     verify = {"Ed25519": ed25519_verify, "ES256K": es256k_verify, "ES256": es256_verify}[alg]
     if not verify(presented_key, c["_pop"], consent):
         raise _Reject(R.SIG_INVALID)
@@ -310,8 +352,11 @@ def _verify(anchors: dict, revoked_delegates: list, link: dict, presented_key: b
     cutoff = info.get("distrust_from_leaf")
     if cutoff is not None and link["leaf_index"] >= int(cutoff):
         raise _Reject(R.REGISTRAR_DISTRUSTED)
-    return {"registrar": c["registrar"], "operator": c["_operator"], "passport": c["passport"],
-            "scope": list(c["scope"])}
+    who = {"registrar": c["registrar"], "operator": c["_operator"], "passport": c["passport"],
+           "scope": list(c["scope"])}
+    if named is not None:
+        who["issuer"] = named
+    return who
 
 
 def link_from_index(index: dict, publication: dict, thumbprint: str) -> dict | None:
@@ -332,15 +377,22 @@ def link_from_index(index: dict, publication: dict, thumbprint: str) -> dict | N
 
 
 def verify_link(anchors: dict, revoked_delegates: list, link: dict, presented_key: bytes, now: int,
-                freshness: str = "F2", capability: str | None = None) -> dict:
-    """``{"verdict": "valid", registrar, operator, passport, scope}`` or ``{"verdict": "invalid", "reason": …}``.
+                freshness: str = "F2", capability: str | None = None, issuer: str | None = None) -> dict:
+    """``{"verdict": "valid", registrar, operator, passport, scope}`` (and ``issuer`` for an issuer link) or
+    ``{"verdict": "invalid", "reason": …}``.
+
+    ``issuer`` says how the gate used the key (D-110): ``None`` when the key signed the request; the issuer name
+    when it signed a token instead (the token's ``iss``, already matched to the key from the issuer's own published
+    keys). An empty string is a name, and no link carries it.
 
     ``anchors`` and ``revoked_delegates`` must come from an authenticated directory; use
     :meth:`ainra.Verifier.verify_link`, which supplies them. Never raises.
     """
     try:
+        if issuer is not None and not isinstance(issuer, str):
+            raise _Reject(R.SCHEMA_VIOLATION)
         return {"verdict": "valid", **_verify(anchors, revoked_delegates, link, presented_key, now, freshness,
-                                              capability)}
+                                              capability, issuer)}
     except _Reject as e:
         return {"verdict": "invalid", "reason": e.reason}
     except Exception:

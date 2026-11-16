@@ -18,20 +18,25 @@ def served(v):
 def run(v):
     verifier = Verifier.from_directory(v["directory"], v["roots"]["root_ed25519"], v["roots"]["root_slh"], freshness=v["freshness"])
     if verifier is None:
-        return {"name": v["name"], "status": "no_gate", "reason": None, "operator": None}
+        return {"name": v["name"], "status": "no_gate", "reason": None, "operator": None, "issuer": None}
     seen, out = {}, {}
     async def app(scope, receive, send):
-        seen["op"] = scope["ainra_link"]["operator"]
+        seen["op"] = scope["ainra_link"]["operator"]; seen["iss"] = scope["ainra_link"].get("issuer")
         await send({"type": "http.response.start", "status": 200, "headers": []}); await send({"type": "http.response.body", "body": b""})
     cap = v.get("capability")
-    gate = AinraLinkGate(app, verifier, lambda s, h: b64(v["presented_key"]), lambda: served(v), v["now"],
-                         capability=(lambda s: cap) if cap else None)
+    # A vector that carries `issuer` (D-110) goes in through the TOKEN door: the gate verified a token with the key.
+    if isinstance(v.get("issuer"), str):
+        gate = AinraLinkGate(app, verifier, None, lambda: served(v), v["now"], capability=(lambda s: cap) if cap else None,
+                             verified_token=lambda s, h: (b64(v["presented_key"]), v["issuer"]))
+    else:
+        gate = AinraLinkGate(app, verifier, lambda s, h: b64(v["presented_key"]), lambda: served(v), v["now"],
+                             capability=(lambda s: cap) if cap else None)
     async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
     async def send(m):
         if m["type"] == "http.response.start":
             out["status"] = m["status"]; out["reason"] = dict(m["headers"]).get(b"x-ainra-reason", b"").decode() or None
     asyncio.run(gate({"type": "http", "method": "GET", "path": "/", "query_string": b"", "headers": [(b"host", b"x.example")]}, receive, send))
-    return {"name": v["name"], "status": out["status"], "reason": out["reason"], "operator": seen.get("op")}
+    return {"name": v["name"], "status": out["status"], "reason": out["reason"], "operator": seen.get("op"), "issuer": seen.get("iss")}
 
 d = sys.argv[1]
 for f in sorted(x for x in os.listdir(d) if x.endswith(".json") and x != "manifest.json"):

@@ -1707,6 +1707,8 @@ pub struct WireLink {
 
 /// Verify a link AS A GATE (D-078 on top of D-072). `presented_key` is the key the gate has ALREADY verified
 /// the request's signature with — this answers who stands behind that key, not whether the request is genuine.
+/// `issuer` is `None` for that use. `Some(name)` says the gate verified a TOKEN with the key instead, and `name` is
+/// the issuer written in that token, already matched to the key from the issuer's own published keys (D-110).
 ///
 /// Order, fixed, first failure wins: the link's schema; its registrar is accredited; the status publication is
 /// authenticated against the directory's status key (nothing is decompressed before that holds, and a list that is
@@ -1720,6 +1722,7 @@ pub fn verify_link_gate(
     now: u64,
     freshness: status::Freshness,
     capability: Option<&str>,
+    issuer: Option<&str>,
 ) -> Result<link::Attribution, Reason> {
     let claims = bad(b64::decode(&w.claims))?;
     let c = link::LinkClaims::parse_checked(&claims)?;
@@ -1773,9 +1776,25 @@ pub fn verify_link_gate(
             inclusion_proof: &inclusion_proof,
             revoked_delegates: &trust.revoked_delegates,
             capability,
+            issuer,
         },
         &trust.anchors,
     )
+}
+
+/// A valid link answer as JSON. `issuer` appears only for an issuer link, so every earlier answer is unchanged.
+fn attribution_json(a: link::Attribution) -> serde_json::Value {
+    let mut out = json!({
+        "verdict": "valid",
+        "registrar": a.registrar,
+        "operator": a.operator,
+        "passport": a.passport,
+        "scope": a.scope,
+    });
+    if let Some(iss) = a.issuer {
+        out["issuer"] = json!(iss);
+    }
+    out
 }
 
 /// Run one `vectors/v1-link` vector: accredit the directory against both roots, then [`verify_link_gate`] at the
@@ -1802,14 +1821,15 @@ pub fn link_vector_result(v: &serde_json::Value) -> serde_json::Value {
     let Ok(w) = serde_json::from_value::<WireLink>(v["link"].clone()) else {
         return invalid("schema_violation");
     };
-    match verify_link_gate(&w, &trust, &key, now, f, v["capability"].as_str()) {
-        Ok(a) => json!({
-            "verdict": "valid",
-            "registrar": a.registrar,
-            "operator": a.operator,
-            "passport": a.passport,
-            "scope": a.scope,
-        }),
+    // `issuer` absent or null: the gate verified the request with the key. A string: it verified a token naming
+    // that issuer (D-110). Anything else is not a vector.
+    let issuer = match &v["issuer"] {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.as_str()),
+        _ => return invalid("schema_violation"),
+    };
+    match verify_link_gate(&w, &trust, &key, now, f, v["capability"].as_str(), issuer) {
+        Ok(a) => attribution_json(a),
         Err(r) => invalid(&reason_str(r)),
     }
 }
@@ -1857,8 +1877,11 @@ pub fn decision_chain_result(
 }
 
 /// A gate's link check from JSON (the WASM and edge boundary): the link as a gate receives it, the gate's trust from
-/// [`accredit_json`], the key it verified (base64url), its clock, class and capability (`""` for none). Returns
-/// `{"verdict":"valid", registrar, operator, passport, scope}` or `{"verdict":"invalid","reason":…}`. Never panics.
+/// [`accredit_json`], the key it verified (base64url), its clock, class and capability (`""` for none), and how it
+/// used the key: `issuer` is `None` when the key signed the request, `Some(name)` when it signed a token naming that
+/// issuer (D-110; `Some("")` is a name, and no link carries it). Returns
+/// `{"verdict":"valid", registrar, operator, passport, scope}` (and `issuer` for an issuer link) or
+/// `{"verdict":"invalid","reason":…}`. Never panics.
 pub fn link_check_json(
     link_json: &str,
     trust_json: &str,
@@ -1866,6 +1889,7 @@ pub fn link_check_json(
     now_secs: u64,
     freshness: &str,
     capability: &str,
+    issuer: Option<&str>,
 ) -> String {
     let invalid = |r: &str| json!({ "verdict": "invalid", "reason": r }).to_string();
     let (Ok(w), Some(trust), Some(f), Ok(key)) = (
@@ -1877,15 +1901,8 @@ pub fn link_check_json(
         return invalid("schema_violation");
     };
     let cap = (!capability.is_empty()).then_some(capability);
-    match verify_link_gate(&w, &trust, &key, now_secs, f, cap) {
-        Ok(a) => json!({
-            "verdict": "valid",
-            "registrar": a.registrar,
-            "operator": a.operator,
-            "passport": a.passport,
-            "scope": a.scope,
-        })
-        .to_string(),
+    match verify_link_gate(&w, &trust, &key, now_secs, f, cap, issuer) {
+        Ok(a) => attribution_json(a).to_string(),
         Err(r) => invalid(&reason_str(r)),
     }
 }

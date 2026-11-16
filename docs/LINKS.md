@@ -10,6 +10,10 @@ status list that anyone can check offline. Decision: [D-078](DECISIONS.md). Plan
 with whatever protocol it already speaks; a link answers the next question: *who stands behind this key, and is that
 still true?*
 
+**Two kinds.** A link is for a key that signs requests. An **issuer link** ([below](#issuer-links), D-110) is for a
+key that signs *tokens* naming other agents: the key an identity system issues with. One issuer link answers for
+every token that key signs.
+
 ## The record
 
 ```json
@@ -55,10 +59,10 @@ still true?*
 
 | Route | What it does |
 |---|---|
-| `POST /link` | Body `{passport, alg?, key, pop, scope?, nbf, exp}` (`alg` is `Ed25519`, the default, `ES256K` or `ES256`; `key` the base64url public key in that algorithm's form). Refused unless the key signed its consent, the passport is this registrar's and not revoked, and the link fits inside it: window inside the passport's, scope inside its capabilities. Bearer token, rate limited. |
+| `POST /link` | Body `{passport, alg?, key, pop, scope?, nbf, exp, issuer?}` (`alg` is `Ed25519`, the default, `ES256K` or `ES256`; `key` the base64url public key in that algorithm's form; `issuer` makes it an [issuer link](#issuer-links)). Refused unless the key signed its consent, the passport is this registrar's and not revoked, and the link fits inside it: window inside the passport's, scope inside its capabilities. Bearer token, rate limited. |
 | `GET /links` | The whole index. Each entry is registrar-signed and proven under one delegate-signed checkpoint. There is no lookup by key: you download the index, so nobody learns which key you asked about. |
 | `POST /link/revoke` | Body `{thumbprint, kind, suspect_since?}`. `kind` is `link` (this key is retired), `operator` (the passport's lineage is suspended, so every link flips) or `compromise` (the key was stolen; `suspect_since` marks when its actions stopped being the operator's). Bearer token, rate limited. |
-| `POST /demo/link`, `POST /demo/link/revoke` | The public demo door, for trying Link without a token: the same bodies, the same proof of control, but staging only, on the demo door's own rate limit, and only for demo specimens (passports from `POST /demo/issue`). A key cannot be linked to, and a link cannot be revoked from, any other passport through it. |
+| `POST /demo/link`, `POST /demo/link/revoke` | The public demo door, for trying Link without a token: the same bodies, the same proof of control, but staging only, on the demo door's own rate limit, and only for demo specimens (passports from `POST /demo/issue`). A key cannot be linked to, and a link cannot be revoked from, any other passport through it. It refuses issuer links. |
 
 Three rules:
 
@@ -94,7 +98,8 @@ The order is fixed and the first failure wins:
    decompressed (`stale_status`);
 4. the window, exactly (`not_yet_valid`, `expired`);
 5. the registrar's hybrid signature (`alg_downgrade`, `sig_invalid`);
-6. the key the gate verified is the linked key, and that key signed its consent (`sig_invalid`);
+6. the key the gate verified is the linked key, it was used as the link says (a request's key, or a token's issuer
+   key under the link's issuer name), and that key signed its consent to exactly that (`sig_invalid`);
 7. scope (`ceiling_exceeded`);
 8. freshness, then the link's bit, then the passport's (`stale_status`, `revoked`);
 9. logged before valid (`checkpoint_invalid`, `not_logged`, `registrar_distrusted`).
@@ -106,24 +111,86 @@ refuses it.
 
 | Where | What |
 |---|---|
-| Node (Express/Connect) | `ainraLinkGate(verifier, { verifiedKey, source, capability?, decisions? })` from `@ainra/middleware` |
-| Python (ASGI) | `AinraLinkGate(app, verifier, verified_key, source, capability=..., decisions=...)` |
-| Edge (WebAssembly) | `createAinraLinkCheck({ directory, roots, freshness })` from `@ainra/edge`, plus `linkFromIndex` |
-| Command line | `ainra verify-link --link L --directory D --roots R --key K` prints ACCEPT with the operator, or REFUSE with the reason; `ainra link`, `ainra link-revoke` and `ainra links` run a local registrar's side |
-| MCP | `ainra_verify_link`, read-only; takes a link, or the registrar's index and status publication |
+| Node (Express/Connect) | `ainraLinkGate(verifier, { verifiedKey, source, capability?, decisions? })` from `@ainra/middleware`; `verifiedToken` in place of `verifiedKey` for tokens |
+| Python (ASGI) | `AinraLinkGate(app, verifier, verified_key, source, capability=..., decisions=...)`; `verified_token=` in place of `verified_key` for tokens |
+| Edge (WebAssembly) | `createAinraLinkCheck({ directory, roots, freshness })` from `@ainra/edge`, plus `linkFromIndex`; the check takes `issuer` as its fourth argument |
+| Command line | `ainra verify-link --link L --directory D --roots R --key K [--issuer NAME]` prints ACCEPT with the operator, or REFUSE with the reason; `ainra link` (`--issuer NAME` for an issuer link), `ainra link-revoke` and `ainra links` run a local registrar's side |
+| MCP | `ainra_verify_link`, read-only; takes a link, or the registrar's index and status publication, and `issuer` when the key signed a token |
+| Hosted verifier | `POST /v1/verify` with `{link, key, capability?, issuer?}`; a key of any link algorithm |
 
 `verifiedKey` (Python: `verified_key`) is yours: whatever already checks the request's signature hands over the key
 it verified. `source` returns the registrar's index and signed status publication; cache them inside your freshness
 class. Each gate records `link` decisions when given a decision log.
 
 `make link-parity` serves every link vector to the Node, edge and Python gates as a registrar would, and requires the
-same status, reason and operator from all three. CI runs it.
+same status, reason, operator and issuer from all three. CI runs it.
+
+## Issuer links
+
+Most agents do not sign their own requests. They carry a token from an identity system: a JWT that names the agent,
+signed with the system's key. An **issuer link** ([D-110](DECISIONS.md)) is one link for that key. It is the same
+record with two differences:
+
+```json
+"subject": { "kind": "issuer", "alg": "ES256", "thumbprint": "<RFC 7638 thumbprint>", "iss": "https://issuer.example" }
+```
+
+- `iss` is the one name the key issues as: 1 to 255 bytes of visible ASCII, compared byte for byte with the issuer
+  name in the token.
+- The consent is a different statement, so that neither kind can be made from the other: the canonical
+  `{"iss", "nbf", "passport", "purpose": "ainra-issuer-link-pop-1", "registrar", "thumbprint"}`.
+
+A gate does its ordinary check first, and then tells the link check how it used the key:
+
+```js
+// 1. The ordinary check, unchanged: the token's signature against the keys its issuer publishes, audience, expiry.
+const { key, issuer } = await yourTokenCheck(req);       // the issuer key that verified it, and the token's `iss`
+// 2. Who answers for that issuer? The link is found by the KEY, never by the issuer's name.
+const link = linkFromIndex(index, statusPublication, presentedKeyThumbprint(key));
+const r = link ? gate.verifyLink(link, key, nowSecs, "read:invoices", issuer) : { verdict: "invalid", reason: "not_linked" };
+// { verdict: "valid", registrar, operator, passport, scope, issuer }  or  { verdict: "invalid", reason }
+```
+
+```python
+r = gate.verify_link(link, key, now, "read:invoices", issuer)
+```
+
+Leave `issuer` out when the key signed the request itself. A link is consent to one use: an issuer link presented
+for a request, an ordinary link presented for a token, and a token naming another issuer are each `sig_invalid`.
+
+**What a valid answer means.** The named operator answers for tokens this key signs as this issuer, and has not been
+withdrawn. Revoking the link refuses every such token at every gate.
+
+**What it does not mean.**
+
+- It does not say the key *belongs* to that issuer. A gate learns an issuer's keys from the issuer, as it always has.
+  Take the key from there and never from a link, and look the link up by the key and never by the name. A gate that
+  does otherwise can be shown a link someone made for their own key under another system's name.
+- It does not vouch for the agent the token names. That is the issuer's word, as before.
+- It does not make a token genuine, fresh or meant for you. That is your ordinary check.
+
+**Limits today.** No outside system has linked a key. One name per key, so a key shared by several issuer names can
+be linked for one of them. Each new signing key needs its own consent. RSA keys cannot be linked yet. A gate's
+decision record names the issuer's key, not the agent.
+
+`make issuer-link-e2e` ([`kits/issuer-link`](../kits/issuer-link)) runs it against a live registrar with a token
+issuer that has no AINRA code in it:
+
+| Step | The issuer's own check | AINRA |
+|---|---|---|
+| A token from the linked issuer | verifies | valid, names the operator and the issuer |
+| A token from an issuer nobody linked | verifies | refused: not linked |
+| A token naming the linked issuer, signed with another key | refused | no link for that key |
+| The issuing key signing a request itself | (not a token) | refused: `sig_invalid` |
+| After the issuer link is revoked, the same token | verifies | refused: `revoked` |
 
 ## Held to one corpus
 
 [`vectors/v1-link`](../vectors/v1-link) holds every link vector in gate form: the directory and roots, the link as a gate
-receives it, the key the gate verified, and the gate's own clock, freshness class and capability. A valid answer names
-the registrar, operator, passport and scope, so accepting for the wrong operator counts as a disagreement. The Rust
+receives it, the key the gate verified, and the gate's own clock, freshness class and capability; from `l54` a vector
+may also carry `issuer`, the issuer name in the token the gate verified with that key. A valid answer names
+the registrar, operator, passport and scope (and the issuer, for an issuer link), so accepting for the wrong operator
+counts as a disagreement. The Rust
 core, the TypeScript SDK and the Python package must agree on every one in `make diff`. Each check was removed once from
 each implementation to confirm a vector goes red; the leaf-binding attack (`l22`) was rewritten after that exercise
 showed its first version could not tell a verifier with the check from one without it.

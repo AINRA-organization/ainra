@@ -1359,11 +1359,6 @@ export class Verifier {
     }
   }
 
-  /** AINRA Link (D-078): who stands behind `presentedKey` — a 32-byte Ed25519 key, a 33-byte compressed secp256k1
-   *  point (ES256K, D-082), or a 65-byte uncompressed P-256 point (ES256, D-108) — a key this gate has ALREADY verified the
-   *  request's signature with. Uses the directory's anchors and revoked delegates, this verifier's freshness class,
-   *  and authenticates the status publication before reading a bit. `capability` is what the request exercises.
-   *  A key with no link is the caller's outcome ("not linked") — this checks the link it is given. Never throws. */
   /** Check a registrar's receipt for a gate's logged decision head (D-081) against this verifier's accredited
    *  registrars: the statement names and was signed by `gateKey`, and it is logged under a checkpoint the
    *  registrar's log key signed. Never throws. */
@@ -1376,9 +1371,21 @@ export class Verifier {
     }
   }
 
-  verifyLink(link: WireLink, presentedKey: Uint8Array, now: number, capability?: string): LinkVerdict {
+  /** AINRA Link (D-078): who stands behind `presentedKey` — a 32-byte Ed25519 key, a 33-byte compressed secp256k1
+   *  point (ES256K, D-082), or a 65-byte uncompressed P-256 point (ES256, D-108) — a key this gate has ALREADY verified
+   *  a signature with. Uses the directory's anchors and revoked delegates, this verifier's freshness class,
+   *  and authenticates the status publication before reading a bit. `capability` is what the request exercises.
+   *  A key with no link is the caller's outcome ("not linked") — this checks the link it is given. Never throws.
+   *
+   *  `issuer` says how the gate used the key (D-110). Leave it out when the key signed the REQUEST. Pass the issuer
+   *  name when the key signed a TOKEN instead: the name written in that token (its `iss`), which the gate has already
+   *  matched to the key from the keys that issuer publishes. A link is consent to one use: an issuer link presented
+   *  for a request, an ordinary link presented for a token, or a token naming another issuer is `sig_invalid`.
+   *  A valid issuer answer says who answers for the ISSUER; it says nothing about the agent the token names. Take
+   *  the key from the issuer, never from a link, and find the link by that key, never by the issuer's name. */
+  verifyLink(link: WireLink, presentedKey: Uint8Array, now: number, capability?: string, issuer?: string): LinkVerdict {
     try {
-      return { verdict: "valid", ...verifyLinkInner(link, this.anchors, this.revokedDelegates, presentedKey, now, this.freshness, capability) };
+      return { verdict: "valid", ...verifyLinkInner(link, this.anchors, this.revokedDelegates, presentedKey, now, this.freshness, capability, issuer) };
     } catch (e) {
       if (e instanceof Reject) return { verdict: "invalid", reason: e.reason };
       return { verdict: "invalid", reason: "schema_violation" };
@@ -1830,8 +1837,14 @@ export async function proveInstancePossession(args: {
 
 const LINK_V = "ainra-link-1";
 const LINK_POP_PURPOSE = "ainra-link-pop-1";
+// D-110: what an issuer key signs over. Not LINK_POP_PURPOSE — a key that agreed to be linked as itself has not agreed
+// to answer for every token it signs, and the reverse.
+const ISSUER_LINK_POP_PURPOSE = "ainra-issuer-link-pop-1";
+// An issuer name a link may carry: 1 to 255 bytes of visible ASCII, so names that look the same are the same bytes.
+const ISSUER_NAME = /^[\x21-\x7e]{1,255}$/;
 const ALLOWED_LINK = new Set(["v", "registrar", "passport", "subject", "scope", "nbf", "exp", "status", "passport_status", "pop", "log"]);
-const ALLOWED_LINK_SUBJECT = new Set(["kind", "alg", "thumbprint"]);
+const REQUIRED_LINK_SUBJECT = new Set(["kind", "alg", "thumbprint"]);
+const ALLOWED_LINK_SUBJECT = new Set([...REQUIRED_LINK_SUBJECT, "iss"]);
 const ALLOWED_LINK_LOG = new Set(["leaf"]);
 
 /** One link as a gate receives it: an index entry (or the agent's own copy), the checkpoint it is proven under, and
@@ -1857,6 +1870,9 @@ export interface LinkAttribution {
   operator: string;
   passport: string;
   scope: string[];
+  /** Only for an issuer link (D-110): the issuer name the link is for. The operator answers for the issuer; nothing
+   *  here vouches for the agent a token names. */
+  issuer?: string;
 }
 export type LinkVerdict = ({ verdict: "valid" } & LinkAttribution) | { verdict: "invalid"; reason: Reason };
 
@@ -1865,6 +1881,8 @@ interface LinkClaims {
   passport: string;
   alg: "Ed25519" | "ES256K" | "ES256";
   thumbprint: string;
+  /** The issuer name of an `issuer` link; undefined on a `jwk` link. */
+  iss: string | undefined;
   scope: string[];
   nbf: number;
   exp: number;
@@ -1896,11 +1914,13 @@ function parseLinkChecked(raw: Uint8Array): LinkClaims {
   const status = o.status as Record<string, unknown>;
   const pstatus = o.passport_status as Record<string, unknown>;
   const log = o.log as Record<string, unknown>;
-  for (const [obj, allowed] of [[subject, ALLOWED_LINK_SUBJECT], [status, ALLOWED_STATUSREF], [pstatus, ALLOWED_STATUSREF], [log, ALLOWED_LINK_LOG]] as const) {
+  for (const [obj, allowed, required] of [[subject, ALLOWED_LINK_SUBJECT, REQUIRED_LINK_SUBJECT], [status, ALLOWED_STATUSREF, ALLOWED_STATUSREF], [pstatus, ALLOWED_STATUSREF, ALLOWED_STATUSREF], [log, ALLOWED_LINK_LOG, ALLOWED_LINK_LOG]] as const) {
     if (typeof obj !== "object" || obj === null || Array.isArray(obj)) throw new Reject("schema_violation");
     denyUnknown(obj, allowed);
-    for (const k of allowed) if (!Object.hasOwn(obj, k)) throw new Reject("schema_violation");
+    for (const k of required) if (!Object.hasOwn(obj, k)) throw new Reject("schema_violation");
   }
+  // `iss` is the one optional member (D-110). Present, it is a string: `null` is not the canonical bytes of any link.
+  const iss = Object.hasOwn(subject, "iss") ? reqString(subject.iss) : undefined;
   const v = reqString(o.v);
   const registrar = reqString(o.registrar);
   const passport = reqString(o.passport);
@@ -1921,7 +1941,9 @@ function parseLinkChecked(raw: Uint8Array): LinkClaims {
     throw new Reject("schema_violation");
   }
   if (!eqBytes(new TextEncoder().encode(again), raw)) throw new Reject("schema_violation");
-  if (v !== LINK_V || kind !== "jwk" || (alg !== "Ed25519" && alg !== "ES256K" && alg !== "ES256")) throw new Reject("schema_violation");
+  if (v !== LINK_V || (alg !== "Ed25519" && alg !== "ES256K" && alg !== "ES256")) throw new Reject("schema_violation");
+  // A `jwk` link names no issuer; an `issuer` link names exactly one, well-formed (D-110).
+  if (!((kind === "jwk" && iss === undefined) || (kind === "issuer" && iss !== undefined && ISSUER_NAME.test(iss)))) throw new Reject("schema_violation");
   const tp = strictB64u(thumbprint);
   const pop = strictB64u(popB64);
   const leaf = strictB64u(leafB64);
@@ -1936,7 +1958,7 @@ function parseLinkChecked(raw: Uint8Array): LinkClaims {
   // A registrar links only passports it issued itself.
   if (passport.split(":")[1] !== registrar) throw new Reject("schema_violation");
   return {
-    registrar, passport, alg, thumbprint, scope, nbf: o.nbf, exp: o.exp,
+    registrar, passport, alg, thumbprint, iss, scope, nbf: o.nbf, exp: o.exp,
     statusUri, statusIdx: status.idx, passportIdx: pstatus.idx, pop, leaf,
   };
 }
@@ -1988,6 +2010,12 @@ export function linkPopSigningBytes(registrar: string, passport: string, thumbpr
   return new TextEncoder().encode(canonicalize({ purpose: LINK_POP_PURPOSE, registrar, passport, thumbprint, nbf }));
 }
 
+/** What an issuer key signs to consent to an issuer link (D-110). Frozen. It names the issuer, so a consent given for
+ *  one name is not a consent for another. */
+export function issuerLinkPopSigningBytes(registrar: string, passport: string, thumbprint: string, iss: string, nbf: number): Uint8Array {
+  return new TextEncoder().encode(canonicalize({ purpose: ISSUER_LINK_POP_PURPOSE, registrar, passport, thumbprint, iss, nbf }));
+}
+
 /** Verify a link as a gate: schema, accredited registrar, the status publication authenticated against the
  *  directory's status key (before anything is decompressed), then the signatures, proof of control, scope, both
  *  status bits and logged-before-valid — first failure wins, in the core's order. */
@@ -1999,6 +2027,7 @@ function verifyLinkInner(
   now: number,
   freshness: FreshnessClass,
   capability: string | undefined,
+  issuer: string | undefined,
 ): LinkAttribution {
   const raw = dec(w.claims);
   const c = parseLinkChecked(raw);
@@ -2033,7 +2062,12 @@ function verifyLinkInner(
   // P-256 point, D-108), same thumbprint
   const presentedAlg = presentedKeyAlg(presentedKey);
   if (presentedAlg === null || presentedAlg !== c.alg || jwkThumbprintOf(presentedKey) !== c.thumbprint) throw new Reject("sig_invalid");
-  const consent = linkPopSigningBytes(c.registrar, c.passport, c.thumbprint, c.nbf);
+  // …and it was used as the link says (D-110): a request's key for a `jwk` link; a token's issuer key, under this
+  // issuer name, for an `issuer` link. The consent is over exactly that.
+  let consent: Uint8Array;
+  if (c.iss === undefined && issuer === undefined) consent = linkPopSigningBytes(c.registrar, c.passport, c.thumbprint, c.nbf);
+  else if (c.iss !== undefined && issuer !== undefined && c.iss === issuer) consent = issuerLinkPopSigningBytes(c.registrar, c.passport, c.thumbprint, c.iss, c.nbf);
+  else throw new Reject("sig_invalid");
   const consented = presentedAlg === "Ed25519" ? ed25519Verify(presentedKey, consent, c.pop)
     : presentedAlg === "ES256K" ? es256kVerify(presentedKey, consent, c.pop)
     : es256Verify(presentedKey, consent, c.pop);
@@ -2051,7 +2085,9 @@ function verifyLinkInner(
   if (!eqBytes(c.leaf, prelogLeaf(raw))) throw new Reject("not_logged");
   if (!verifyInclusion(c.leaf, w.leaf_index, w.checkpoint.size, proof, cpRoot)) throw new Reject("not_logged");
   if (reg.distrustFromLeaf !== undefined && w.leaf_index >= reg.distrustFromLeaf) throw new Reject("registrar_distrusted");
-  return { registrar: c.registrar, operator: c.passport.split(":")[2], passport: c.passport, scope: c.scope };
+  const who: LinkAttribution = { registrar: c.registrar, operator: c.passport.split(":")[2], passport: c.passport, scope: c.scope };
+  if (c.iss !== undefined) who.issuer = c.iss;
+  return who;
 }
 
 /** A registrar's link index, as `GET /links` serves it (D-078, D-079: fetched whole, never looked up by key). */
@@ -2149,12 +2185,15 @@ export function runLinkVector(v: {
   now: number;
   freshness: FreshnessClass;
   capability: string | null;
+  /** D-110: absent or null when the key signed the request; the issuer name when it signed a token. */
+  issuer?: string | null;
 }): LinkVerdict | { verdict: "no_gate" } {
   const gate = Verifier.fromDirectoryB64(v.directory, v.roots.root_ed25519, v.roots.root_slh, v.freshness);
   if (!gate) return { verdict: "no_gate" };
   const key = strictB64u(v.presented_key);
   if (key === null || presentedKeyAlg(key) === null) return { verdict: "invalid", reason: "schema_violation" };
-  return gate.verifyLink(v.link, key, v.now, v.capability ?? undefined);
+  if (v.issuer !== undefined && v.issuer !== null && typeof v.issuer !== "string") return { verdict: "invalid", reason: "schema_violation" };
+  return gate.verifyLink(v.link, key, v.now, v.capability ?? undefined, v.issuer ?? undefined);
 }
 
 // ── Signed decision records (D-079) ─────────────────────────────────────────────────────────────────────────────

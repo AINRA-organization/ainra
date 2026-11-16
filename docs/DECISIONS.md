@@ -3449,3 +3449,100 @@ publish does not run on keys anyone can recompute, test network or not. The root
 
 *Status:* ACCEPTED 2026-11-15, by the operator's choice to replace it now and not wait for the ceremony. Built and
 run the same day.
+
+## D-110 — Issuer links: one link for the key a system issues with, and what it may be read to mean (M55 step 2)
+
+*Problem:* a link (D-078) answers for one key, and the key has to sign the request. Most agents do not sign their
+own requests. They carry a token from an identity system: a JWT that names the agent, signed with the system's key.
+Such a system issues to a great many agents and will not make a link for each. What a gate holds, after it has
+checked a token the usual way, is the issuer's key and the issuer's name. Nothing told it who answers for that
+issuer, or let anyone withdraw the issuer everywhere at once.
+
+*Decision:* a second kind of link, in the same record.
+
+- **The record.** `subject.kind` is `jwk` (a key that signs requests, as before) or `issuer` (a key that signs
+  tokens naming other agents). An `issuer` subject carries one more member, `iss`: the one name the key issues as,
+  compared byte for byte with the issuer name in the token. A `jwk` subject carries no `iss`. A name is 1 to 255
+  bytes of visible ASCII (0x21 to 0x7E): no space, no control character, nothing outside ASCII, so two names that
+  look the same are the same bytes. Everything else is the link it already was: the registrar's hybrid signature,
+  two status bits, logged before valid, one link per key, the three kinds of revocation.
+- **A separate consent.** The issuer's key signs `{iss, nbf, passport, purpose: "ainra-issuer-link-pop-1",
+  registrar, thumbprint}`. That is not the consent of an ordinary link. A key that agreed to be linked as itself has
+  not agreed to answer for every token it signs, and the reverse; a registrar cannot turn one into the other, and a
+  consent given for one issuer name is not a consent for another.
+- **The gate says how it used the key.** Every check takes one more input, `issuer`. Absent: the key verified the
+  request. Present: the key verified a token, and this is the issuer name in that token. A link is consent to one
+  use. An issuer link presented for a request, an ordinary link presented for a token, and a token naming another
+  issuer are each refused at the step where the consent is checked, with that step's reason (`sig_invalid`). No new
+  reason; the frozen set is unchanged.
+- **A valid answer** names the registrar, the operator, the passport, the scope and the issuer.
+
+*What an issuer link may be read to mean.* While its bits are clear: the named operator answers for tokens signed by
+this key that name this issuer. Revoking the link refuses all of them, at every gate, within the gate's own
+freshness class.
+
+*What it may not be read to mean:*
+
+1. **It does not say the key belongs to the issuer.** The consent proves the key's holder agreed. It does not prove
+   the holder is the system that name belongs to. A gate learns which key is an issuer's where it always has: from
+   the keys that issuer publishes. So a gate takes the key from the issuer and never from a link, and it finds the
+   link by the key it verified the token with, never by the issuer's name. Someone who links their own key under
+   another system's name gains nothing at a gate that does this: no token of that system verifies under their key.
+2. **It does not vouch for the agent a token names.** The operator answers for the issuer. Whether the issuer checked
+   anything before naming an agent is the issuer's affair, as it was before.
+3. **It does not make a token genuine,** fresh, or meant for this gate. Signature, audience and expiry are the gate's
+   ordinary check, done first.
+4. **It is not the issuer acting.** The issuing key signing a request directly is not covered.
+
+*Registrar:* `POST /link` takes an optional `issuer`. With it the consent must be the issuer one and the name
+well-formed; the rest of the intake is unchanged. **The open demo door refuses issuer links**: it takes a name of
+the caller's choosing with no token, and would let a stranger write any system's name into a published index.
+
+*Rejected:*
+- **A record of its own** (`ainra-issuer-link-1`). The same eight verification steps a second time, in three
+  implementations and three gates, to change one of them.
+- **No issuer name in the link.** Shorter, and then a key that signs for two issuers cannot be linked for one of
+  them, the answer cannot say which issuer was attributed, and a consent is silent about what it is for.
+- **Looking links up by issuer name.** That makes the link index a key directory for other systems: whoever links
+  first under a name supplies its key. See the first limit above.
+- **A new reason for "wrong use".** The reasons are frozen, and the consent step's reason already means "this key did
+  not agree to this".
+- **The registrar fetching the issuer's published keys before signing.** It would put a network fetch chosen by the
+  caller inside the registrar. A registrar should check that the key is one the named issuer publishes, by its own
+  means; the reference daemon does not, and says so here.
+- **Names outside ASCII, or a pattern for many names.** Both are ways for two different names to pass for one.
+
+*Held to:* `vectors/v1-link` l54 to l75, on their own seed (the 53 earlier vectors are byte-identical), in the three
+implementations (`make diff`, 75 of 75) and the three gates (`make link-parity`, 75 of 75, each through the gate's
+token door where the vector says the key verified a token). The corpus covers: a valid issuer link for a P-256 and
+for an Ed25519 key; its own bit and its operator's bit set; a token naming another issuer; each kind of link
+presented for the other use, the empty issuer name included; the ordinary consent in an issuer record; a consent for
+another name; a consent by another key; a token verified with a key the link does not name; each malformed shape of
+kind and name; the longest name and one byte more; a narrowed issuer link; an unknown kind. Removed once each on 16
+November 2026, with these vectors going red: the use check (l57 to l60, in each of the three implementations), and
+in the core the comparison of the issuer name (l57), the separate consent (l54 to l56, l72 to l74), the name's
+grammar (l68 to l71) and the tie between kind and name (l65, l66). `make issuer-link-e2e` (in `make live-drills`) runs the whole path against
+a running registrar with a token issuer that contains no AINRA code.
+
+*Found on the way:* the hosted verifier (`services/verify`) took 32-byte keys only, so since D-082 it answered
+`schema_violation` for every secp256k1 and P-256 link. It now takes a key of any link algorithm, and `issuer`.
+
+*Limits:*
+- **No outside system has linked a key.** The issuer in the drill is a stand-in the drill starts.
+- **One name per key.** A key that several issuers share (some systems use one signing key for many tenants) can be
+  linked for one of their names. The others read `sig_invalid` at a gate, not "not linked".
+- **Each new signing key needs its own consent.** Systems that rotate their token keys every few weeks must sign a
+  consent with each new key, and the old key's link is revoked or left to expire.
+- **A decision record names the issuer's key, not the agent.** Every agent of one issuer looks the same in a gate's
+  decision log. A gate that needs the agent keeps the token's own identifier in its own log; the record format is
+  unchanged.
+- **RSA keys cannot be linked** (step 3), and the largest identity systems sign with them.
+- **A careless gate is not protected.** A gate that takes the key from a link, or looks a link up by issuer name,
+  can be shown a link someone made for their own key under another system's name. See "may not be read to mean", 1.
+- Everything runs under a TEST root (step 5).
+
+*Not changed:* the Standard, the passport, every earlier vector and verdict, the frozen reasons, the decision record
+format, the meaning of every existing link and of every existing call (an absent `issuer` is the use there has
+always been).
+
+*Status:* ACCEPTED 2026-11-16, on the operator's instruction to continue. Plan: PLAN-M55.

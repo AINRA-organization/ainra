@@ -72,3 +72,23 @@ test("a link: who stands behind a key, with a receipt", async () => {
   const no = await post(base, { link: r.link, key: r.presented_key });
   assert.equal(no.reason, "revoked");
 });
+
+test("a link for a P-256 key, and an issuer link: the issuer is answered for, for its tokens only", async () => {
+  const vec = (n) => JSON.parse(readFileSync(new URL(`vectors/v1-link/${n}.json`, ROOT), "utf8"));
+  // `curve` and not a name with digits in it: the secret scanner reads "key: <name with digits>" as an API key.
+  const curve = vec("l44-es256");
+  const base = await start(curve.directory, curve.roots, curve.now, port());
+  // Until 16 November 2026 this service took 32-byte keys only, and a P-256 link read schema_violation.
+  assert.equal((await post(base, { link: curve.link, key: curve.presented_key })).decision, "accept");
+  const iss = vec("l54-issuer");
+  const ok = await post(base, { link: iss.link, key: iss.presented_key, issuer: iss.issuer });
+  assert.equal(ok.decision, "accept");
+  assert.equal(ok.issuer, iss.issuer);
+  assert.equal(JSON.parse(ok.receipt).kind, "link");
+  // The same link for a request the key signed itself, and for a token naming another issuer: refused.
+  assert.equal((await post(base, { link: iss.link, key: iss.presented_key })).reason, "sig_invalid");
+  assert.equal((await post(base, { link: iss.link, key: iss.presented_key, issuer: "https://other.example" })).reason, "sig_invalid");
+  assert.equal((await post(base, { link: iss.link, key: iss.presented_key, issuer: 7 })).reason, "schema_violation");
+  const gone = vec("l55-issuer-link-revoked");
+  assert.equal((await post(base, { link: gone.link, key: gone.presented_key, issuer: gone.issuer })).reason, "revoked");
+});

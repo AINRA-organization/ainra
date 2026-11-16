@@ -286,8 +286,9 @@ export function linkFromIndex(index, publication, thumbprint) {
 }
 
 /** A link checker built from a root-signed directory, once (like the gate). Resolves to
- *  `check(link, presentedKeyB64u, capability?)` → `{verdict:"valid", registrar, operator, passport, scope}` or
- *  `{verdict:"invalid", reason}`. `presentedKeyB64u` is the Ed25519 key the host ALREADY verified the request with. */
+ *  `check(link, presentedKeyB64u, capability?, issuer?)` → `{verdict:"valid", registrar, operator, passport, scope}`
+ *  (and `issuer` for an issuer link, D-110) or `{verdict:"invalid", reason}`. `presentedKeyB64u` is the key the host
+ *  ALREADY verified a signature with: the request's, or with `issuer` a token's. */
 export async function createAinraLinkCheck({ directory, roots, freshness = "F2", now = () => Math.floor(Date.now() / 1000), minEpoch = 0 } = {}) {
   if (!["F1", "F2", "F3"].includes(freshness)) throw new Error(`createAinraLinkCheck: freshness must be F1, F2 or F3, not ${freshness}`);
   if (!engineReady()) throw new Error("@ainra/edge: call initAinra(wasm) before creating a link check");
@@ -298,8 +299,11 @@ export async function createAinraLinkCheck({ directory, roots, freshness = "F2",
     ? `createAinraLinkCheck: directory epoch ${acc.epoch} is older than ${acc.floor} — a rollback; refusing to start`
     : "createAinraLinkCheck: the directory does not verify against the roots — refusing to start");
   const trust = JSON.stringify(acc.trust);
-  return (link, presentedKeyB64u, capability = "") =>
-    JSON.parse(core.link_check(JSON.stringify(link), trust, presentedKeyB64u, now(), freshness, capability ?? ""));
+  // `issuer` (D-110): leave it out when the key signed the request; pass the issuer name when the key signed a token
+  // instead (the token's `iss`, already matched to the key from the issuer's own published keys).
+  return (link, presentedKeyB64u, capability = "", issuer = undefined) =>
+    JSON.parse(core.link_check(JSON.stringify(link), trust, presentedKeyB64u, now(), freshness, capability ?? "",
+      typeof issuer === "string" ? issuer : undefined));
 }
 
 

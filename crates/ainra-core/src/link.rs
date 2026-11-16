@@ -16,12 +16,19 @@
 //! No new trust and no new list. The caller hands over the key it has ALREADY verified a signature with; this module
 //! answers whether that key is linked, by whom, and whether it is still trusted.
 //!
+//! **Two kinds of link (D-110).** A `jwk` link is for a key that signs REQUESTS: the agent's own key. An `issuer`
+//! link is for a key that signs TOKENS naming other agents: the key another identity system issues with, and the
+//! one name (`iss`) it issues as. The key consents to one kind, in its own words, and a link presented for the
+//! other use is refused. An issuer link says who answers for that key while it signs as that issuer. It does not
+//! say the key belongs to the issuer: a gate learns that where it always has, from the keys the issuer publishes,
+//! and looks a link up by the key it verified the token with, never by the issuer's name.
+//!
 //! Order (each step's failure reason in parentheses), fixed so every implementation reports the same first failure:
 //!   1. schema                                   (`schema_violation`, `name_malformed`)
 //!   2. the registrar is accredited              (`unknown_registrar`)
 //!   3. validity window                          (`not_yet_valid`, then `expired`)
 //!   4. registrar hybrid signature               (`alg_downgrade`, then `sig_invalid`)
-//!   5. the presented key IS the linked key, and it consented (`sig_invalid`)
+//!   5. the presented key IS the linked key, used as the link says, and it consented to that (`sig_invalid`)
 //!   6. scope                                    (`ceiling_exceeded`)
 //!   7. status: freshness, then the link's bit, then the passport's bit (`stale_status`, then `revoked`)
 //!   8. logged-before-valid                      (`checkpoint_invalid`, then `not_logged`, then `registrar_distrusted`)
@@ -42,8 +49,15 @@ use crate::{b64, canon, checkpoint, crypto, status};
 pub const LINK_V: &str = "ainra-link-1";
 /// The purpose string the linked key signs over (proof of control). Frozen.
 pub const LINK_POP_PURPOSE: &str = "ainra-link-pop-1";
-/// The only subject kind in version 1: a JWK, named by its RFC 7638 thumbprint.
+/// A key that signs requests, named by its RFC 7638 thumbprint.
 pub const SUBJECT_KIND_JWK: &str = "jwk";
+/// A key that signs tokens naming other agents (D-110): the same thumbprint, and the one issuer name it signs as.
+pub const SUBJECT_KIND_ISSUER: &str = "issuer";
+/// The purpose string an issuer key signs over to consent to an issuer link. Frozen. Not [`LINK_POP_PURPOSE`]: a
+/// key that agreed to be linked as itself has not agreed to answer for every token it signs, and the reverse.
+pub const ISSUER_LINK_POP_PURPOSE: &str = "ainra-issuer-link-pop-1";
+/// Longest issuer name a link may carry, in bytes.
+pub const MAX_ISSUER_LEN: usize = 255;
 /// Signature-agent keys and AINRA's own workload keys are Ed25519.
 pub const SUBJECT_ALG_ED25519: &str = "Ed25519";
 /// ES256K (RFC 8812): ECDSA over secp256k1 with SHA-256 — the keys agents that live on ledgers already hold (D-082).
@@ -121,6 +135,18 @@ pub struct LinkSubject {
     pub alg: String,
     /// base64url(SHA-256(canonical JWK)), RFC 7638.
     pub thumbprint: String,
+    /// Kind `issuer` only: the name the key issues as, compared byte for byte with the one in what it signed (a
+    /// token's `iss`). Absent on a `jwk` link; an explicit `null` is not canonical and is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
+}
+
+/// An issuer name a link may carry: 1 to [`MAX_ISSUER_LEN`] bytes of visible ASCII (0x21 to 0x7E). No space, no
+/// control character and nothing outside ASCII, so two names that look the same are the same bytes.
+pub fn issuer_name_ok(iss: &str) -> bool {
+    !iss.is_empty()
+        && iss.len() <= MAX_ISSUER_LEN
+        && iss.bytes().all(|b| (0x21..=0x7e).contains(&b))
 }
 
 /// A status-list position.
@@ -168,11 +194,19 @@ impl LinkClaims {
             return Err(Reason::SchemaViolation);
         }
         if c.v != LINK_V
-            || c.subject.kind != SUBJECT_KIND_JWK
             || !(c.subject.alg == SUBJECT_ALG_ED25519
                 || c.subject.alg == SUBJECT_ALG_ES256K
                 || c.subject.alg == SUBJECT_ALG_ES256)
         {
+            return Err(Reason::SchemaViolation);
+        }
+        // A `jwk` link names no issuer; an `issuer` link names exactly one, well-formed (D-110).
+        let kind_ok = match (c.subject.kind.as_str(), c.subject.iss.as_deref()) {
+            (SUBJECT_KIND_JWK, None) => true,
+            (SUBJECT_KIND_ISSUER, Some(iss)) => issuer_name_ok(iss),
+            _ => false,
+        };
+        if !kind_ok {
             return Err(Reason::SchemaViolation);
         }
         b64::decode_array::<32>(&c.subject.thumbprint).map_err(|_| Reason::SchemaViolation)?;
@@ -348,6 +382,36 @@ pub fn pop_signing_bytes(registrar: &str, passport: &str, thumbprint: &str, nbf:
     .into_bytes()
 }
 
+/// What an issuer key signs to consent to an issuer link (D-110). Frozen. It names the issuer, so a consent given
+/// for one name is not a consent for another.
+pub fn issuer_pop_signing_bytes(
+    registrar: &str,
+    passport: &str,
+    thumbprint: &str,
+    iss: &str,
+    nbf: u64,
+) -> Vec<u8> {
+    #[derive(Serialize)]
+    struct Pop<'a> {
+        purpose: &'a str,
+        registrar: &'a str,
+        passport: &'a str,
+        thumbprint: &'a str,
+        iss: &'a str,
+        nbf: u64,
+    }
+    canon::canonicalize(&Pop {
+        purpose: ISSUER_LINK_POP_PURPOSE,
+        registrar,
+        passport,
+        thumbprint,
+        iss,
+        nbf,
+    })
+    .unwrap_or_default()
+    .into_bytes()
+}
+
 /// Everything a verifier hands over to check one link. Like [`crate::verify::Presentation`], the core has no clock
 /// and no network: the caller supplies `now` and every fetched artefact, and the status list it supplies must
 /// already be AUTHENTICATED against the registrar's status key (D-072) — this module trusts the bits it is given.
@@ -368,6 +432,10 @@ pub struct LinkCheck<'a> {
     pub revoked_delegates: &'a BTreeSet<[u8; 32]>,
     /// The capability the request exercises, if the verifier checks one.
     pub capability: Option<&'a str>,
+    /// How the caller used `presented_key` (D-110). `None`: it verified the REQUEST's signature with it. `Some`:
+    /// it verified a TOKEN with it, and this is the issuer name written in that token (its `iss`), which the
+    /// caller has already matched to the key in the ordinary way, from the keys that issuer publishes.
+    pub issuer: Option<&'a str>,
 }
 
 /// Who a valid link attributes the key to.
@@ -377,6 +445,9 @@ pub struct Attribution {
     pub operator: String,
     pub passport: String,
     pub scope: Vec<String>,
+    /// For an issuer link: the issuer name the link is for. The operator answers for the ISSUER; nothing here
+    /// vouches for the agent a token names.
+    pub issuer: Option<String>,
 }
 
 /// Check one link. Never panics. `Ok` carries the attribution; `Err` the first failing reason in the fixed order.
@@ -405,14 +476,26 @@ pub fn verify_link(
     // 4. the registrar signed exactly these bytes, with both halves of its key
     crypto::verify_hybrid(&reg.issuer_key, chk.claims, &chk.registrar_sig)?;
 
-    // 5. the key the caller verified is the linked key — same algorithm, same thumbprint — and that key consented
+    // 5. the key the caller verified is the linked key — same algorithm, same thumbprint — it was used as the link
+    //    says (a request's key for a `jwk` link; a token's issuer key, under this issuer name, for an `issuer`
+    //    link), and that key consented to exactly that
     if chk.presented_key.alg() != c.subject.alg
         || chk.presented_key.thumbprint().as_deref() != Some(c.subject.thumbprint.as_str())
     {
         return Err(Reason::SigInvalid);
     }
+    let msg = match (c.subject.iss.as_deref(), chk.issuer) {
+        (None, None) => pop_signing_bytes(&c.registrar, &c.passport, &c.subject.thumbprint, c.nbf),
+        (Some(named), Some(used)) if named == used => issuer_pop_signing_bytes(
+            &c.registrar,
+            &c.passport,
+            &c.subject.thumbprint,
+            named,
+            c.nbf,
+        ),
+        _ => return Err(Reason::SigInvalid),
+    };
     let pop: [u8; 64] = b64::decode_array(&c.pop).map_err(|_| Reason::SchemaViolation)?;
-    let msg = pop_signing_bytes(&c.registrar, &c.passport, &c.subject.thumbprint, c.nbf);
     if !chk.presented_key.verify(&msg, &pop) {
         return Err(Reason::SigInvalid);
     }
@@ -463,6 +546,7 @@ pub fn verify_link(
         operator: String::from(name.operator()),
         passport: c.passport,
         scope: c.scope,
+        issuer: c.subject.iss,
     })
 }
 
@@ -497,10 +581,16 @@ mod tests {
     const REG: &str = "registrar-01";
     const PASSPORT: &str = "ainra:registrar-01:acme:invoicing@1.0.0";
 
-    fn body(thumb: &str, pop: &str, scope: &[&str]) -> serde_json::Value {
+    const ISS: &str = "https://issuer.example";
+
+    fn body(thumb: &str, pop: &str, scope: &[&str], iss: Option<&str>) -> serde_json::Value {
+        let subject = match iss {
+            None => json!({ "kind": "jwk", "alg": "Ed25519", "thumbprint": thumb }),
+            Some(i) => json!({ "kind": "issuer", "alg": "Ed25519", "thumbprint": thumb, "iss": i }),
+        };
         json!({
             "v": LINK_V, "registrar": REG, "passport": PASSPORT,
-            "subject": { "kind": "jwk", "alg": "Ed25519", "thumbprint": thumb },
+            "subject": subject,
             "scope": scope, "nbf": 1_000u64, "exp": 2_000u64,
             "status": { "uri": "status://registrar-01/1", "idx": 5u64 },
             "passport_status": { "uri": "status://registrar-01/1", "idx": 0u64 },
@@ -509,6 +599,11 @@ mod tests {
     }
 
     fn build_scoped(scope: &[&str]) -> Fx {
+        build_with(scope, None)
+    }
+    /// The same fixture as an ISSUER link (D-110) when `iss` is given: the subject names it and the key signs the
+    /// issuer consent.
+    fn build_with(scope: &[&str], iss: Option<&str>) -> Fx {
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0x11_4E_00_78);
         let issuer = crypto::HybridKeypair::generate(&mut rng);
         let root = crypto::TestRootSlh::generate(&mut rng);
@@ -516,11 +611,13 @@ mod tests {
         let key = agent.verifying_key().to_bytes();
         let thumb = jwk_thumbprint_ed25519(&key);
         use ed25519_dalek::Signer as _;
-        let pop = agent
-            .sign(&pop_signing_bytes(REG, PASSPORT, &thumb, 1_000))
-            .to_bytes();
+        let consent = match iss {
+            None => pop_signing_bytes(REG, PASSPORT, &thumb, 1_000),
+            Some(i) => issuer_pop_signing_bytes(REG, PASSPORT, &thumb, i, 1_000),
+        };
+        let pop = agent.sign(&consent).to_bytes();
 
-        let pre = body(&thumb, &b64::encode(&pop), scope);
+        let pre = body(&thumb, &b64::encode(&pop), scope, iss);
         let pre_bytes = canon::canonicalize(&pre).unwrap().into_bytes();
         let leaf = merkle::hash_leaf(&pre_bytes);
         let mut log = merkle::TestLog::new();
@@ -578,6 +675,16 @@ mod tests {
         issued_at: u64,
         cap: Option<&str>,
     ) -> core::result::Result<Attribution, Reason> {
+        run_as(f, now, issued_at, cap, None)
+    }
+    /// `issuer`: `None` when the gate verified the request with the key, `Some(name)` when it verified a token.
+    fn run_as(
+        f: &Fx,
+        now: u64,
+        issued_at: u64,
+        cap: Option<&str>,
+        issuer: Option<&str>,
+    ) -> core::result::Result<Attribution, Reason> {
         let none = BTreeSet::new();
         verify_link(
             &LinkCheck {
@@ -594,6 +701,7 @@ mod tests {
                 inclusion_proof: &f.proof,
                 revoked_delegates: &none,
                 capability: cap,
+                issuer,
             },
             &f.anchors,
         )
@@ -786,6 +894,122 @@ mod tests {
         assert_eq!(run(&f, 1_500, 1_495, None), Err(Reason::NotLogged));
     }
 
+    // ── D-110 issuer links ───────────────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn an_issuer_link_answers_for_tokens_naming_its_issuer_and_for_nothing_else() {
+        let f = build_with(&[], Some(ISS));
+        let a = run_as(&f, 1_500, 1_495, None, Some(ISS)).unwrap();
+        assert_eq!(
+            (a.operator.as_str(), a.issuer.as_deref()),
+            ("acme", Some(ISS))
+        );
+        // The key signed the request itself: it agreed to answer for its tokens, not to act.
+        assert_eq!(run(&f, 1_500, 1_495, None), Err(Reason::SigInvalid));
+        // A token naming another issuer, signed by the same key.
+        assert_eq!(
+            run_as(&f, 1_500, 1_495, None, Some("https://other.example")),
+            Err(Reason::SigInvalid)
+        );
+        // Revoking it refuses everything the key signs as that issuer.
+        let mut f = f;
+        let mut bits = alloc::vec![false; 16];
+        bits[5] = true;
+        f.list = status::StatusList::from_bits(bits);
+        assert_eq!(
+            run_as(&f, 1_500, 1_495, None, Some(ISS)),
+            Err(Reason::Revoked)
+        );
+    }
+
+    #[test]
+    fn an_ordinary_link_does_not_answer_for_tokens_its_key_signs() {
+        let f = build();
+        assert!(run(&f, 1_500, 1_495, None).unwrap().issuer.is_none());
+        assert_eq!(
+            run_as(&f, 1_500, 1_495, None, Some(ISS)),
+            Err(Reason::SigInvalid)
+        );
+        // An empty issuer name is still a token, not a request.
+        assert_eq!(
+            run_as(&f, 1_500, 1_495, None, Some("")),
+            Err(Reason::SigInvalid)
+        );
+    }
+
+    #[test]
+    fn a_registrar_cannot_turn_a_key_consent_into_an_issuer_link() {
+        // The record says issuer; the key signed the ORDINARY consent. Genuinely registrar-signed, and refused.
+        let mut f = build_with(&[], Some(ISS));
+        let mut v: serde_json::Value = serde_json::from_slice(&f.claims).unwrap();
+        let thumb = v["subject"]["thumbprint"].as_str().unwrap().to_string();
+        use ed25519_dalek::Signer as _;
+        v["pop"] = json!(b64::encode(
+            &f.agent
+                .sign(&pop_signing_bytes(REG, PASSPORT, &thumb, 1_000))
+                .to_bytes()
+        ));
+        f.claims = canon::canonicalize(&v).unwrap().into_bytes();
+        f.sig = f.issuer.sign(&f.claims).unwrap();
+        assert_eq!(
+            run_as(&f, 1_500, 1_495, None, Some(ISS)),
+            Err(Reason::SigInvalid)
+        );
+        // The two consents are different statements, and an issuer consent names its issuer.
+        assert_ne!(
+            pop_signing_bytes(REG, PASSPORT, &thumb, 1_000),
+            issuer_pop_signing_bytes(REG, PASSPORT, &thumb, ISS, 1_000)
+        );
+        assert_ne!(
+            issuer_pop_signing_bytes(REG, PASSPORT, &thumb, ISS, 1_000),
+            issuer_pop_signing_bytes(REG, PASSPORT, &thumb, "https://other.example", 1_000)
+        );
+    }
+
+    #[test]
+    fn the_kind_and_the_issuer_name_go_together() {
+        let reparse = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let f = build_with(&[], Some(ISS));
+            let mut v: serde_json::Value = serde_json::from_slice(&f.claims).unwrap();
+            edit(&mut v);
+            LinkClaims::parse_checked(canon::canonicalize(&v).unwrap().as_bytes()).map(|_| ())
+        };
+        assert_eq!(reparse(&|_| {}), Ok(()));
+        assert_eq!(
+            reparse(&|v| {
+                v["subject"].as_object_mut().unwrap().remove("iss");
+            }),
+            Err(Reason::SchemaViolation),
+            "kind issuer with no name"
+        );
+        assert_eq!(
+            reparse(&|v| v["subject"]["kind"] = json!("jwk")),
+            Err(Reason::SchemaViolation),
+            "kind jwk with a name"
+        );
+        assert_eq!(
+            reparse(&|v| v["subject"]["iss"] = serde_json::Value::Null),
+            Err(Reason::SchemaViolation),
+            "a null name is not canonical"
+        );
+        assert_eq!(
+            reparse(&|v| v["subject"]["kind"] = json!("x509")),
+            Err(Reason::SchemaViolation)
+        );
+        for (name, ok) in [
+            ("https://issuer.example", true),
+            ("urn:example:issuer", true),
+            ("", false),
+            ("https://issuer.example/a b", false),
+            ("https://issu\u{e9}r.example", false),
+            ("tab\there", false),
+        ] {
+            assert_eq!(issuer_name_ok(name), ok, "{name:?}");
+        }
+        assert!(issuer_name_ok(&"a".repeat(MAX_ISSUER_LEN)));
+        assert!(!issuer_name_ok(&"a".repeat(MAX_ISSUER_LEN + 1)));
+    }
+
     // ── D-082 ES256K ───────────────────────────────────────────────────────────────────────────────────────────────
 
     fn k1(seed: u8) -> (k256::ecdsa::SigningKey, [u8; 33]) {
@@ -870,6 +1094,7 @@ mod tests {
                 inclusion_proof: &f.proof,
                 revoked_delegates: &none,
                 capability: None,
+                issuer: None,
             },
             &f.anchors,
         );
@@ -975,6 +1200,7 @@ mod tests {
                 inclusion_proof: &f.proof,
                 revoked_delegates: &none,
                 capability: None,
+                issuer: None,
             },
             &f.anchors,
         );

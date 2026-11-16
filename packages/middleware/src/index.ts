@@ -365,9 +365,14 @@ export function ainraPrime(verifier: Verifier, opts: { store: PresentationStore;
 // behind the key ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface LinkGateOptions {
-  /** The Ed25519 key that verified THIS request's signature (your signature-agent, WIMSE or other verifier), or null
-   *  if it did not verify. AINRA never treats a key as verified on its own say-so. */
-  verifiedKey: (req: ReqLike) => Uint8Array | null | Promise<Uint8Array | null>;
+  /** The key that verified THIS request's signature (your signature-agent, WIMSE or other verifier), or null if it
+   *  did not verify. AINRA never treats a key as verified on its own say-so. Give this or `verifiedToken`, not both. */
+  verifiedKey?: (req: ReqLike) => Uint8Array | null | Promise<Uint8Array | null>;
+  /** In place of `verifiedKey`, for a request that carries a TOKEN (D-110): a JWT from an identity system, say. You
+   *  verify the token the way you already do, against the keys its issuer publishes, and return the issuer key that
+   *  verified it and the issuer name written in it (`iss`); or null if it did not verify. The gate then asks who
+   *  answers for that issuer. Take the key from the issuer, never from a link: the gate finds the link by the key. */
+  verifiedToken?: (req: ReqLike) => VerifiedToken | null | Promise<VerifiedToken | null>;
   /** The registrar's link index and signed status publication, as `GET /links` and `GET /status-list` serve them.
    *  Cache them as you like; the status must stay inside the gate's freshness class or links read `stale_status`. */
   source: () => Promise<{ index: LinkIndex; status: StatusPublication }> | { index: LinkIndex; status: StatusPublication };
@@ -378,17 +383,33 @@ export interface LinkGateOptions {
   onDeny?: (reason: string) => void;
 }
 
+/** What `verifiedToken` returns: the issuer key that verified the request's token, and the issuer name in the token. */
+export interface VerifiedToken { key: Uint8Array; issuer: string }
+
 /**
  * Connect/Express middleware in link mode: requests whose signing key is linked to an accountable operator, and not
  * revoked, pass (with `req.ainraLink` attached); everything else gets 403 and a named reason, `not_linked` included.
  * The Verifier carries the trust (directory, roots, freshness class), exactly as for passports.
+ *
+ * With `verifiedToken` (D-110) the key is an issuer's, and a pass means the ISSUER has an accountable operator and is
+ * not revoked (`req.ainraLink.issuer` names it). It says nothing about the agent the token names.
  */
 export function ainraLinkGate(verifier: Verifier, opts: LinkGateOptions) {
+  if (!opts.verifiedKey === !opts.verifiedToken) throw new Error("ainraLinkGate: give verifiedKey or verifiedToken, one of them");
   const clock = opts.now ?? (() => Math.floor(Date.now() / 1000));
   return async (req: ReqLike & { ainraLink?: LinkVerdict }, res: ResLike, next: Next): Promise<void> => {
     const t = clock();
     let key: Uint8Array | null = null;
-    try { key = await opts.verifiedKey(req); } catch { key = null; }
+    // `undefined`: the key signed the request. A string: it signed a token naming this issuer (D-110).
+    let issuer: string | undefined;
+    try {
+      if (opts.verifiedToken) {
+        const tok = await opts.verifiedToken(req);
+        if (tok && tok.key instanceof Uint8Array && typeof tok.issuer === "string") { key = tok.key; issuer = tok.issuer; }
+      } else {
+        key = await opts.verifiedKey!(req);
+      }
+    } catch { key = null; }
     let r: LinkVerdict | { verdict: "invalid"; reason: string };
     let tp: string | null = null;
     // A key of any Link algorithm: 32 bytes Ed25519, 33 a compressed secp256k1 point (D-082), 65 an uncompressed
@@ -402,7 +423,7 @@ export function ainraLinkGate(verifier: Verifier, opts: LinkGateOptions) {
         const { index, status } = await opts.source();
         link = linkFromIndex(index, status, tp);
       } catch { link = null; }
-      r = link ? verifier.verifyLink(link, key, t, opts.capability?.(req)) : { verdict: "invalid", reason: "not_linked" };
+      r = link ? verifier.verifyLink(link, key, t, opts.capability?.(req), issuer) : { verdict: "invalid", reason: "not_linked" };
     }
     if (opts.decisions && tp) {
       try {

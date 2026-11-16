@@ -5070,6 +5070,33 @@ fn link_record_alg(
     (claims, sig, body_bytes)
 }
 
+/// A link record with the whole `subject` given (D-110), so a case can state any kind, with or without an issuer
+/// name, well-formed or not. Otherwise exactly [`link_record_alg`].
+fn link_record_subject(
+    s: &LinkSpecV,
+    subject: Value,
+    pop: &[u8],
+    signer: &crypto::HybridKeypair,
+) -> (Vec<u8>, crypto::HybridSig, Vec<u8>) {
+    let mut body = json!({
+        "v": ainra_core::link::LINK_V,
+        "registrar": s.registrar,
+        "passport": s.passport,
+        "subject": subject,
+        "scope": s.scope,
+        "nbf": s.nbf,
+        "exp": s.exp,
+        "status": { "uri": s.uri, "idx": s.link_idx },
+        "passport_status": { "uri": s.uri, "idx": s.passport_idx },
+        "pop": b64::encode(pop),
+    });
+    let body_bytes = canon::canonicalize(&body).expect("canon body").into_bytes();
+    body["log"] = json!({ "leaf": b64::encode(&merkle::hash_leaf(&body_bytes)) });
+    let claims = canon::canonicalize(&body).expect("canon link").into_bytes();
+    let sig = signer.sign(&claims).expect("sign link");
+    (claims, sig, body_bytes)
+}
+
 /// A status publication over `bits` (64 by default), signed by `key` under `uri`, issued at `issued_at`.
 fn link_status(
     revoked: &[u64],
@@ -5206,6 +5233,10 @@ fn link_vectors() -> Vec<Value> {
         want: &'static str,
     }
     let mut cases: Vec<Case> = Vec::new();
+    // D-110: for the cases where the gate verified a TOKEN with the key, the issuer name that token carried. A case
+    // not named here has no `issuer` member at all, so every vector before l54 is byte-identical.
+    let mut token_issuer: std::collections::BTreeMap<&'static str, String> =
+        std::collections::BTreeMap::new();
     macro_rules! add {
         ($name:expr, $what:expr, $link:expr, $presented:expr, $at:expr, $cap:expr, $want:expr) => {
             cases.push(Case {
@@ -5941,6 +5972,326 @@ fn link_vectors() -> Vec<Value> {
         );
     }
 
+    // ── D-110 issuer links: a key that signs TOKENS naming other agents, and the one issuer name it signs as ────
+    // Their own seed, so the 53 vectors above stay byte-identical. In these cases the gate says how it used the
+    // key: `issuer` is the name in the token it verified; no `issuer` means the key signed the request itself.
+    {
+        use p256::ecdsa::signature::Signer as _;
+        let mut prng = ChaCha20Rng::seed_from_u64(0x4953_5355_4552_0110); // "ISSUER" · D-110 — a public TEST seed
+        const ISS: &str = "https://issuer.example";
+        const OTHER_ISS: &str = "https://other.example";
+        let r1 = |seed: u8| {
+            let sk = p256::ecdsa::SigningKey::from_bytes(&[seed; 32].into()).expect("p256 key");
+            let pk: [u8; 65] = sk
+                .verifying_key()
+                .to_sec1_point(false)
+                .as_bytes()
+                .try_into()
+                .expect("65 bytes");
+            (sk, pk)
+        };
+        let (iss_sk, iss_pk) = r1(0x49);
+        let (other_sk, other_pk) = r1(0x4A);
+        let tp = ainra_core::link::jwk_thumbprint_es256(&iss_pk).expect("on curve");
+        let sign_r1 = |sk: &p256::ecdsa::SigningKey, msg: &[u8]| -> [u8; 64] {
+            let sig: p256::ecdsa::Signature = sk.sign(msg);
+            sig.normalize_s().to_bytes().into()
+        };
+        let issuer_consent = |iss: &str| {
+            ainra_core::link::issuer_pop_signing_bytes(
+                &base.registrar,
+                &base.passport,
+                &tp,
+                iss,
+                base.nbf,
+            )
+        };
+        let key_consent =
+            ainra_core::link::pop_signing_bytes(&base.registrar, &base.passport, &tp, base.nbf);
+        let subject = |kind: &str, iss: Option<&str>| {
+            let mut s = json!({ "kind": kind, "alg": "ES256", "thumbprint": tp });
+            if let Some(i) = iss {
+                s["iss"] = json!(i);
+            }
+            s
+        };
+        let ed = crypto::TestDelegate::generate(&mut prng);
+        let mut record = |spec: &LinkSpecV, subject: Value, pop: &[u8], st: Value| {
+            let (claims, sig, logged) = link_record_subject(spec, subject, pop, &w.issuer);
+            with_status(assemble(&claims, &sig, &logged, &mut prng).0, st)
+        };
+        let ok_pop = sign_r1(&iss_sk, &issuer_consent(ISS));
+        let valid = record(
+            &base,
+            subject("issuer", Some(ISS)),
+            &ok_pop,
+            clear(now - 10),
+        );
+        let key_link = record(
+            &base,
+            subject("jwk", None),
+            &sign_r1(&iss_sk, &key_consent),
+            clear(now - 10),
+        );
+        let iss_key = b64::encode(&iss_pk);
+        macro_rules! add_token {
+            ($name:expr, $what:expr, $link:expr, $presented:expr, $issuer:expr, $cap:expr, $want:expr) => {
+                add!($name, $what, $link, $presented, now, $cap, $want);
+                if let Some(i) = $issuer {
+                    token_issuer.insert($name, String::from(i));
+                }
+            };
+        }
+        let none: Option<&str> = None;
+        add_token!("l54-issuer", "an issuer link: the gate verified a token with this P-256 key, and the token names the issuer the link is for", valid.clone(), iss_key.clone(), Some(ISS), None, "valid");
+        add_token!(
+            "l55-issuer-link-revoked",
+            "the issuer link's own bit is set: every token this key signs as this issuer is refused",
+            record(
+                &base,
+                subject("issuer", Some(ISS)),
+                &ok_pop,
+                link_status(&[5], 64, now - 10, &uri, &w.status_key)
+            ),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "revoked"
+        );
+        add_token!(
+            "l56-issuer-operator-suspended",
+            "the passport's bit is set: the operator behind the issuer is suspended",
+            record(
+                &base,
+                subject("issuer", Some(ISS)),
+                &ok_pop,
+                link_status(&[3], 64, now - 10, &uri, &w.status_key)
+            ),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "revoked"
+        );
+        add_token!(
+            "l57-issuer-token-names-another-issuer",
+            "the same key signed a token that names a different issuer: the link is for one name only",
+            valid.clone(),
+            iss_key.clone(),
+            Some(OTHER_ISS),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l58-issuer-key-signed-the-request",
+            "an issuer link, but the key signed the request itself: it consented to answer for its tokens, not to act",
+            valid.clone(),
+            iss_key.clone(),
+            none,
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l59-key-link-used-as-issuer",
+            "an ordinary link, but the key signed a token naming an issuer: it consented to act, not to answer for tokens",
+            key_link.clone(),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l60-key-link-empty-issuer-name",
+            "an ordinary link, and a token whose issuer name is the empty string: an empty name is still a token, not a request",
+            key_link,
+            iss_key.clone(),
+            Some(""),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l61-issuer-consent-was-for-a-key-link",
+            "the record says issuer, but the key signed the ordinary consent: a registrar cannot turn one into the other",
+            record(
+                &base,
+                subject("issuer", Some(ISS)),
+                &sign_r1(&iss_sk, &key_consent),
+                clear(now - 10)
+            ),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l62-issuer-consent-for-another-issuer",
+            "the key consented to one issuer name and the record carries another",
+            record(
+                &base,
+                subject("issuer", Some(ISS)),
+                &sign_r1(&iss_sk, &issuer_consent(OTHER_ISS)),
+                clear(now - 10)
+            ),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l63-issuer-consent-by-another-key",
+            "the record names this issuer key, but another key signed the consent",
+            record(
+                &base,
+                subject("issuer", Some(ISS)),
+                &sign_r1(&other_sk, &issuer_consent(ISS)),
+                clear(now - 10)
+            ),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l64-issuer-token-verified-with-another-key",
+            "a token that names a linked issuer but was verified with a key the link does not name",
+            valid.clone(),
+            b64::encode(&other_pk),
+            Some(ISS),
+            None,
+            "sig_invalid"
+        );
+        add_token!(
+            "l65-issuer-kind-without-a-name",
+            "kind issuer with no iss member",
+            record(&base, subject("issuer", None), &ok_pop, clear(now - 10)),
+            iss_key.clone(),
+            Some(ISS),
+            None,
+            "schema_violation"
+        );
+        add_token!(
+            "l66-key-kind-with-a-name",
+            "kind jwk carrying an iss member",
+            record(
+                &base,
+                subject("jwk", Some(ISS)),
+                &sign_r1(&iss_sk, &key_consent),
+                clear(now - 10)
+            ),
+            iss_key.clone(),
+            none,
+            None,
+            "schema_violation"
+        );
+        add_token!(
+            "l67-key-kind-with-a-null-name",
+            "kind jwk with iss written as null: not the canonical bytes of any link",
+            {
+                let mut s = subject("jwk", None);
+                s["iss"] = Value::Null;
+                record(&base, s, &sign_r1(&iss_sk, &key_consent), clear(now - 10))
+            },
+            iss_key.clone(),
+            none,
+            None,
+            "schema_violation"
+        );
+        for (name, what, bad) in [
+            ("l68-issuer-name-empty", "an issuer name of no bytes", String::new()),
+            (
+                "l69-issuer-name-with-a-space",
+                "an issuer name with a space in it",
+                String::from("https://issuer.example/a b"),
+            ),
+            (
+                "l70-issuer-name-not-ascii",
+                "an issuer name with a letter outside ASCII: two names that look alike must be the same bytes",
+                String::from("https://issu\u{e9}r.example"),
+            ),
+            (
+                "l71-issuer-name-256-bytes",
+                "an issuer name one byte longer than a link may carry",
+                format!("https://issuer.example/{}", "a".repeat(256 - 23)),
+            ),
+        ] {
+            let pop = sign_r1(&iss_sk, &issuer_consent(&bad));
+            let l = record(&base, subject("issuer", Some(&bad)), &pop, clear(now - 10));
+            add!(name, what, l, iss_key.clone(), now, None, "schema_violation");
+            token_issuer.insert(name, bad);
+        }
+        {
+            let long = format!("https://issuer.example/{}", "a".repeat(255 - 23));
+            assert_eq!(long.len(), 255);
+            let pop = sign_r1(&iss_sk, &issuer_consent(&long));
+            let l = record(&base, subject("issuer", Some(&long)), &pop, clear(now - 10));
+            add!(
+                "l72-issuer-name-255-bytes",
+                "the longest issuer name a link may carry",
+                l,
+                iss_key.clone(),
+                now,
+                None,
+                "valid"
+            );
+            token_issuer.insert("l72-issuer-name-255-bytes", long);
+        }
+        {
+            // An Ed25519 issuer key (tokens signed with EdDSA): the kind is independent of the algorithm.
+            let ed_tp = ainra_core::link::jwk_thumbprint_ed25519(&ed.public());
+            let pop = ed.sign(&ainra_core::link::issuer_pop_signing_bytes(
+                &base.registrar,
+                &base.passport,
+                &ed_tp,
+                ISS,
+                base.nbf,
+            ));
+            let l = record(
+                &base,
+                json!({ "kind": "issuer", "alg": "Ed25519", "thumbprint": ed_tp, "iss": ISS }),
+                &pop,
+                clear(now - 10),
+            );
+            add_token!(
+                "l73-issuer-ed25519",
+                "an issuer that signs its tokens with an Ed25519 key",
+                l,
+                key(&ed),
+                Some(ISS),
+                None,
+                "valid"
+            );
+        }
+        {
+            let narrowed = LinkSpecV {
+                scope: vec!["read:invoices".into()],
+                ..base.clone()
+            };
+            let l = record(
+                &narrowed,
+                subject("issuer", Some(ISS)),
+                &ok_pop,
+                clear(now - 10),
+            );
+            add_token!(
+                "l74-issuer-outside-scope",
+                "a narrowed issuer link, and a request exercising a capability it does not name",
+                l,
+                iss_key.clone(),
+                Some(ISS),
+                Some("pay:invoices"),
+                "ceiling_exceeded"
+            );
+        }
+        add_token!(
+            "l75-unknown-kind",
+            "a subject kind no version-1 verifier knows",
+            record(&base, subject("x509", None), &ok_pop, clear(now - 10)),
+            iss_key,
+            none,
+            None,
+            "schema_violation"
+        );
+    }
+
     cases.sort_by(|a, b| a.name.cmp(b.name));
     let mut out = Vec::new();
     for c in cases {
@@ -5955,6 +6306,9 @@ fn link_vectors() -> Vec<Value> {
             "freshness": c.freshness,
             "capability": c.capability,
         });
+        if let Some(iss) = token_issuer.get(c.name) {
+            v["issuer"] = json!(iss);
+        }
         let got = ainra_adapter::link_vector_result(&v);
         let ok = match c.want {
             "valid" | "no_gate" => got["verdict"] == json!(c.want),
@@ -5992,7 +6346,7 @@ fn emit_link(dir: &str) {
         "count": vectors.len(),
         "accept": accept,
         "reject": vectors.len() - accept,
-        "note": "CC0 AINRA Link conformance vectors (D-078, D-082, D-108): a dual-root-signed directory, one link as a gate receives it (record, registrar signature, inclusion proof, checkpoint, signed status publication), the key the gate already verified the request with — 32 bytes is Ed25519, 33 a compressed secp256k1 point (ES256K, RFC 8812; l37-l43), 65 an uncompressed P-256 point (ES256, RFC 7518; l44-l53) — and the gate's own clock, freshness class and capability. A valid answer names the registrar, operator, passport and scope. Real signing throughout; expect computed by ainra-adapter::link_vector_result after accredit, each checked against the case it exists to test. Regenerate with `make vectors`.",
+        "note": "CC0 AINRA Link conformance vectors (D-078, D-082, D-108, D-110): a dual-root-signed directory, one link as a gate receives it (record, registrar signature, inclusion proof, checkpoint, signed status publication), the key the gate already verified a signature with — 32 bytes is Ed25519, 33 a compressed secp256k1 point (ES256K, RFC 8812; l37-l43), 65 an uncompressed P-256 point (ES256, RFC 7518; l44-l53) — and the gate's own clock, freshness class and capability. From l54 a vector may carry `issuer` (D-110): the gate verified a TOKEN with the key, and this is the issuer name in that token; with no `issuer` member the key signed the request itself. A valid answer names the registrar, operator, passport and scope, and for an issuer link the issuer. Real signing throughout; expect computed by ainra-adapter::link_vector_result after accredit, each checked against the case it exists to test. Regenerate with `make vectors`.",
     });
     std::fs::write(
         Path::new(dir).join("manifest.json"),

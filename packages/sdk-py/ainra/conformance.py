@@ -59,7 +59,11 @@ def run_link_vector(v: dict) -> dict:
         return {"verdict": "no_gate"}
     if key is None or presented_key_alg(key) is None:
         return {"verdict": "invalid", "reason": "schema_violation"}
-    return gate.verify_link(v["link"], key, v["now"], v.get("capability"))
+    # D-110: `issuer` absent or null when the key signed the request; the issuer name when it signed a token.
+    issuer = v.get("issuer")
+    if issuer is not None and not isinstance(issuer, str):
+        return {"verdict": "invalid", "reason": "schema_violation"}
+    return gate.verify_link(v["link"], key, v["now"], v.get("capability"), issuer)
 
 
 __all__ = ["run_vector", "run_delta_vector", "run_directory_vector", "run_directory_epoch_vector", "run_presentation_vector", "run_gate_vector",

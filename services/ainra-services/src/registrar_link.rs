@@ -5,6 +5,9 @@
 //! [`ainra_core::link::LinkClaims::parse_checked`] before it is signed, and its tests verify through
 //! [`ainra_core::link::verify_link`].
 //!
+//! An **issuer link** (D-110) is the same record for a key that signs tokens naming other agents: the caller names
+//! the one issuer the key signs as, and the key's consent is over that name. Same log, same bits, same rules.
+//!
 //! Three rules, kept deliberately few:
 //!   * **one link per key, ever.** A key that was linked and revoked stays revoked; rotation is a new key linked and
 //!     the old one revoked. So a thumbprint names exactly one record, and a verifier never has to choose.
@@ -14,8 +17,9 @@
 //!     too, so the log alone says which keys were ever attributable and when that ended.
 
 use ainra_core::link::{
-    pop_signing_bytes, Attribution, LinkCheck, LinkClaims, PresentedKey, LINK_V,
-    SUBJECT_ALG_ED25519, SUBJECT_KIND_JWK,
+    issuer_name_ok, issuer_pop_signing_bytes, pop_signing_bytes, Attribution, LinkCheck,
+    LinkClaims, PresentedKey, LINK_V, MAX_ISSUER_LEN, SUBJECT_ALG_ED25519, SUBJECT_KIND_ISSUER,
+    SUBJECT_KIND_JWK,
 };
 use ainra_core::{b64, canon, crypto, merkle, status, Reason};
 use serde::{Deserialize, Serialize};
@@ -39,9 +43,13 @@ pub struct LinkSpec {
     /// The public key, base64url: 32 bytes for Ed25519 (the JWK `x` member), the 33-byte compressed SEC1 point for
     /// ES256K, the 65-byte uncompressed SEC1 point (`0x04 || x || y`) for ES256.
     pub key: String,
-    /// base64url 64-byte signature by that key, in its own algorithm, over [`pop_signing_bytes`]. ES256K and ES256
-    /// signatures are `r || s`, low-S.
+    /// base64url 64-byte signature by that key, in its own algorithm, over [`pop_signing_bytes`], or over
+    /// [`issuer_pop_signing_bytes`] when `issuer` is given. ES256K and ES256 signatures are `r || s`, low-S.
     pub pop: String,
+    /// Absent: the key signs requests (a `jwk` link). Present: the key signs tokens that name other agents, and this
+    /// is the one issuer name it signs as (an `issuer` link, D-110): 1 to 255 bytes of visible ASCII.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
     /// Narrower than the passport's capabilities, or empty for "whatever the passport allows".
     #[serde(default)]
     pub scope: Vec<String>,
@@ -164,11 +172,31 @@ impl RegistrarBox {
                 "scope '{extra}' is not one of the passport's capabilities"
             )));
         }
-        let msg = pop_signing_bytes(&self.id, &spec.passport, &thumbprint, spec.nbf);
+        let (msg, subject) = match spec.issuer.as_deref() {
+            None => (
+                pop_signing_bytes(&self.id, &spec.passport, &thumbprint, spec.nbf),
+                json!({ "kind": SUBJECT_KIND_JWK, "alg": key.alg(), "thumbprint": thumbprint }),
+            ),
+            Some(iss) => {
+                if !issuer_name_ok(iss) {
+                    return Err(IssueError::Malformed(format!(
+                        "issuer must be 1 to {MAX_ISSUER_LEN} bytes of visible ASCII (no space, no control character)"
+                    )));
+                }
+                (
+                    issuer_pop_signing_bytes(&self.id, &spec.passport, &thumbprint, iss, spec.nbf),
+                    json!({ "kind": SUBJECT_KIND_ISSUER, "alg": key.alg(), "thumbprint": thumbprint, "iss": iss }),
+                )
+            }
+        };
         if !key.verify(&msg, &pop) {
-            return Err(IssueError::HolderProof(
-                "the key did not sign this link (pop must cover registrar, passport, thumbprint and nbf)".into(),
-            ));
+            return Err(IssueError::HolderProof(if spec.issuer.is_some() {
+                "the key did not sign this issuer link (pop must cover the issuer-link purpose, registrar, passport, \
+                 thumbprint, iss and nbf; a consent to an ordinary link is not a consent to this)"
+                    .into()
+            } else {
+                "the key did not sign this link (pop must cover registrar, passport, thumbprint and nbf)".into()
+            }));
         }
         if self.next_status_idx >= self.status_capacity {
             return Err(IssueError::StatusFull);
@@ -181,7 +209,7 @@ impl RegistrarBox {
             "v": LINK_V,
             "registrar": self.id,
             "passport": spec.passport,
-            "subject": { "kind": SUBJECT_KIND_JWK, "alg": key.alg(), "thumbprint": thumbprint },
+            "subject": subject,
             "scope": spec.scope,
             "nbf": spec.nbf,
             "exp": spec.exp,
@@ -399,6 +427,7 @@ impl RegistrarBox {
         now: u64,
         freshness: status::Freshness,
         capability: Option<&str>,
+        issuer: Option<&str>,
     ) -> Option<Result<Attribution, Reason>> {
         let link = self.links.get(&presented_key.thumbprint()?)?;
         let published = self.status.publish(now.saturating_sub(1));
@@ -434,6 +463,7 @@ impl RegistrarBox {
             inclusion_proof: &proof,
             revoked_delegates: &Default::default(),
             capability,
+            issuer,
         };
         Some(ainra_core::link::verify_link(&chk, &self.trust_anchors()))
     }
@@ -468,6 +498,7 @@ mod tests {
             key: b64::encode(&pk),
             pop: b64::encode(&pop),
             scope: vec![],
+            issuer: None,
             nbf,
             exp: NBF + 30 * 24 * 60 * 60,
         }
@@ -485,7 +516,115 @@ mod tests {
     }
 
     fn check(rb: &RegistrarBox, sk: &AgentKey) -> Option<Result<Attribution, Reason>> {
-        rb.verify_link_for(&sk.public().into(), VERIFY_NOW, status::Freshness::F3, None)
+        rb.verify_link_for(
+            &sk.public().into(),
+            VERIFY_NOW,
+            status::Freshness::F3,
+            None,
+            None,
+        )
+    }
+
+    // ── D-110 issuer links ───────────────────────────────────────────────────────────────────────────────────────
+
+    const ISS: &str = "https://issuer.example";
+
+    fn issuer_spec_for(rb: &RegistrarBox, passport: &str, sk: &AgentKey, iss: &str) -> LinkSpec {
+        let tp = tp_of(sk);
+        let pop = sk.sign(&issuer_pop_signing_bytes(rb.id(), passport, &tp, iss, NBF));
+        LinkSpec {
+            pop: b64::encode(&pop),
+            issuer: Some(iss.into()),
+            ..spec_for(rb, passport, sk)
+        }
+    }
+
+    fn check_token(
+        rb: &RegistrarBox,
+        sk: &AgentKey,
+        iss: Option<&str>,
+    ) -> Option<Result<Attribution, Reason>> {
+        rb.verify_link_for(
+            &sk.public().into(),
+            VERIFY_NOW,
+            status::Freshness::F3,
+            None,
+            iss,
+        )
+    }
+
+    #[test]
+    fn an_issuer_link_is_issued_on_the_issuer_consent_only_and_answers_for_its_tokens_only() {
+        let (mut rb, passport) = setup("issuer");
+        let mut rng = ChaCha20Rng::seed_from_u64(0x155);
+        let sk = AgentKey::generate(&mut rng);
+        // The key signed the ORDINARY consent and the caller asks for an issuer link: refused, nothing logged.
+        let wrong = LinkSpec {
+            issuer: Some(ISS.into()),
+            ..spec_for(&rb, &passport, &sk)
+        };
+        assert!(matches!(rb.link(&wrong), Err(IssueError::HolderProof(_))));
+        // The key signed the issuer consent and the caller asks for an ordinary link: refused the same way.
+        let wrong = LinkSpec {
+            issuer: None,
+            ..issuer_spec_for(&rb, &passport, &sk, ISS)
+        };
+        assert!(matches!(rb.link(&wrong), Err(IssueError::HolderProof(_))));
+        // A name outside the grammar is refused before the consent is looked at.
+        for bad in [
+            "",
+            "https://issuer.example/a b",
+            "https://issu\u{e9}r.example",
+        ] {
+            assert!(
+                matches!(
+                    rb.link(&issuer_spec_for(&rb, &passport, &sk, bad)),
+                    Err(IssueError::Malformed(_))
+                ),
+                "{bad:?}"
+            );
+        }
+        assert!(
+            check_token(&rb, &sk, Some(ISS)).is_none(),
+            "nothing was linked"
+        );
+
+        let rec = rb.link(&issuer_spec_for(&rb, &passport, &sk, ISS)).unwrap();
+        let a = check_token(&rb, &sk, Some(ISS))
+            .expect("linked")
+            .expect("valid");
+        assert_eq!(
+            (a.operator.as_str(), a.issuer.as_deref()),
+            ("acme", Some(ISS))
+        );
+        // For a request the key signed itself, and for a token naming another issuer, the link does not answer.
+        assert_eq!(check_token(&rb, &sk, None), Some(Err(Reason::SigInvalid)));
+        assert_eq!(
+            check_token(&rb, &sk, Some("https://other.example")),
+            Some(Err(Reason::SigInvalid))
+        );
+        // One link per key, ever: the issuer key cannot also be linked as an ordinary key.
+        assert!(matches!(
+            rb.link(&spec_for(&rb, &passport, &sk)),
+            Err(IssueError::Duplicate(_))
+        ));
+        // Revoking the issuer link refuses every token the key signs as that issuer.
+        rb.revoke_link(&rec.thumbprint, RevocationKind::Link, None, VERIFY_NOW - 5)
+            .unwrap();
+        assert_eq!(check_token(&rb, &sk, Some(ISS)), Some(Err(Reason::Revoked)));
+    }
+
+    #[test]
+    fn an_ordinary_link_does_not_answer_for_tokens() {
+        let (mut rb, passport) = setup("key-not-issuer");
+        let mut rng = ChaCha20Rng::seed_from_u64(0x156);
+        let sk = AgentKey::generate(&mut rng);
+        rb.link(&spec_for(&rb, &passport, &sk)).unwrap();
+        assert!(check(&rb, &sk).expect("linked").is_ok());
+        assert_eq!(
+            check_token(&rb, &sk, Some(ISS)),
+            Some(Err(Reason::SigInvalid))
+        );
     }
 
     #[test]
@@ -759,6 +898,7 @@ mod tests {
             key: b64::encode(&pk),
             pop: b64::encode(pop),
             scope: vec![],
+            issuer: None,
             nbf: NBF,
             exp: NBF + 30 * 24 * 60 * 60,
         };
@@ -786,6 +926,7 @@ mod tests {
                 &PresentedKey::Es256k(pk),
                 VERIFY_NOW,
                 status::Freshness::F3,
+                None,
                 None,
             )
             .expect("linked")
@@ -819,6 +960,7 @@ mod tests {
             key: b64::encode(key),
             pop: b64::encode(pop),
             scope: vec![],
+            issuer: None,
             nbf: NBF,
             exp: NBF + 30 * 24 * 60 * 60,
         };
@@ -854,6 +996,7 @@ mod tests {
                 &PresentedKey::Es256(pk),
                 VERIFY_NOW,
                 status::Freshness::F3,
+                None,
                 None,
             )
             .expect("linked")

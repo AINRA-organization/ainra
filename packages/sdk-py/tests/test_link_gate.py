@@ -97,6 +97,60 @@ class TestLinkGate(unittest.TestCase):
         self.assertEqual(b["reason"], "not_linked")
         self.assertNotIn("operator", b)
 
+    # ── D-110: the token door ────────────────────────────────────────────────────────────────────────────────
+
+    def _token_run(self, v, key, issuer):
+        verifier = Verifier.from_directory(v["directory"], v["roots"]["root_ed25519"], v["roots"]["root_slh"],
+                                           freshness=v["freshness"])
+        seen, out = {}, {}
+
+        async def app(scope, receive, send):
+            seen["link"] = scope["ainra_link"]
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        gate = AinraLinkGate(app, verifier, None, lambda: _served(v), v["now"],
+                             verified_token=lambda scope, headers: issuer(key) if callable(issuer) else (key, issuer))
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(m):
+            if m["type"] == "http.response.start":
+                out["status"] = m["status"]
+                out["reason"] = dict(m["headers"]).get(b"x-ainra-reason", b"").decode()
+
+        asyncio.run(gate({"type": "http", "method": "GET", "path": "/orders", "query_string": b"",
+                          "headers": [(b"host", b"shop.example")]}, receive, send))
+        return out, seen
+
+    def test_the_token_door_answers_for_the_issuer_and_for_that_use_only(self):
+        v = _vec("l54-issuer")
+        key = _b64(v["presented_key"])
+        out, seen = self._token_run(v, key, v["issuer"])
+        self.assertEqual(out["status"], 200)
+        self.assertEqual((seen["link"]["operator"], seen["link"]["issuer"]), ("acme", v["issuer"]))
+        # A token naming another issuer, signed by the same key.
+        self.assertEqual(self._token_run(v, key, "https://other.example")[0]["reason"], "sig_invalid")
+        # The issuer key through the REQUEST door: it agreed to answer for its tokens, not to act.
+        self.assertEqual(_run(v, key)[0]["reason"], "sig_invalid")
+        # A token check that hands back something that is not a key and a name: no key was verified.
+        for bad in (None, (key,), ("not bytes", v["issuer"]), (key, 7)):
+            self.assertEqual(self._token_run(v, key, lambda _k, b=bad: b)[0]["reason"], "sig_invalid", repr(bad))
+        # An ordinary link does not answer for tokens its key signs.
+        k = _vec("l01-valid")
+        self.assertEqual(self._token_run(k, _b64(k["presented_key"]), "https://issuer.example")[0]["reason"],
+                         "sig_invalid")
+
+    def test_a_link_gate_has_exactly_one_door(self):
+        v = _vec("l54-issuer")
+        verifier = Verifier.from_directory(v["directory"], v["roots"]["root_ed25519"], v["roots"]["root_slh"],
+                                           freshness=v["freshness"])
+        with self.assertRaises(ValueError):
+            AinraLinkGate(None, verifier, None, lambda: _served(v))
+        with self.assertRaises(ValueError):
+            AinraLinkGate(None, verifier, lambda s, h: None, lambda: _served(v), verified_token=lambda s, h: None)
+
 
 if __name__ == "__main__":
     unittest.main()
