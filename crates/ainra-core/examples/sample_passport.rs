@@ -245,6 +245,7 @@ fn build(spec: BuildSpec) -> serde_json::Value {
             issuer_key: issuer.public(),
             log_root_key: root.public(),
             distrust_from_leaf: None,
+            distrust_root: None,
         },
     );
     let anchors = verify::TrustAnchors { registrars };

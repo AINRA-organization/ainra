@@ -244,6 +244,8 @@ class Verifier:
                 #  * the status key + URI (D-020) — without them the status list cannot be authenticated at all,
                 #    which is what let a presenter forge an all-clear bitmap for a revoked passport.
                 "distrust_from_leaf": e.get("distrust_from_leaf"),
+                # D-111: the log head pinned beside the cutoff (shape checked when the directory was accepted).
+                "distrust_root": e.get("distrust_root"),
                 "status_ed25519": e.get("status_ed25519"),
                 "status_mldsa65": e.get("status_mldsa65"),
                 "status_uri": e.get("status_uri"),

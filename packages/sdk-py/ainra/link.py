@@ -28,7 +28,8 @@ from ._canon import CanonError, canon_bytes
 from ._crypto import (ED25519_SIG_LEN, MLDSA65_SIG_LEN, ed25519_verify, es256_verify, es256k_verify, mldsa65_verify,
                       p256_point, secp256k1_point, sha256)
 from ._merkle import leaf_hash, root_from_inclusion
-from .verify import FRESHNESS, MAX_CAPABILITIES, MAX_STATUS_BITS, _verify_delegate_checkpoint, _decode_proof
+from .verify import (FRESHNESS, MAX_CAPABILITIES, MAX_STATUS_BITS, _decode_proof, _verify_delegate_checkpoint,
+                     pinned_head_holds)
 
 LINK_V = "ainra-link-1"
 LINK_POP_PURPOSE = "ainra-link-pop-1"
@@ -333,16 +334,20 @@ def _verify(anchors: dict, revoked_delegates: list, link: dict, presented_key: b
         raise _Reject(R.STALE_STATUS)
     if _bit(bits, n, c["status"]["idx"]) or _bit(bits, n, c["passport_status"]["idx"]):
         raise _Reject(R.REVOKED)
-    # logged before valid
-    cp_msg = canon_bytes({"origin": cp["origin"], "root": cp["root"], "size": cp["size"]})
-    log_root = b64d(info.get("log_root_key")) or b""
-    if cs["mode"] == "root":
-        from ._crypto import SLH_DSA_SHA2_128S_SIG_LEN, slh_dsa_sha2_128s_verify
-        slh = b64d(cs.get("slh"))
-        if slh is None or len(slh) != SLH_DSA_SHA2_128S_SIG_LEN or not slh_dsa_sha2_128s_verify(log_root, slh, cp_msg):
+    # logged before valid (D-111: a distrusted registrar with a pinned head is proven against that head and no other)
+    pinned = pinned_head_holds(info, cp)
+    if isinstance(pinned, str):
+        raise _Reject(pinned)
+    if not pinned:
+        cp_msg = canon_bytes({"origin": cp["origin"], "root": cp["root"], "size": cp["size"]})
+        log_root = b64d(info.get("log_root_key")) or b""
+        if cs["mode"] == "root":
+            from ._crypto import SLH_DSA_SHA2_128S_SIG_LEN, slh_dsa_sha2_128s_verify
+            slh = b64d(cs.get("slh"))
+            if slh is None or len(slh) != SLH_DSA_SHA2_128S_SIG_LEN or not slh_dsa_sha2_128s_verify(log_root, slh, cp_msg):
+                raise _Reject(R.CHECKPOINT_INVALID)
+        elif not _verify_delegate_checkpoint(cs, log_root, cp_msg, now, {"revoked_delegates": revoked_delegates}):
             raise _Reject(R.CHECKPOINT_INVALID)
-    elif not _verify_delegate_checkpoint(cs, log_root, cp_msg, now, {"revoked_delegates": revoked_delegates}):
-        raise _Reject(R.CHECKPOINT_INVALID)
     body = json.loads(raw.decode("utf-8"))
     del body["log"]
     if leaf_hash(canon_bytes(body)) != c["_leaf"]:

@@ -10,6 +10,21 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Security — a distrusted registrar can no longer slip work under its own cutoff (D-111, PLAN-M53 R1)
+
+- Found by the independent review of 7 November 2026 (D-104) and published there: a registrar the root distrusts
+  still holds its log key, so it could fork its log, place a new passport below its cutoff and present it against a
+  checkpoint it signed itself. Every verifier accepted it.
+- A distrust cutoff can now carry the log head at the cutoff (`distrust_root` in the signed directory). When it does,
+  that registrar's passports, delegation hops, links and transfer receipts are proven against that head and no
+  other (`registrar_distrusted` otherwise). The pinned head stands in for the registrar's checkpoint signature, so
+  an emergency that also revokes its delegate does not take honest earlier work with it.
+- The ceremony tools require the head on an adverse distrust (`change.head`, new check `cutoff-head`), keep it pinned
+  across epochs, and write it into the proposed directory; the CLI takes `--head`, and the steward's desk names it.
+- `vectors/v1-gate` 37 → 43 and `vectors/v1-link` 75 → 77; every earlier vector is byte-identical.
+- Upgrade before any directory carries a pin: older Rust-based verifiers refuse such a directory, older TypeScript
+  and Python ones ignore the pin.
+
 ### Changed — the site says less, and says it plainly
 
 - The home page no longer carries the block of four record numbers under its lead. The record is on the Network

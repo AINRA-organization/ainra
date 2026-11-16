@@ -45,6 +45,15 @@ pub struct RegistrarInfo {
     /// and witnessed, so a registrar cannot move an entry earlier than it was written. This is the same control
     /// the Web PKI needed, made unforgeable by machinery it did not have.
     pub distrust_from_leaf: Option<u64>,
+    /// **The pinned log head at the cutoff (D-111, PLAN-M53 R1).** When the root sets it beside
+    /// `distrust_from_leaf`, it is the root of this registrar's log at exactly that tree size. Every credential of a
+    /// distrusted registrar must then be proven against this head and no other: a checkpoint of any other size or
+    /// root is refused (`registrar_distrusted`), because the registrar still holds its log key and could otherwise
+    /// fork its log to place new work below the cutoff. The head is the root's own statement, so the registrar's
+    /// signature on that checkpoint is not asked for: an emergency that also revokes the registrar's delegate must
+    /// not take honest earlier work down with it. `None` beside a cutoff is a directory from before D-111, checked as
+    /// it always was.
+    pub distrust_root: Option<[u8; 32]>,
 }
 
 /// The set of accredited registrars, keyed by registrar id (`registrar-01`, …).
@@ -196,14 +205,19 @@ fn verify_inner(pres: &Presentation, anchors: &TrustAnchors) -> core::result::Re
     //    also avoids a leaf-is-hash-of-bytes-containing-itself fixpoint). Order: (a) checkpoint signature (root or
     //    ADR-002 delegate mode), (b) credential leaf binding + inclusion, (c) EVERY hop's `log_leaf` binding +
     //    inclusion — delegation events are logged-before-valid too (D-012).
-    pres.checkpoint
-        .verify_sig_mode(&reg.log_root_key, &pres.checkpoint_sig, pres.now)?;
-    // Delegate revocation (M4, ADR-002): the root can publish a revocation of a specific delegate cert in the
-    // signed directory. A checkpoint whose delegate cert is revoked is `checkpoint_invalid` even though the cert's
-    // own signature + window still verify — the online key is dead. Fail closed.
-    if let checkpoint::CheckpointSig::Delegate { cert, .. } = &pres.checkpoint_sig {
-        if pres.revoked_delegates.contains(&cert.fingerprint()) {
-            return Err(Reason::CheckpointInvalid);
+    //    D-111: for a registrar the root has distrusted with a pinned head, (a) is replaced by the pin itself — the
+    //    presented checkpoint must BE that head, size and root, or the passport is not this registrar's earlier
+    //    work as the root recorded it. Inclusion (b) and every hop (c) are then proven against the pinned head.
+    if !pinned_head_holds(reg, &pres.checkpoint)? {
+        pres.checkpoint
+            .verify_sig_mode(&reg.log_root_key, &pres.checkpoint_sig, pres.now)?;
+        // Delegate revocation (M4, ADR-002): the root can publish a revocation of a specific delegate cert in the
+        // signed directory. A checkpoint whose delegate cert is revoked is `checkpoint_invalid` even though the
+        // cert's own signature + window still verify — the online key is dead. Fail closed.
+        if let checkpoint::CheckpointSig::Delegate { cert, .. } = &pres.checkpoint_sig {
+            if pres.revoked_delegates.contains(&cert.fingerprint()) {
+                return Err(Reason::CheckpointInvalid);
+            }
         }
     }
     let expected_leaf = prelog_leaf(pres.claims)?;
@@ -267,6 +281,26 @@ fn verify_inner(pres: &Presentation, anchors: &TrustAnchors) -> core::result::Re
     }
 
     Ok(())
+}
+
+/// D-111 (PLAN-M53 R1): whether `reg` is a distrusted registrar with a pinned head, and the presented checkpoint is
+/// that head. `Ok(true)`: the root's pin stands in for the registrar's checkpoint signature. `Ok(false)`: no pin, so
+/// the checkpoint is checked as it always was. `Err(RegistrarDistrusted)`: a pin exists and this checkpoint is not
+/// it — a different size, or a different history at the same size. Shared by passports and links.
+pub fn pinned_head_holds(
+    reg: &RegistrarInfo,
+    cp: &checkpoint::Checkpoint,
+) -> core::result::Result<bool, Reason> {
+    match (reg.distrust_from_leaf, reg.distrust_root) {
+        (Some(cut), Some(root)) => {
+            if cp.tree_size == cut && cp.root == root {
+                Ok(true)
+            } else {
+                Err(Reason::RegistrarDistrusted)
+            }
+        }
+        _ => Ok(false),
+    }
 }
 
 /// The RFC 6962 leaf for a credential = `hash_leaf(canonical(claims without the `log` object))`.
@@ -361,6 +395,7 @@ mod tests {
                 issuer_key: issuer.public(),
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
+                distrust_root: None,
             },
         );
 
@@ -502,6 +537,7 @@ mod tests {
                 issuer_key: issuer.public(),
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
+                distrust_root: None,
             },
         );
         let anchors = TrustAnchors { registrars };
@@ -804,6 +840,7 @@ mod tests {
                 issuer_key: issuer.public(),
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
+                distrust_root: None,
             },
         );
         let anchors = TrustAnchors { registrars };

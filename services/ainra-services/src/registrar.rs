@@ -838,6 +838,7 @@ impl RegistrarBox {
                 log_root_key: self.log.root_public().to_vec(),
                 // A registrar never distrusts itself; a cutoff is set by the ROOT, in the signed directory.
                 distrust_from_leaf: None,
+                distrust_root: None,
             },
         );
         TrustAnchors { registrars }

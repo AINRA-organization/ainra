@@ -382,6 +382,12 @@ export interface RegistrarInfo {
    *  logged at leaf index >= it, while everything earlier keeps verifying. Keyed on log position, never on a date,
    *  so a backdated credential cannot slip under it. */
   distrustFromLeaf?: number;
+  /** D-111 (PLAN-M53 R1): the log head the root pinned beside the cutoff, the 32-byte root of this registrar's log
+   *  at exactly `distrustFromLeaf` leaves. When set, every credential of this registrar must be proven against that
+   *  head and no other (`registrar_distrusted` otherwise): the registrar still holds its log key and could fork its
+   *  log to place new work below the cutoff. The head is the root's statement, so the registrar's checkpoint
+   *  signature is not asked for. Undefined beside a cutoff: a directory from before D-111, checked as before. */
+  distrustRoot?: Uint8Array;
   /** The registrar's status-list-signing hybrid key (from the directory). The GA {@link Verifier} authenticates a
    *  presented status list against this before trusting a single bit — so a presenter cannot forge an all-clear
    *  status to bypass revocation (D-020). Absent when anchors are hand-built (raw `runVector` conformance path). */
@@ -807,13 +813,16 @@ function verifyInner(pres: Presentation, anchors: TrustAnchors): void {
   checkMandatePath(p.mandates, pres.mandateRevocations);
 
   // 9. logged-before-valid: checkpoint sig (root/delegate), credential leaf binding+inclusion, then EVERY hop's
-  //    log_leaf binding+inclusion.
-  if (!verifyCheckpointSig(reg.logRootKey, pres.checkpoint, pres.checkpointSig, pres.now))
-    throw new Reject("checkpoint_invalid");
-  // Delegate revocation (M4): a checkpoint signed by a revoked delegate is checkpoint_invalid even though the cert
-  // itself still verifies. Mirrors verify.rs — the revoked set comes from the dual-root-signed directory.
-  if (pres.checkpointSig.mode === "delegate" && pres.revokedDelegates.has(certFingerprintB64(pres.checkpointSig.cert)))
-    throw new Reject("checkpoint_invalid");
+  //    log_leaf binding+inclusion. D-111: for a registrar distrusted with a pinned head, the pin replaces the
+  //    checkpoint signature — the presented checkpoint must BE that head — and inclusion is proven against it.
+  if (!pinnedHeadHolds(reg, pres.checkpoint.size, pres.checkpoint.root)) {
+    if (!verifyCheckpointSig(reg.logRootKey, pres.checkpoint, pres.checkpointSig, pres.now))
+      throw new Reject("checkpoint_invalid");
+    // Delegate revocation (M4): a checkpoint signed by a revoked delegate is checkpoint_invalid even though the cert
+    // itself still verifies. Mirrors verify.rs — the revoked set comes from the dual-root-signed directory.
+    if (pres.checkpointSig.mode === "delegate" && pres.revokedDelegates.has(certFingerprintB64(pres.checkpointSig.cert)))
+      throw new Reject("checkpoint_invalid");
+  }
   const expectedLeaf = prelogLeaf(pres.claims);
   // log.leaf: strict decode (non-canonical → not_logged, matching core's decode_array→NotLogged), then the
   // 32-byte length + binding check.
@@ -912,7 +921,7 @@ interface WireCheckpointSig {
 export interface WireVector {
   name: string;
   expect: { verdict: string; reason?: string };
-  anchors: Record<string, { issuer_key: WireKey; log_root_key: string; distrust_from_leaf?: number }>;
+  anchors: Record<string, { issuer_key: WireKey; log_root_key: string; distrust_from_leaf?: number; distrust_root?: string }>;
   presentation: {
     claims: string;
     issuer_sig: WireKey;
@@ -1093,6 +1102,12 @@ export function runVector(v: WireVector): Verdict {
         // `make diff` caught on the first run of these vectors.
         distrustFromLeaf: r.distrust_from_leaf ?? undefined,
       };
+      // D-111: a pinned head travels with its cutoff; a malformed one is a malformed anchor (schema_violation).
+      if (r.distrust_root !== undefined) {
+        const pin = strictB64u(r.distrust_root);
+        if (pin === null || pin.length !== 32 || r.distrust_from_leaf === undefined) throw new Reject("schema_violation");
+        anchors[id].distrustRoot = pin;
+      }
     }
     // Canonicalise the trusted revoked-delegate fingerprints so the byte-set comparison against
     // `certFingerprintB64` is exact regardless of the wire encoding (review parity fix).
@@ -1476,10 +1491,21 @@ export function runDeltaVector(v: WireDeltaVector): { accept: boolean; reason?: 
   return r === null ? { accept: true } : { accept: false, reason: r };
 }
 
+/** D-111 (PLAN-M53 R1), `verify::pinned_head_holds`: `true` when the registrar is distrusted with a pinned head and
+ *  this checkpoint is that head (the pin stands in for the registrar's signature); `false` when there is no pin (check
+ *  the checkpoint as always); throws `registrar_distrusted` when a pin exists and this checkpoint is not it. */
+function pinnedHeadHolds(reg: RegistrarInfo, size: number, root: Uint8Array): boolean {
+  if (reg.distrustFromLeaf === undefined || reg.distrustRoot === undefined) return false;
+  if (size === reg.distrustFromLeaf && eqBytes(root, reg.distrustRoot)) return true;
+  throw new Reject("registrar_distrusted");
+}
+
 // ── Signed registrar directory (mirror ainra-core::directory) ───────────────────────────────────────────────────
 export interface WireDirectoryEntry {
   /** D-044 graduated-distrust cutoff, absent when the registrar is fully trusted. */
   distrust_from_leaf?: number;
+  /** D-111: the log head pinned at the cutoff (base64url, 32 bytes). Only beside `distrust_from_leaf`. */
+  distrust_root?: string;
   registrar: string;
   issuer_ed25519: string;
   issuer_mldsa65: string;
@@ -1559,6 +1585,13 @@ export function verifyDirectory(d: WireDirectory, rootEd25519: Uint8Array, rootS
       logRootKey: lr,
       distrustFromLeaf: typeof e.distrust_from_leaf === "number" ? e.distrust_from_leaf : undefined,
     };
+    // D-111: a pinned head is meaningful only beside a cutoff and is exactly 32 bytes; anything else is a malformed
+    // entry, and a directory with one accredits no one (mirrors `Directory::accredit`).
+    if (e.distrust_root !== undefined) {
+      const pr = typeof e.distrust_root === "string" ? strictB64u(e.distrust_root) : null;
+      if (pr === null || pr.length !== 32 || info.distrustFromLeaf === undefined) return null;
+      info.distrustRoot = pr;
+    }
     // Status-signing key (D-020) — extracted opportunistically. It does NOT participate in the directory-accept
     // decision (Rust `Directory::accredit` ignores these fields entirely, so phase-E accept/reject stays byte-parity);
     // a status key is set ONLY when both halves decode to a well-formed key AND a non-empty URI binds it. Anything
@@ -2078,10 +2111,12 @@ function verifyLinkInner(
   if (freshnessStale(freshness, now, w.status_issued_at)) throw new Reject("stale_status");
   if (statusBit(packed, w.status_len, c.statusIdx)) throw new Reject("revoked");
   if (statusBit(packed, w.status_len, c.passportIdx)) throw new Reject("revoked");
-  // logged before valid
-  if (!verifyCheckpointSig(reg.logRootKey, { origin: w.checkpoint.origin, rootB64: w.checkpoint.root, size: w.checkpoint.size }, cpSig, now))
-    throw new Reject("checkpoint_invalid");
-  if (cpSig.mode === "delegate" && revokedDelegates.has(certFingerprintB64(cpSig.cert))) throw new Reject("checkpoint_invalid");
+  // logged before valid (D-111: a distrusted registrar with a pinned head is proven against that head and no other)
+  if (!pinnedHeadHolds(reg, w.checkpoint.size, cpRoot)) {
+    if (!verifyCheckpointSig(reg.logRootKey, { origin: w.checkpoint.origin, rootB64: w.checkpoint.root, size: w.checkpoint.size }, cpSig, now))
+      throw new Reject("checkpoint_invalid");
+    if (cpSig.mode === "delegate" && revokedDelegates.has(certFingerprintB64(cpSig.cert))) throw new Reject("checkpoint_invalid");
+  }
   if (!eqBytes(c.leaf, prelogLeaf(raw))) throw new Reject("not_logged");
   if (!verifyInclusion(c.leaf, w.leaf_index, w.checkpoint.size, proof, cpRoot)) throw new Reject("not_logged");
   if (reg.distrustFromLeaf !== undefined && w.leaf_index >= reg.distrustFromLeaf) throw new Reject("registrar_distrusted");

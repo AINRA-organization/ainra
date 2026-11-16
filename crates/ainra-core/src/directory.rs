@@ -55,6 +55,13 @@ pub struct DirectoryEntry {
     /// directory where anyone can see it, which is what makes it appealable rather than silent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distrust_from_leaf: Option<u64>,
+    /// **The log head at the cutoff (D-111, PLAN-M53 R1).** base64url of the RFC 6962 root of this registrar's log
+    /// at tree size `distrust_from_leaf`: the history the root vouches for. A distrusted registrar still holds its
+    /// log key, so without this it could fork its log and sign a checkpoint that places a new passport below its
+    /// own cutoff. With it, a verifier accepts that registrar's work only when it is proven against this head.
+    /// Present only beside `distrust_from_leaf`; omitted when absent, so every earlier directory keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distrust_root: Option<String>,
     /// The registrar's status-list URI (the status signature is bound to it).
     pub status_uri: String,
 }
@@ -159,6 +166,15 @@ impl Directory {
                 .ok_or(Reason::UnknownRegistrar)?;
             let ml = b64::decode(&e.issuer_mldsa65).map_err(|_| Reason::UnknownRegistrar)?;
             let log_root = b64::decode(&e.log_root_slh).map_err(|_| Reason::UnknownRegistrar)?;
+            // A pinned head is meaningful only beside a cutoff, and is exactly 32 bytes. Anything else is a
+            // malformed entry, and a directory with a malformed entry accredits no one.
+            let distrust_root = match (&e.distrust_root, e.distrust_from_leaf) {
+                (None, _) => None,
+                (Some(r), Some(_)) => {
+                    Some(b64::decode_array::<32>(r).map_err(|_| Reason::UnknownRegistrar)?)
+                }
+                (Some(_), None) => return Err(Reason::UnknownRegistrar),
+            };
             anchors.registrars.insert(
                 e.registrar.clone(),
                 RegistrarInfo {
@@ -168,6 +184,7 @@ impl Directory {
                     },
                     log_root_key: log_root,
                     distrust_from_leaf: e.distrust_from_leaf,
+                    distrust_root,
                 },
             );
         }
@@ -311,6 +328,7 @@ mod tests {
             status_mldsa65: String::new(),
             status_uri: alloc::format!("status://{id}/1"),
             distrust_from_leaf: None,
+            distrust_root: None,
         }
     }
 

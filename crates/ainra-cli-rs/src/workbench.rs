@@ -194,6 +194,27 @@ fn request(args: &[String]) -> Result<(), i32> {
                 return Err(2);
             };
             change["leaf"] = json!(leaf);
+            // D-111: the log head at the cutoff — a checkpoint of the registrar's own log at exactly `leaf` leaves.
+            // Either `{checkpoint, checkpoint_sig}` or a presentation record as `ainra present` writes it.
+            if let Some(p) = opt(args, "head") {
+                let v: Value = serde_json::from_str(&read(p)?).map_err(|e| {
+                    eprintln!("{p}: {e}");
+                    2
+                })?;
+                change["head"] = if v.get("checkpoint").is_some()
+                    && v.get("checkpoint_sig").is_some()
+                {
+                    json!({ "checkpoint": v["checkpoint"], "checkpoint_sig": v["checkpoint_sig"] })
+                } else if v.get("log_origin").is_some() && v.get("checkpoint_sig").is_some() {
+                    json!({
+                        "checkpoint": { "origin": v["log_origin"], "size": v["checkpoint_size"], "root": v["checkpoint_root"] },
+                        "checkpoint_sig": v["checkpoint_sig"],
+                    })
+                } else {
+                    eprintln!("{p}: --head is a {{checkpoint, checkpoint_sig}} or a presentation record (ainra present)");
+                    return Err(2);
+                };
+            }
         }
         "REVOKE_DELEGATE" => {
             change["cert"] = match opt(args, "cert") {

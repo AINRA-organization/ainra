@@ -82,9 +82,14 @@ const PLAYBOOKS = {
       if (r.log_origin && r.checkpoint_sig) return { checkpoint: { origin: r.log_origin, size: r.checkpoint_size, root: r.checkpoint_root }, checkpoint_sig: r.checkpoint_sig };
       throw new Error("each side must be a presentation record or a {checkpoint, checkpoint_sig}"); };
     const ev = { compliance: { fork_proof: { a: cp(b.a), b: cp(b.b) } } };
+    // D-111: the request names the log head at its cutoff, the history the root leaves standing. The steward picks
+    // it: side "a" (the default), side "b", or another checkpoint of the registrar's log at exactly the cutoff.
+    const head = b.head === "b" ? cp(b.b) : b.head && b.head !== "a" ? cp(b.head) : cp(b.a);
+    if (head.checkpoint.size !== leaf) throw new Error(`the cutoff is the size of the head it pins: that head is the log at ${head.checkpoint.size} leaves, and the cutoff asked is ${leaf}`);
     writeFileSync(join(out, "evidence.json"), JSON.stringify(ev, null, 2) + "\n");
+    writeFileSync(join(out, "head.json"), JSON.stringify(head, null, 2) + "\n");
     writeFileSync(join(out, "current-directory.json"), await read(NET, "directory.json"));
-    const req = ainra("directory", "request", "DISTRUST_FROM_LEAF", "--subject", reg, "--filer", "steward", "--leaf", String(leaf), "--filed-at", String(now()), "--evidence", join(out, "evidence.json"), "--out", join(out, "request.json"));
+    const req = ainra("directory", "request", "DISTRUST_FROM_LEAF", "--subject", reg, "--filer", "steward", "--leaf", String(leaf), "--head", join(out, "head.json"), "--filed-at", String(now()), "--evidence", join(out, "evidence.json"), "--out", join(out, "request.json"));
     if (req.code !== 0) throw new Error(`the request could not be written: ${req.out.trim()}`);
     const chk = ainra("directory", "check-request", join(out, "request.json"), "--directory", join(out, "current-directory.json"), "--roots", ROOTS);
     return { incident: incidentDraft("HIGH", `registrar ${reg}: its log`, `${reg}: two signed checkpoints of its log at one size with different roots`),
@@ -119,7 +124,7 @@ h+=sec('Compliance ladders',s.ladders.length?'<ul>'+s.ladders.map(l=>'<li>'+esc(
 h+=sec('Requests',s.requests.length?'<ul>'+s.requests.map(r=>'<li class="'+(r.overdue?'late':'')+'">'+esc(r.type)+' '+esc(r.registrar)+' by '+esc(r.filer)+' · day '+esc(r.age_days)+' of 90 · '+esc(r.check)+'</li>').join('')+'</ul>':'none filed');
 h+=sec('Monthly report',s.report?esc(s.report.file)+'<br>'+esc(s.report.first):'none');
 h+=sec('Emergency playbooks','<p>Each writes drafts into this desk\\'s folder and runs read-only checks. The last step is always a command someone with a key runs.</p>'+
-'<form data-p="log-forked"><b>A registrar\\'s log forked</b><input name="registrar" placeholder="registrar-11" required><input name="leaf" placeholder="cutoff leaf (at or below the fork size)" required><textarea name="a" placeholder="checkpoint A: a presentation record, or {checkpoint, checkpoint_sig}" required></textarea><textarea name="b" placeholder="checkpoint B" required></textarea><button>Draft the emergency stop</button></form>'+
+'<form data-p="log-forked"><b>A registrar\\'s log forked</b><input name="registrar" placeholder="registrar-11" required><input name="leaf" placeholder="cutoff leaf (at or below the fork size)" required><textarea name="a" placeholder="checkpoint A: a presentation record, or {checkpoint, checkpoint_sig}" required></textarea><textarea name="b" placeholder="checkpoint B" required></textarea><input name="head" placeholder="the history left standing: a (default), b, or a checkpoint at the cutoff"><button>Draft the emergency stop</button></form>'+
 '<form data-p="delegate-compromised"><b>A registrar delegate compromised</b><input name="registrar" placeholder="registrar-07" required><button>Draft</button></form>'+
 '<form data-p="share-lost"><b>A root share lost</b><label><input type="checkbox" name="stolen"> may be stolen, not only lost</label><button>Draft</button></form>'+
 '<form data-p="site-defaced"><b>The site defaced</b><button>Draft</button></form><pre id="out"></pre>');

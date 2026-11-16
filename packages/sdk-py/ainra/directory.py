@@ -62,6 +62,12 @@ def _verify_directory(v: dict) -> dict:
         for field in _ENTRY_STRINGS:
             if not isinstance(e.get(field), str):
                 return _reject()
+        # D-111: a pinned head is meaningful only beside a cutoff, and is exactly 32 bytes; anything else is a
+        # malformed entry, and a directory with one accredits no one (mirrors ``Directory::accredit``).
+        if "distrust_root" in e:
+            cut = e.get("distrust_from_leaf")
+            if b64f(e.get("distrust_root"), 32) is None or not isinstance(cut, int) or isinstance(cut, bool):
+                return _reject()
         reg = e["registrar"]
         if prev is not None and not (prev < reg):
             return _reject()  # unsorted or duplicate

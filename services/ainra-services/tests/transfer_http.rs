@@ -123,6 +123,7 @@ impl Roots {
                 status_ed25519: a["status_key"]["ed25519"].as_str().unwrap().into(),
                 status_mldsa65: a["status_key"]["mldsa65"].as_str().unwrap().into(),
                 distrust_from_leaf: None,
+                distrust_root: None,
                 status_uri: a["status_uri"].as_str().unwrap().into(),
             })
             .collect();

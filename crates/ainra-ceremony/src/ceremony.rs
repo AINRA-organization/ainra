@@ -90,6 +90,7 @@ impl Genesis {
                 status_uri: format!("status://{id}/1"),
                 // Accreditation at genesis is unconditional; a cutoff is added later, by root decision.
                 distrust_from_leaf: None,
+                distrust_root: None,
             });
             registrars.push(RegistrarKeys {
                 id: id.to_string(),

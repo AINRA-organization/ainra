@@ -184,6 +184,12 @@ refused "ROOT_KEY_ROLL (its own track)" root-key-roll "$A" directory check-reque
 refused "a self-WITHDRAW signed by a key that is not the current one" self-signature "$A" directory check-request "$W/req/wd-imp.json" "${D1[@]}"
 "$A" directory request REVOKE_DELEGATE --registrar "$W/reg/impostor-07" --filed-at "$T_FILE2" --out "$W/req/rd-imp.json" >>"$LOG" 2>&1
 refused "a REVOKE_DELEGATE of a delegate the registrar's log root never signed" delegate-owned "$A" directory check-request "$W/req/rd-imp.json" "${D1[@]}"
+# D-111: an adverse DISTRUST_FROM_LEAF names the log head at its cutoff. A copy of registrar-11 made from its own seed
+# issues one passport; its signed checkpoint, at the size its log then has, is the head, and that size is the cutoff.
+mkdir -p "$W/head"
+"$A" init "$W/head/h" registrar-11 --seed 711 >>"$LOG" 2>&1 && "$A" issue "$W/head/h" --operator acme --lineage gamma --version 1.0.0 >>"$LOG" 2>&1 || die "a copy of registrar-11 for the head"
+hsub=$("$A" list "$W/head/h" 2>/dev/null | grep -o 'ainra:registrar-11:[^ ]*' | head -1); "$A" present "$W/head/h" "$hsub" > "$W/head/h.json" 2>>"$LOG" || die "present the head"
+HL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).checkpoint_size)' "$W/head/h.json")
 "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf 5 --filed-at "$T_FILE2" --out "$W/req/adv-none.json" >>"$LOG" 2>&1
 refused "an adverse request with no compliance record" adverse-notice-chain "$A" directory check-request "$W/req/adv-none.json" "${D1[@]}"
 mkrecord() {  # mkrecord <out> <networks…> — the ladder at D-094 item 11's numbers: notice 1, notice 2 fifteen days
@@ -195,10 +201,12 @@ mkrecord() {  # mkrecord <out> <networks…> — the ladder at D-094 item 11's n
       cure_window_ends:n1+31*d,reproductions:reps}}))' "$@"
 }
 mkrecord "$W/req/one.json" "$NOW" net-a;         mkrecord "$W/req/same.json" "$NOW" net-a net-a;  mkrecord "$W/req/two.json" "$NOW" net-a net-b
-for e in one same two; do "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf 5 --filed-at "$T_FILE2" --evidence "$W/req/$e.json" --out "$W/req/adv-$e.json" >>"$LOG" 2>&1; done
+for e in one same two; do "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf "$HL" --head "$W/head/h.json" --filed-at "$T_FILE2" --evidence "$W/req/$e.json" --out "$W/req/adv-$e.json" >>"$LOG" 2>&1; done
 refused "an adverse request reproduced from one vantage point" adverse-vantage "$A" directory check-request "$W/req/adv-one.json" "${D1[@]}"
 refused "an adverse request reproduced twice from one network" adverse-vantage "$A" directory check-request "$W/req/adv-same.json" "${D1[@]}"
 accepted "an adverse request with a full compliance record (two vantage points, distinct networks)" "$A" directory check-request "$W/req/adv-two.json" "${D1[@]}"
+"$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf "$HL" --filed-at "$T_FILE2" --evidence "$W/req/two.json" --out "$W/req/adv-two-nohead.json" >>"$LOG" 2>&1
+refused "the same request with no log head at its cutoff (D-111)" cutoff-head "$A" directory check-request "$W/req/adv-two-nohead.json" "${D1[@]}"
 # D-096: the record a monitor really files is the one kits/probe/notice.mjs writes from probe reports. Run its ladder
 # over three cycles of reports from two networks (notice 1, notice 2 fifteen days later, the breach record after the
 # 30-day cure window) and hand the evidence it writes to the checker; and a record whose cure window is 20 days long.
@@ -212,7 +220,7 @@ node --input-type=module -e '
   const early = evidence(L, "DISTRUST_FROM_LEAF", now); early.compliance.cure_window_ends = early.compliance.notices[0].at + 20 * DAY;
   fs.writeFileSync(outEarly, JSON.stringify(early));
 ' rehearsal "$PWD/kits/probe/notice.mjs" "$NOW" "$W/req/ladder.json" "$W/req/ladder-early.json"
-for e in ladder ladder-early; do "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf 5 --filed-at "$T_FILE2" --evidence "$W/req/$e.json" --out "$W/req/adv-$e.json" >>"$LOG" 2>&1; done
+for e in ladder ladder-early; do "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf "$HL" --head "$W/head/h.json" --filed-at "$T_FILE2" --evidence "$W/req/$e.json" --out "$W/req/adv-$e.json" >>"$LOG" 2>&1; done
 accepted "a DISTRUST_FROM_LEAF whose evidence is the record kits/probe/notice.mjs wrote from three cycles of probe reports" "$A" directory check-request "$W/req/adv-ladder.json" "${D1[@]}"
 refused "the same record with a 20-day cure window (D-094: at least 30)" adverse-notice-chain "$A" directory check-request "$W/req/adv-ladder-early.json" "${D1[@]}"
 # D-098: the root's emergency stop. Two homes made from registrar-11's own seed, each issued a different passport, are
@@ -228,7 +236,9 @@ node -e '
   fs.writeFileSync(out, JSON.stringify({ compliance: { fork_proof: { a: cp(a), b: cp(b) } } }));
   fs.writeFileSync(same, JSON.stringify({ compliance: { fork_proof: { a: cp(a), b: cp(a) } } }));
 ' "$W/fork/a.json" "$W/fork/b.json" "$W/req/fork.json" "$W/req/fork-same.json"
-for e in fork fork-same; do "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf 1 --filed-at "$T_FILE2" --evidence "$W/req/$e.json" --out "$W/req/adv-$e.json" >>"$LOG" 2>&1; done
+# D-111: the cutoff is the fork's size, and the head names the history the root leaves standing (copy a's).
+FL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).checkpoint_size)' "$W/fork/a.json")
+for e in fork fork-same; do "$A" directory request DISTRUST_FROM_LEAF --subject registrar-11 --filer monitor-01 --leaf "$FL" --head "$W/fork/a.json" --filed-at "$T_FILE2" --evidence "$W/req/$e.json" --out "$W/req/adv-$e.json" >>"$LOG" 2>&1; done
 accepted "an emergency DISTRUST_FROM_LEAF carrying a real fork of registrar-11's log (no notice, no cure, no reproductions)" "$A" directory check-request "$W/req/adv-fork.json" "${D1[@]}"
 refused "the same request with one checkpoint twice (not a fork)" adverse-proof "$A" directory check-request "$W/req/adv-fork-same.json" "${D1[@]}"
 

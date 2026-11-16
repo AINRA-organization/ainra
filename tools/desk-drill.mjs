@@ -55,10 +55,12 @@ try {
   ok(s.json.incidents.length >= 7, `the screen reads the incident log (${s.json?.incidents.length} entries)`);
 
   const a = readFileSync(join(KEEP, "a.json"), "utf8"), b = readFileSync(join(KEEP, "b.json"), "utf8");
-  const fork = await call("POST", "/api/playbook/log-forked", { registrar: "registrar-11", leaf: "1", a, b });
+  // D-111: the cutoff is the fork's size and the head pinned there is side a's checkpoint (the desk's default)
+  const leaf = String(JSON.parse(a).checkpoint_size ?? JSON.parse(a).checkpoint?.size);
+  const fork = await call("POST", "/api/playbook/log-forked", { registrar: "registrar-11", leaf, a, b });
   ok(fork.code === 200 && fork.json.check.passes === true, `log-forked: the checker ACCEPTS the emergency stop built from two copies of registrar-11's log`);
   ok(fork.json?.drafts?.startsWith(join(HOME, "drafts")) && ["evidence.json", "request.json", "incident-draft.json"].every((f) => existsSync(join(fork.json.drafts, f))), "its drafts land in the desk's own drafts folder");
-  const same = await call("POST", "/api/playbook/log-forked", { registrar: "registrar-11", leaf: "1", a, b: a });
+  const same = await call("POST", "/api/playbook/log-forked", { registrar: "registrar-11", leaf, a, b: a });
   ok(same.code === 200 && same.json.check.passes === false && /adverse-proof/.test(same.json.check.output), "the same copy twice is REFUSED by name (adverse-proof)");
   for (const p of ["delegate-compromised", "share-lost", "site-defaced"]) {
     const r = await call("POST", `/api/playbook/${p}`, { registrar: "registrar-07" });

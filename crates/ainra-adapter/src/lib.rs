@@ -41,6 +41,19 @@ pub struct WireRegistrar {
     /// unchanged; present = refuse this registrar's credentials logged at leaf index >= n.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distrust_from_leaf: Option<u64>,
+    /// D-111: the log head the root pinned at the cutoff (base64url, 32 bytes). Only beside `distrust_from_leaf`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distrust_root: Option<String>,
+}
+
+/// D-111: a pinned head as the core holds it. `Err` for a head that does not decode to 32 bytes, or one without a
+/// cutoff beside it: an anchor like that is malformed, never read as "no pin".
+fn pinned_root(w: &WireRegistrar) -> D<Option<[u8; 32]>> {
+    match (&w.distrust_root, w.distrust_from_leaf) {
+        (None, _) => Ok(None),
+        (Some(r), Some(_)) => decode32(r).map(Some),
+        (Some(_), None) => Err(Reason::SchemaViolation),
+    }
 }
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WireCheckpoint {
@@ -233,10 +246,11 @@ pub fn anchors_from_json(v: &serde_json::Value) -> verify::TrustAnchors {
         let Ok(w) = serde_json::from_value::<WireRegistrar>(r.clone()) else {
             continue; // an unreadable entry is simply not an anchor; it never becomes a lenient one
         };
-        let (Ok(ed), Ok(ml), Ok(root)) = (
+        let (Ok(ed), Ok(ml), Ok(root), Ok(pin)) = (
             decode32(&w.issuer_key.ed25519),
             bad(b64::decode(&w.issuer_key.mldsa65)),
             bad(b64::decode(&w.log_root_key)),
+            pinned_root(&w),
         ) else {
             continue;
         };
@@ -249,6 +263,7 @@ pub fn anchors_from_json(v: &serde_json::Value) -> verify::TrustAnchors {
                 },
                 log_root_key: root,
                 distrust_from_leaf: w.distrust_from_leaf,
+                distrust_root: pin,
             },
         );
     }
@@ -745,10 +760,11 @@ fn authenticate_currency(
 pub fn run(v: &Vector) -> Verdict {
     let mut registrars = BTreeMap::new();
     for (id, r) in &v.anchors {
-        let (Ok(ed), Ok(ml), Ok(root)) = (
+        let (Ok(ed), Ok(ml), Ok(root), Ok(pin)) = (
             decode32(&r.issuer_key.ed25519),
             bad(b64::decode(&r.issuer_key.mldsa65)),
             bad(b64::decode(&r.log_root_key)),
+            pinned_root(r),
         ) else {
             return Verdict::invalid(Reason::SchemaViolation);
         };
@@ -761,6 +777,7 @@ pub fn run(v: &Vector) -> Verdict {
                 },
                 log_root_key: root,
                 distrust_from_leaf: r.distrust_from_leaf,
+                distrust_root: pin,
             },
         );
     }
@@ -1008,6 +1025,18 @@ pub fn anchors_from_export_json(reg: &serde_json::Value) -> verify::TrustAnchors
         (Ok(m), Ok(l)) => (m, l),
         _ => return verify::TrustAnchors { registrars },
     };
+    // D-111: a pinned head travels with its cutoff; one that will not decode yields no anchor at all.
+    let distrust_root = match (
+        acc.get("distrust_root").and_then(|r| r.as_str()),
+        acc["distrust_from_leaf"].as_u64(),
+    ) {
+        (None, _) => None,
+        (Some(r), Some(_)) => match decode32(r) {
+            Ok(x) => Some(x),
+            Err(_) => return verify::TrustAnchors { registrars },
+        },
+        (Some(_), None) => return verify::TrustAnchors { registrars },
+    };
     registrars.insert(
         id,
         verify::RegistrarInfo {
@@ -1017,6 +1046,7 @@ pub fn anchors_from_export_json(reg: &serde_json::Value) -> verify::TrustAnchors
             },
             log_root_key,
             distrust_from_leaf: acc["distrust_from_leaf"].as_u64(),
+            distrust_root,
         },
     );
     verify::TrustAnchors { registrars }
@@ -1229,6 +1259,7 @@ fn trust_json(
                 },
                 log_root_key: b64::encode(&r.log_root_key),
                 distrust_from_leaf: r.distrust_from_leaf,
+                distrust_root: r.distrust_root.map(|x| b64::encode(&x)),
             };
             (
                 id.clone(),

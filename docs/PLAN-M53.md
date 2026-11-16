@@ -88,7 +88,7 @@ after the cutoff at a distrusted registrar is refused while the transferred one 
 **8. Ownership transfer as a logged event.** *Built 2026-11-07 (D-103): the old operator key gives a lineage away, a five-day public window, assurance set fresh by the registrar for the new owner, the history in the signed passport, the old lineage revoked. Witnessed by `ownership_door.rs` and `a_change_of_owner_over_http`.* A genuine change of operator resets assurance and keeps the history
 (Standard §1). It is separate from step 7, which moves the registrar, not the owner.
 
-**R1. Pin the distrust cutoff to a log head** (D-104). A distrusted registrar still holds its log root and can fork its
+**R1. Pin the distrust cutoff to a log head** (D-104). **Done 16 November 2026 (D-111).** A distrusted registrar still holds its log root and can fork its
 log to place new passports below its own cutoff. The signed directory entry gains the log head at the cutoff
 (`distrust_root`, beside `distrust_from_leaf`, omitted when absent so earlier directories keep their bytes). Every
 verifier proves a distrusted registrar's passport against that head. Ceremony tools must require the head on a new

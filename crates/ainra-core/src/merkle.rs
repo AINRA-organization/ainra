@@ -224,6 +224,15 @@ impl TestLog {
         }
         Some(path(index as usize, &self.leaves))
     }
+    /// Audit path proving the leaf at `index` in the tree as it was at `size` leaves (RFC 6962 PATH(m, D[0:size])).
+    /// D-111: a distrusted registrar's earlier work is proven against the head the root pinned at its cutoff, so a
+    /// holder needs a proof at that size, which anyone holding the first `size` leaves can compute.
+    pub fn inclusion_proof_at(&self, index: u64, size: u64) -> Option<Vec<[u8; 32]>> {
+        if index >= size || size > self.size() {
+            return None;
+        }
+        Some(path(index as usize, &self.leaves[..size as usize]))
+    }
     /// RFC 6962 §2.1.2 consistency proof: the tree at size `first` is a prefix of the current tree.
     pub fn consistency_proof(&self, first: u64) -> Option<Vec<[u8; 32]>> {
         let n = self.size();
@@ -299,6 +308,41 @@ mod tests {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn a_proof_at_an_older_size_verifies_against_the_root_the_log_had_then() {
+        // D-111: a distrusted registrar's earlier work is proven against the head pinned at its cutoff, so a proof
+        // must be computable at that older size from the leaves alone.
+        let mut t = TestLog::new();
+        for k in 0..20u8 {
+            t.append(&[k]);
+        }
+        for size in 1..=20u64 {
+            let root = t.root_at(size).unwrap();
+            for i in 0..size {
+                let p = t.inclusion_proof_at(i, size).unwrap();
+                assert!(verify_inclusion(&hash_leaf(&[i as u8]), i, size, &p, &root));
+                // the same proof is not a proof against the current root unless the size is the current one
+                if size < 20 {
+                    assert!(!verify_inclusion(
+                        &hash_leaf(&[i as u8]),
+                        i,
+                        20,
+                        &p,
+                        &t.root()
+                    ));
+                }
+            }
+            assert!(
+                t.inclusion_proof_at(size, size).is_none(),
+                "an index at the size is not in the tree"
+            );
+        }
+        assert!(
+            t.inclusion_proof_at(0, 21).is_none(),
+            "a size the log never had"
+        );
     }
 
     #[test]

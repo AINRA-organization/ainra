@@ -391,19 +391,28 @@ fn check_operator_receipt(
     let sig = r.checkpoint_sig.to_core().ok_or_else(|| {
         IssueError::Transfer("the receipt's checkpoint signature does not decode".into())
     })?;
-    if let ainra_core::checkpoint::CheckpointSig::Delegate { cert, .. } = &sig {
-        if revoked_delegates.contains(&cert.fingerprint()) {
-            return refuse(
-                "the receipt's checkpoint is signed by a delegate the directory revoked",
-            );
+    // D-111: a distrusted registrar with a pinned head could otherwise fork its log to place a key of its own below
+    // the cutoff and move a customer's lineage with it. The receipt must then be proven against that head.
+    let pinned = ainra_core::verify::pinned_head_holds(info, &cp).map_err(|_| {
+        IssueError::Transfer(
+            "the root pinned this registrar's log at its cutoff, and the receipt is proven against another head".into(),
+        )
+    })?;
+    if !pinned {
+        if let ainra_core::checkpoint::CheckpointSig::Delegate { cert, .. } = &sig {
+            if revoked_delegates.contains(&cert.fingerprint()) {
+                return refuse(
+                    "the receipt's checkpoint is signed by a delegate the directory revoked",
+                );
+            }
         }
+        cp.verify_sig_mode(&info.log_root_key, &sig, now)
+            .map_err(|_| {
+                IssueError::Transfer(
+                    "the receipt's checkpoint is not signed by that registrar's log".into(),
+                )
+            })?;
     }
-    cp.verify_sig_mode(&info.log_root_key, &sig, now)
-        .map_err(|_| {
-            IssueError::Transfer(
-                "the receipt's checkpoint is not signed by that registrar's log".into(),
-            )
-        })?;
     let proof: Vec<[u8; 32]> = r
         .inclusion_proof
         .iter()

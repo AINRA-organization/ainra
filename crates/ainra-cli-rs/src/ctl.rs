@@ -721,6 +721,7 @@ fn diff(args: &[String]) -> i32 {
                     "status_mldsa65",
                     "status_uri",
                     "distrust_from_leaf",
+                    "distrust_root",
                 ]
                 .into_iter()
                 .filter(|f| old[*f] != e[*f])

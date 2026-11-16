@@ -83,7 +83,9 @@ pub const CHECKS: &[Check] = &[
     Check { id: "delegate-owned", stage: "check-request", built: true,
         rule: "REVOKE_DELEGATE is filed by the registrar itself and carries the delegate certificate; the certificate is signed by that registrar's log root (SLH-DSA) as the current directory lists it, and its fingerprint is not already revoked. The fingerprint is derived from the certificate, never taken from the request." },
     Check { id: "cutoff-monotone", stage: "check-request", built: true,
-        rule: "DISTRUST_FROM_LEAF never lifts a cutoff or moves one later; an existing cutoff can only move earlier (until the owner rules otherwise, PLAN-M52 item 12)." },
+        rule: "DISTRUST_FROM_LEAF never lifts a cutoff or moves one later; an existing cutoff can only move earlier (until the owner rules otherwise, PLAN-M52 item 12). Filing again at the same leaf is accepted only to pin a head on a cutoff that has none (D-111)." },
+    Check { id: "cutoff-head", stage: "check-request", built: true,
+        rule: "DISTRUST_FROM_LEAF may carry the log head at its cutoff (`change.head`): a checkpoint of the registrar's own log (origin `ainra-log/<registrar>`) at exactly the cutoff's size, signed under the log root epoch N lists for it (directly, or by a delegate it certified that epoch N has not revoked). An adverse one must carry it, checked after every other rule; a registrar distrusting itself may set a cutoff its log has not reached yet and pin the head later. Once a cutoff carries a pinned head, every later cutoff for that registrar carries one too. The new directory pins the head's root beside the cutoff, and verifiers prove that registrar's earlier work against it (D-111)." },
     Check { id: "self-signature", stage: "check-request", built: true,
         rule: "A request a registrar files about its own entry (REVOKE_DELEGATE, its own DISTRUST_FROM_LEAF or WITHDRAW) carries a hybrid signature (Ed25519 and ML-DSA-65) over the request message by the registrar's CURRENT issuer key, as the current directory lists it." },
     Check { id: "adverse-proof", stage: "check-request", built: true,
@@ -95,7 +97,7 @@ pub const CHECKS: &[Check] = &[
     Check { id: "adverse-grace", stage: "check-request", built: true,
         rule: "An adverse WITHDRAW comes only after distrust: the registrar already carries a distrust cutoff in epoch N, the record names a public breach record (notice 3 or later), and the request is filed at least 90 days after it, so holders have had time to move (D-094 item 11)." },
     Check { id: "entry-shape", stage: "check-request", built: true,
-        rule: "An ACCREDIT entry is for the request's registrar, decodes every key at its exact size (Ed25519 32 B, ML-DSA-65 1952 B, SLH-DSA 32 B), carries status keys and a status URI, and sets no distrust cutoff." },
+        rule: "An ACCREDIT entry is for the request's registrar, decodes every key at its exact size (Ed25519 32 B, ML-DSA-65 1952 B, SLH-DSA 32 B), carries status keys and a status URI, and sets no distrust cutoff or pinned head." },
     Check { id: "proof-of-possession", stage: "check-request", built: true,
         rule: "An ACCREDIT proves possession of every new key: a hybrid signature by the issuer key, a hybrid signature by the status key, and an SLH-DSA signature by the log root, each over the request message." },
     Check { id: "accreditation-match", stage: "check-request", built: true,
@@ -122,7 +124,7 @@ pub const CHECKS: &[Check] = &[
     Check { id: "proposal-no-drop", stage: "check-proposal", built: true,
         rule: "Every entry of epoch N is still present unless a WITHDRAW in the proposal names it." },
     Check { id: "proposal-cutoff", stage: "check-proposal", built: true,
-        rule: "No distrust cutoff of epoch N is lifted or moved later." },
+        rule: "No distrust cutoff of epoch N is lifted or moved later, and a log head pinned at a cutoff is never dropped, nor changed while the cutoff stays (D-111)." },
     Check { id: "proposal-revocations-kept", stage: "check-proposal", built: true,
         rule: "Every delegate revoked in epoch N is still revoked." },
     Check { id: "proposal-rederive", stage: "check-proposal", built: true,
@@ -240,7 +242,7 @@ pub struct ChangeRequest {
     pub proofs: Proofs,
 }
 
-/// What changes. ACCREDIT carries `entry`, DISTRUST_FROM_LEAF `leaf`, REVOKE_DELEGATE `cert`.
+/// What changes. ACCREDIT carries `entry`, DISTRUST_FROM_LEAF `leaf` (and `head`), REVOKE_DELEGATE `cert`.
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
@@ -250,6 +252,11 @@ pub struct Change {
     pub leaf: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cert: Option<WireDelegateCert>,
+    /// D-111 (PLAN-M53 R1): the log head at the cutoff — a checkpoint of the registrar's own log at exactly `leaf`
+    /// leaves, signed under the log root the directory lists. The directory pins its root beside the cutoff, and
+    /// every verifier then proves that registrar's earlier work against it. Required on an adverse request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<SignedCheckpoint>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -506,6 +513,9 @@ fn changed_fields(a: &DirectoryEntry, b: &DirectoryEntry) -> Vec<&'static str> {
     if a.distrust_from_leaf != b.distrust_from_leaf {
         f.push("distrust_from_leaf");
     }
+    if a.distrust_root != b.distrust_root {
+        f.push("distrust_root");
+    }
     f
 }
 
@@ -520,6 +530,85 @@ pub struct Accepted {
 
 /// Check one request against the current directory (`None` for the first epoch), and, if given, a copy of the
 /// registrar's served `/accreditation`. The caller has already authenticated `base` (`request-base`).
+/// D-111: an adverse DISTRUST_FROM_LEAF names the history it leaves standing — the log head at its cutoff — so every
+/// verifier can refuse a forked history below the cutoff. Checked after every other rule, so a request that fails one
+/// of them is refused for that reason first. (A registrar distrusting itself may set a cutoff its log has not reached
+/// yet, so it may file without a head and pin one later at the same leaf.)
+fn adverse_head(r: &ChangeRequest, passed: &mut Vec<&'static str>) -> Result<(), Refusal> {
+    if r.change_type == "DISTRUST_FROM_LEAF" && r.filer != r.registrar {
+        if r.change.head.is_none() {
+            return refuse(
+                "cutoff-head",
+                format!(
+                    "an adverse DISTRUST_FROM_LEAF of {} names the log head at its cutoff (change.head): a checkpoint of its own log at exactly that size, signed under its log root (D-111)",
+                    r.registrar
+                ),
+            );
+        }
+        if !passed.contains(&"cutoff-head") {
+            passed.push("cutoff-head");
+        }
+    }
+    Ok(())
+}
+
+/// D-098, D-111: a checkpoint of `registrar`'s own log (origin `ainra-log/<registrar>`), signed under the log root
+/// its current entry lists — directly, or by a delegate that log root certified, judged inside the certificate's own
+/// window — and not by a delegate the current directory has revoked. `Err` says why not, as the end of a sentence.
+fn registrar_checkpoint(
+    sc: &SignedCheckpoint,
+    registrar: &str,
+    cur: &DirectoryEntry,
+    base: Option<&Directory>,
+) -> Result<ainra_core::checkpoint::Checkpoint, String> {
+    let origin = format!("ainra-log/{registrar}");
+    let epoch = base.map(|d| d.epoch).unwrap_or(0);
+    let cp = &sc.checkpoint;
+    if cp.origin != origin {
+        return Err(format!("is of log {:?}, not {origin}", cp.origin));
+    }
+    let Ok(root) = crate::decode32(&cp.root) else {
+        return Err("has no 32-byte root".into());
+    };
+    let Ok(sig) = crate::decode_cp_sig(&sc.checkpoint_sig) else {
+        return Err("has a signature in no known mode".into());
+    };
+    let revoked = sc.checkpoint_sig.cert.as_ref().is_some_and(|c| {
+        base.is_some_and(|d| {
+            b64::decode(&c.delegate_ed25519).is_ok_and(|pk| {
+                let cert = ainra_core::checkpoint::DelegateCert {
+                    delegate_ed25519: pk.as_slice().try_into().unwrap_or([0; 32]),
+                    scopes: c.scopes.clone(),
+                    nbf: c.nbf,
+                    exp: c.exp,
+                    sig_slh: b64::decode(&c.sig_slh).unwrap_or_default(),
+                };
+                d.revoked_delegates
+                    .contains(&b64::encode(&cert.fingerprint()))
+            })
+        })
+    });
+    if revoked {
+        return Err(format!(
+            "is signed by a delegate epoch {epoch} already revoked — the registrar disowned that key"
+        ));
+    }
+    // a delegate signature is judged inside its own certificate's window; a root signature has none
+    let at = sc.checkpoint_sig.cert.as_ref().map(|c| c.nbf).unwrap_or(0);
+    let c = ainra_core::checkpoint::Checkpoint {
+        origin: cp.origin.clone(),
+        tree_size: cp.size,
+        root,
+    };
+    let log_root = b64::decode(&cur.log_root_slh).unwrap_or_default();
+    if c.verify_sig_mode(&log_root, &sig, at).is_err() {
+        return Err(format!(
+            "does not verify under {registrar}'s log root as epoch {epoch} lists it"
+        ));
+    }
+    Ok(c)
+}
+
 pub fn check_request(
     r: &ChangeRequest,
     base: Option<&Directory>,
@@ -561,6 +650,12 @@ pub fn check_request(
             format!(
                 "{t} carries a change field another type uses (entry is ACCREDIT's, leaf DISTRUST_FROM_LEAF's, cert REVOKE_DELEGATE's)"
             ),
+        );
+    }
+    if r.change.head.is_some() && t != "DISTRUST_FROM_LEAF" {
+        return refuse(
+            "request-shape",
+            format!("{t} carries change.head, which is DISTRUST_FROM_LEAF's (the log head at its cutoff)"),
         );
     }
     let digest = request_digest(r)?;
@@ -633,7 +728,8 @@ pub fn check_request(
             && b64::decode_array::<32>(&entry.status_ed25519).is_ok()
             && b64::decode(&entry.status_mldsa65).is_ok_and(|v| v.len() == crypto::MLDSA65_PK)
             && !entry.status_uri.is_empty()
-            && entry.distrust_from_leaf.is_none();
+            && entry.distrust_from_leaf.is_none()
+            && entry.distrust_root.is_none();
         if !sizes_ok {
             return refuse(
                 "entry-shape",
@@ -842,17 +938,50 @@ pub fn check_request(
                 return refuse("request-shape", "DISTRUST_FROM_LEAF carries no change.leaf");
             };
             if let Some(old) = cur.distrust_from_leaf {
-                if leaf >= old {
+                // D-111: an existing cutoff with no pinned head may be filed again at the same leaf to pin one.
+                let pins_existing =
+                    leaf == old && cur.distrust_root.is_none() && r.change.head.is_some();
+                if leaf > old || (leaf == old && !pins_existing) {
                     return refuse(
                         "cutoff-monotone",
                         format!(
-                            "{} is already distrusted from leaf {old}; a cutoff is never lifted or moved later (asked: leaf {leaf})",
-                            r.registrar
+                            "{} is already distrusted from leaf {old}; a cutoff is never lifted or moved later (asked: leaf {leaf}){}",
+                            r.registrar,
+                            if leaf == old { "; filing it again at the same leaf only pins a head it does not have yet" } else { "" }
                         ),
                     );
                 }
             }
             passed.push("cutoff-monotone");
+            // Once pinned, always pinned: a cutoff moved earlier without a head would drop the pin, and a distrusted
+            // registrar could do that to itself with its own key and then fork below its new cutoff.
+            if cur.distrust_root.is_some() && r.change.head.is_none() {
+                return refuse(
+                    "cutoff-head",
+                    format!(
+                        "{}'s cutoff carries a pinned log head, so a new cutoff names its head too (change.head)",
+                        r.registrar
+                    ),
+                );
+            }
+            if let Some(h) = r.change.head.as_ref() {
+                let cp = match registrar_checkpoint(h, &r.registrar, cur, base) {
+                    Ok(cp) => cp,
+                    Err(why) => {
+                        return refuse("cutoff-head", format!("the head at the cutoff {why}"))
+                    }
+                };
+                if cp.tree_size != leaf {
+                    return refuse(
+                        "cutoff-head",
+                        format!(
+                            "the head is the log at {} leaves and the cutoff is leaf {leaf}: the head pins exactly the history below the cutoff",
+                            cp.tree_size
+                        ),
+                    );
+                }
+                passed.push("cutoff-head");
+            }
         }
         if self_filed {
             let ok = r.proofs.filer.as_ref().is_some_and(|s| {
@@ -886,60 +1015,14 @@ pub fn check_request(
                         format!("a fork proof stops issuance (DISTRUST_FROM_LEAF); a {t} still waits for the ladder and the holders' grace"),
                     );
                 }
-                let origin = format!("ainra-log/{}", r.registrar);
-                let log_root = b64::decode(&cur.log_root_slh).unwrap_or_default();
-                let revoked = |w: &crate::WireCheckpointSig| {
-                    w.cert.as_ref().is_some_and(|c| {
-                        base.is_some_and(|d| {
-                            b64::decode(&c.delegate_ed25519).is_ok_and(|pk| {
-                                let cert = ainra_core::checkpoint::DelegateCert {
-                                    delegate_ed25519: pk.as_slice().try_into().unwrap_or([0; 32]),
-                                    scopes: c.scopes.clone(),
-                                    nbf: c.nbf,
-                                    exp: c.exp,
-                                    sig_slh: b64::decode(&c.sig_slh).unwrap_or_default(),
-                                };
-                                d.revoked_delegates
-                                    .contains(&b64::encode(&cert.fingerprint()))
-                            })
-                        })
-                    })
-                };
                 let mut parsed = Vec::new();
                 for (label, sc) in [("a", &fp.a), ("b", &fp.b)] {
-                    let cp = &sc.checkpoint;
-                    if cp.origin != origin {
-                        return refuse(
-                            "adverse-proof",
-                            format!("checkpoint {label} is of log {:?}, not {origin}", cp.origin),
-                        );
+                    match registrar_checkpoint(sc, &r.registrar, cur, base) {
+                        Ok(c) => parsed.push(c),
+                        Err(why) => {
+                            return refuse("adverse-proof", format!("checkpoint {label} {why}"))
+                        }
                     }
-                    let Ok(root) = crate::decode32(&cp.root) else {
-                        return refuse(
-                            "adverse-proof",
-                            format!("checkpoint {label} has no 32-byte root"),
-                        );
-                    };
-                    let Ok(sig) = crate::decode_cp_sig(&sc.checkpoint_sig) else {
-                        return refuse(
-                            "adverse-proof",
-                            format!("checkpoint {label}'s signature is not in a known mode"),
-                        );
-                    };
-                    if revoked(&sc.checkpoint_sig) {
-                        return refuse("adverse-proof", format!("checkpoint {label} is signed by a delegate epoch {epoch} already revoked — the registrar disowned that key"));
-                    }
-                    // a delegate signature is judged inside its own certificate's window; a root signature has none
-                    let at = sc.checkpoint_sig.cert.as_ref().map(|c| c.nbf).unwrap_or(0);
-                    let c = ainra_core::checkpoint::Checkpoint {
-                        origin: cp.origin.clone(),
-                        tree_size: cp.size,
-                        root,
-                    };
-                    if c.verify_sig_mode(&log_root, &sig, at).is_err() {
-                        return refuse("adverse-proof", format!("checkpoint {label} does not verify under {}'s log root as epoch {epoch} lists it", r.registrar));
-                    }
-                    parsed.push(c);
                 }
                 if parsed[0].tree_size != parsed[1].tree_size || parsed[0].root == parsed[1].root {
                     return refuse(
@@ -961,6 +1044,7 @@ pub fn check_request(
                     );
                 }
                 passed.push("adverse-proof");
+                adverse_head(r, &mut passed)?;
                 return Ok(Accepted {
                     digest,
                     change_type: t.to_string(),
@@ -1080,6 +1164,7 @@ pub fn check_request(
                 }
                 passed.push("adverse-grace");
             }
+            adverse_head(r, &mut passed)?;
         }
     }
     Ok(Accepted {
@@ -1193,14 +1278,21 @@ fn apply(
             }
             "DISTRUST_FROM_LEAF" => {
                 let leaf = r.change.leaf.unwrap_or(0);
+                // D-111: the head's root is pinned beside the cutoff. A cutoff moved without a head carries none: a
+                // root pinned at the old cutoff names a different tree size and would refuse everything.
+                let pin = r.change.head.as_ref().map(|h| h.checkpoint.root.clone());
                 for e in entries.iter_mut().filter(|e| e.registrar == id) {
                     let was = e
                         .distrust_from_leaf
                         .map(|n| format!("leaf {n}"))
                         .unwrap_or_else(|| "none".into());
                     e.distrust_from_leaf = Some(leaf);
+                    e.distrust_root = pin.clone();
                     diff.push(line(format!(
-                        "~ distrust {id} from leaf {leaf} (was {was})"
+                        "~ distrust {id} from leaf {leaf} (was {was}){}",
+                        pin.as_deref()
+                            .map(|p| format!(", the log head there pinned as {p}"))
+                            .unwrap_or_default()
                     )));
                 }
             }
@@ -1513,6 +1605,26 @@ pub fn check_proposal(
                     );
                 }
                 Some(new) => {
+                    // D-111: a pinned head is never dropped, and stays the same while the cutoff stays where it is.
+                    if old.distrust_root.is_some()
+                        && (new.distrust_root.is_none()
+                            || (new.distrust_from_leaf == old.distrust_from_leaf
+                                && new.distrust_root != old.distrust_root))
+                    {
+                        return refuse(
+                            "proposal-cutoff",
+                            format!(
+                                "{}'s log head pinned at its cutoff in epoch {n} is {} in epoch {}",
+                                old.registrar,
+                                if new.distrust_root.is_none() {
+                                    "dropped"
+                                } else {
+                                    "changed"
+                                },
+                                p.epoch
+                            ),
+                        );
+                    }
                     if let Some(cut) = old.distrust_from_leaf {
                         if new.distrust_from_leaf.is_none_or(|c| c > cut) {
                             return refuse(
@@ -1872,6 +1984,7 @@ mod tests {
                 status_ed25519: b64::encode(&s.ed25519),
                 status_mldsa65: b64::encode(&s.mldsa65),
                 distrust_from_leaf: None,
+                distrust_root: None,
                 status_uri: format!("status://{}/1", self.id),
             }
         }
@@ -2100,6 +2213,8 @@ mod tests {
         let mut r = base_request("DISTRUST_FROM_LEAF", "registrar-11", "monitor-01");
         r.change.leaf = Some(20);
         let o = "ainra-log/registrar-11";
+        // D-111: the history the root leaves standing — the log at the cutoff, as the registrar signed it
+        r.change.head = Some(signed_cp(&w.b.log, o, 20, [3; 32]));
         r.evidence.compliance = Some(Compliance {
             notices: vec![],
             cure_window_ends: 0,
@@ -2113,9 +2228,9 @@ mod tests {
     }
 
     fn adverse(w: &World) -> ChangeRequest {
-        let _ = w;
         let mut r = base_request("DISTRUST_FROM_LEAF", "registrar-11", "monitor-01");
         r.change.leaf = Some(30);
+        r.change.head = Some(signed_cp(&w.b.log, "ainra-log/registrar-11", 30, [4; 32]));
         r.filed_at = ADV_FILED;
         r.evidence.compliance = Some(compliance());
         r
@@ -2334,15 +2449,61 @@ mod tests {
             refused_by(check(&r), "adverse-proof"); // another log's origin
             let mut r = forked(w);
             r.change.leaf = Some(30);
+            r.change.head = Some(signed_cp(&w.b.log, o, 30, [3; 32]));
             refused_by(check(&r), "adverse-proof"); // a cutoff above the fork
             let mut r = forked(w);
             r.change_type = "WITHDRAW".into();
             r.change.leaf = None;
+            r.change.head = None;
             refused_by(check(&r), "adverse-proof"); // a fork proof never skips the holders' grace
             let mut r = forked(w);
             r.evidence.compliance.as_mut().unwrap().fork_proof = None;
             refused_by(check(&r), "adverse-notice-chain"); // no proof: the ladder
-                                                           // D-094 item 11's numbers: one notice; notices 10 days apart; a 20-day cure window
+                                                           // D-111 cutoff-head: an adverse distrust with no head, after a full ladder and after a real fork; a head
+                                                           // at another size, of another log, signed by another registrar's log root; a head on another type; once
+                                                           // pinned, a later cutoff without a head; the same leaf filed again without pinning anything
+            let o = "ainra-log/registrar-11";
+            let mut r = adverse(w);
+            r.change.head = None;
+            refused_by(check(&r), "cutoff-head");
+            let mut r = forked(w);
+            r.change.head = None;
+            refused_by(check(&r), "cutoff-head");
+            let mut r = adverse(w);
+            r.change.head = Some(signed_cp(&w.b.log, o, 31, [4; 32]));
+            refused_by(check(&r), "cutoff-head");
+            let mut r = adverse(w);
+            r.change.head = Some(signed_cp(&w.b.log, "ainra-log/registrar-07", 30, [4; 32]));
+            refused_by(check(&r), "cutoff-head");
+            let mut r = adverse(w);
+            r.change.head = Some(signed_cp(&w.a.log, o, 30, [4; 32]));
+            refused_by(check(&r), "cutoff-head");
+            let mut r = revoke(w);
+            r.change.head = Some(signed_cp(&w.b.log, o, 30, [4; 32]));
+            refused_by(check(&r), "request-shape");
+            let mut pinned = w.base.clone();
+            for e in pinned
+                .entries
+                .iter_mut()
+                .filter(|e| e.registrar == "registrar-11")
+            {
+                e.distrust_root = Some(b64::encode(&[9u8; 32]));
+            }
+            let mut r = adverse(w);
+            r.change.head = None;
+            r.change.leaf = Some(30);
+            refused_by(check_request(&r, Some(&pinned), None), "cutoff-head");
+            let mut r = base_request("DISTRUST_FROM_LEAF", "registrar-11", "registrar-11");
+            r.change.leaf = Some(40);
+            refused_by(check(&self_signed(r.clone(), &w.b)), "cutoff-monotone");
+            // ...and the same leaf WITH a head pins the existing cutoff: accepted
+            r.change.head = Some(signed_cp(&w.b.log, o, 40, [5; 32]));
+            assert!(
+                check(&self_signed(r.clone(), &w.b)).is_ok(),
+                "{:?}",
+                check(&self_signed(r, &w.b)).err().map(|e| e.to_string())
+            );
+            // D-094 item 11's numbers: one notice; notices 10 days apart; a 20-day cure window
             let mut r = adverse(w);
             r.evidence.compliance.as_mut().unwrap().notices.pop();
             refused_by(check(&r), "adverse-notice-chain");
@@ -2437,6 +2598,22 @@ mod tests {
             let w = world();
             let p = proposal_of(w, vec![revoke(w), w.accredit_new.clone()]);
             let ok = check_p(w, &p).expect("the honest proposal");
+            // D-111: an adverse distrust pins its head's root beside the cutoff, and the diff says so
+            let pd = proposal_of(w, vec![adverse(w)]);
+            let e11 = pd["directory"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["registrar"] == json!("registrar-11"))
+                .unwrap()
+                .clone();
+            assert_eq!(e11["distrust_from_leaf"], json!(30));
+            assert_eq!(e11["distrust_root"], json!(b64::encode(&[4u8; 32])));
+            assert!(
+                check_p(w, &pd).is_ok(),
+                "{:?}",
+                check_p(w, &pd).err().map(|e| e.to_string())
+            );
             assert_eq!(ok.epoch, 5);
             assert_eq!(ok.diff.len(), 2);
             // the signing request agrees with check-proposal

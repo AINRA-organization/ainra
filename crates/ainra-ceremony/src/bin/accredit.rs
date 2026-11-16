@@ -91,6 +91,7 @@ fn main() {
                 .to_string(),
             status_uri: acc["status_uri"].as_str().unwrap_or("").to_string(),
             distrust_from_leaf: None,
+            distrust_root: None,
         });
     }
     if entries.is_empty() {

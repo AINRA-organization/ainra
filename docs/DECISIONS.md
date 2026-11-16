@@ -3119,6 +3119,9 @@ keeps its recorded verdict under the stricter rules, checked before any vector w
 *Amended 2026-11-13:* R3 is done. The staging registrars run on keys from the OS and the record was republished
 at epoch 2 (D-107).
 
+*Amended 2026-11-16:* R1 is done (D-111). A distrusted registrar's work is proven against the log head the root
+pinned at its cutoff.
+
 ## D-105 — Watch mode: the pilot beside a route, refusing nothing and signing nothing
 
 *Problem:* the pilot (PLAN-M47 step 4) sits in front of a service and refuses by name from its first request. A
@@ -3546,3 +3549,75 @@ format, the meaning of every existing link and of every existing call (an absent
 always been).
 
 *Status:* ACCEPTED 2026-11-16, on the operator's instruction to continue. Plan: PLAN-M55.
+
+## D-111 — A distrust cutoff pins the log head at the cutoff (M53 R1)
+
+*Problem:* the first independent review (D-104) found that graduated distrust (D-044) can be walked around by the
+registrar it is aimed at. A distrusted registrar still holds its log key. It can fork its log, place a new passport
+at a position below its own cutoff, sign a checkpoint of the forked tree, and present the passport against it. Every
+verifier proved inclusion under any checkpoint the registrar's log key signed, then compared the position with the
+cutoff, so the forked passport was valid. The fork proof of D-098 detects the fork, but only once someone holds both
+histories, and the passport works everywhere until then. The finding was published in D-104 on 7 November 2026 and
+stayed open for nine days.
+
+*Decision:*
+
+- **The directory entry gains `distrust_root`**: base64url of the RFC 6962 root of the registrar's log at exactly
+  `distrust_from_leaf` leaves, the history the root leaves standing. It is present only beside a cutoff and is 32
+  bytes; anything else is a malformed entry, and a directory with one accredits no one. It is omitted when absent,
+  so every earlier directory keeps its signed bytes.
+- **Verification.** When an entry carries a pinned head, the presented checkpoint must be that head, size and root,
+  or the answer is `registrar_distrusted`. Inclusion of the passport, of every delegation hop and of a link is then
+  proven against the pinned head. The same rule applies in the transfer door to an operator key's receipt. No new
+  reason; the frozen set is unchanged.
+- **The pin stands in for the registrar's checkpoint signature.** The head is the root's own statement in the
+  dual-root-signed directory. An emergency that distrusts a registrar often also revokes its delegate, and that must
+  not take honest earlier work down with it. Without a pin, a cutoff is checked exactly as before.
+- **The ceremony tools.** A DISTRUST_FROM_LEAF request may carry `change.head`: a checkpoint of the registrar's own
+  log at exactly the cutoff's size, signed under the log root the directory lists (the same check as a fork proof's
+  checkpoints). An adverse request must carry one. A registrar distrusting itself may set a cutoff its log has not
+  reached yet and pin the head later at the same leaf. Once a cutoff carries a pin, every later cutoff for that
+  registrar carries one, and no epoch drops or changes a pin while its cutoff stays: otherwise a distrusted registrar
+  could move its own cutoff earlier without a head, drop the pin, and fork below the new cutoff. New check
+  `cutoff-head`; `cutoff-monotone`, `entry-shape` and `proposal-cutoff` extended (docs/ACCREDITATION-CHECKS.md).
+- **Proofs at the pinned size.** A holder presenting a distrusted registrar's earlier passport needs an inclusion
+  proof at the pinned size. Anyone with the first n leaves can compute one; `TestLog::inclusion_proof_at` does.
+
+*Rejected:*
+- **A cutoff with no root counts as full distrust.** It would change the recorded verdict of every distrust vector
+  in the corpus and refuse honest work that no one forked. Directories from before this change keep the old rule.
+- **A consistency proof from the pinned head to whatever checkpoint is presented.** It keeps holders' newer proofs
+  usable, and adds a field to every bundle of every registrar for a case that concerns one distrusted registrar.
+- **Keeping the registrar's checkpoint signature as well as the pin.** See above: the emergency that distrusts a
+  registrar is the one most likely to revoke its delegate.
+- **The root picking the pinned root without the registrar's signature.** The root would be stating a history it
+  cannot show anyone. The head must be one the registrar itself signed.
+
+*Held to:*
+- `vectors/v1-gate` g38–g43 and `vectors/v1-link` l76–l77, on the existing seeds; the 37 and 75 earlier vectors are
+  byte-identical. They cover the pinned head accepted; a forked history at the same size refused although the
+  registrar's own log key signed it; the pin standing in for a revoked delegate, and the same revocation refusing
+  the checkpoint without a pin; a pin without a cutoff and a pin of the wrong length making the directory accredit no
+  one; the same two outcomes for a link.
+- Removed once from each of the three implementations on 16 November 2026: the forked history (g39, l77) read
+  `valid`, and g40 read `checkpoint_invalid`.
+- The ceremony tool's tests (each new refusal by name, the pin written into the proposal), `make sign-epoch-rehearsal`
+  (an adverse request with no head is refused by `cutoff-head`; the ladder and fork-proof requests carry a real head
+  signed by the registrar's own log key), and `make desk-drill` (the steward's emergency stop names its head).
+
+*Limits:*
+- **The root chooses a history.** When a log forked, the head the steward names is the history left standing; the
+  other one's passports are refused. That is a judgement, and it is recorded in the request and the directory.
+- **Holders need a proof at the pinned size.** The reference registrar's `/present` proves against its current
+  checkpoint, and a distrusted registrar has no reason to help. A mirror of the log's leaves is enough to compute
+  the proof; a tool that does it from a published log is not built.
+- **Older verifiers.** Released Rust-based verifiers (the edge package and the CLI) refuse a directory carrying a pin,
+  because entries refuse unknown fields: they stop rather than accept. Released TypeScript and Python packages ignore
+  the field and check the old way, so they remain open to the fork until upgraded. A release carrying this change is
+  needed before a pin is ever published.
+- No production directory has a cutoff today, and the test network's directory has none.
+
+*Not changed:* the Standard, the passport, every earlier vector and verdict, the frozen reasons, a directory with no
+cutoff or with a cutoff and no pin.
+
+*Status:* ACCEPTED 2026-11-16, on the operator's instruction to continue with the plans. Plan: PLAN-M53 R1.

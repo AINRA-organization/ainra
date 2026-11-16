@@ -85,6 +85,22 @@ def _hop_body(hop: dict) -> object:
     return {k: hop.get(k) for k in ("from", "to", "granted", "exp")}
 
 
+def pinned_head_holds(anchor: dict, checkpoint: dict):
+    """D-111 (PLAN-M53 R1), mirroring ``verify::pinned_head_holds``. ``True``: the registrar is distrusted with a
+    pinned head and this checkpoint is that head (the pin stands in for the registrar's signature). ``False``: no pin;
+    check the checkpoint as always. A reason string: ``registrar_distrusted`` when a pin exists and this checkpoint is
+    not it, ``schema_violation`` when the pin itself is malformed (not 32 bytes, or no cutoff beside it)."""
+    if anchor.get("distrust_root") is None:
+        return False
+    pin = b64f(anchor.get("distrust_root"), 32)
+    cutoff = anchor.get("distrust_from_leaf")
+    if pin is None or not isinstance(cutoff, int) or isinstance(cutoff, bool):
+        return R.SCHEMA_VIOLATION
+    if checkpoint.get("size") == cutoff and b64f(checkpoint.get("root"), 32) == pin:
+        return True
+    return R.REGISTRAR_DISTRUSTED
+
+
 def verify(anchors: dict, presentation: dict, now: int) -> Verdict:
     """Verify a passport presentation, returning a :class:`Verdict`."""
     try:
@@ -356,19 +372,26 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
     # contents were changed after signing fails here (checkpoint_invalid) before
     # its now-inconsistent size can be mistaken for a logging failure.
     checkpoint = presentation.get("checkpoint") or {}
-    cp_msg = canon_bytes(checkpoint)
-    log_root_slh = b64d(anchor.get("log_root_key")) or b""
-    cs = presentation.get("checkpoint_sig") or {}
-    mode = cs.get("mode")
-    if mode == "root":
-        slh = b64f(cs.get("slh"), SLH_DSA_SHA2_128S_SIG_LEN)
-        if slh is None or not slh_dsa_sha2_128s_verify(log_root_slh, slh, cp_msg):
+    # D-111 (PLAN-M53 R1): a registrar distrusted with a pinned head is proven against that head and no other. The
+    # pin is the root's statement, so it stands in for the registrar's checkpoint signature; any other checkpoint is
+    # refused (a forked history signed by the registrar's own log key).
+    pinned = pinned_head_holds(anchor, checkpoint)
+    if isinstance(pinned, str):
+        return invalid(pinned, **ident())
+    if not pinned:
+        cp_msg = canon_bytes(checkpoint)
+        log_root_slh = b64d(anchor.get("log_root_key")) or b""
+        cs = presentation.get("checkpoint_sig") or {}
+        mode = cs.get("mode")
+        if mode == "root":
+            slh = b64f(cs.get("slh"), SLH_DSA_SHA2_128S_SIG_LEN)
+            if slh is None or not slh_dsa_sha2_128s_verify(log_root_slh, slh, cp_msg):
+                return invalid(R.CHECKPOINT_INVALID, **ident())
+        elif mode == "delegate":
+            if not _verify_delegate_checkpoint(cs, log_root_slh, cp_msg, now, presentation):
+                return invalid(R.CHECKPOINT_INVALID, **ident())
+        else:
             return invalid(R.CHECKPOINT_INVALID, **ident())
-    elif mode == "delegate":
-        if not _verify_delegate_checkpoint(cs, log_root_slh, cp_msg, now, presentation):
-            return invalid(R.CHECKPOINT_INVALID, **ident())
-    else:
-        return invalid(R.CHECKPOINT_INVALID, **ident())
     cp_root = b64f(checkpoint.get("root"), 32)
     size = checkpoint.get("size")
     if cp_root is None or not isinstance(size, int):

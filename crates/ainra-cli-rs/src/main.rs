@@ -867,7 +867,7 @@ GATE (D-062 / D-068)
   directory archive <directory.json> --roots R --into DIR
         keep a verified directory as DIR/epochs/<N>.json and in DIR/epochs.json; refuses an unsigned one, an epoch
         not newer than the last, and a second, different directory at an archived epoch.
-  directory request TYPE --filed-at T --out F (--registrar DIR | --subject ID --filer NAME) [--leaf N] [--cert C]
+  directory request TYPE --filed-at T --out F (--registrar DIR | --subject ID --filer NAME) [--leaf N [--head H]] [--cert C]
                     [--evidence E] [--test-root]
         file a directory change request (PLAN-M52 R0): ACCREDIT, WITHDRAW, DISTRUST_FROM_LEAF, REVOKE_DELEGATE,
         REGISTRAR_KEY_ROLL or ROOT_KEY_ROLL. With --registrar it is signed with that registrar's own keys.

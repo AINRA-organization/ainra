@@ -516,12 +516,15 @@ pub fn verify_link(
         return Err(Reason::Revoked);
     }
 
-    // 8. logged before valid — the same machinery, and the same order, as a passport (verify.rs step 9)
-    chk.checkpoint
-        .verify_sig_mode(&reg.log_root_key, chk.checkpoint_sig, chk.now)?;
-    if let checkpoint::CheckpointSig::Delegate { cert, .. } = chk.checkpoint_sig {
-        if chk.revoked_delegates.contains(&cert.fingerprint()) {
-            return Err(Reason::CheckpointInvalid);
+    // 8. logged before valid — the same machinery, and the same order, as a passport (verify.rs step 9),
+    //    including D-111: a distrusted registrar with a pinned head is proven against that head and no other.
+    if !crate::verify::pinned_head_holds(reg, chk.checkpoint)? {
+        chk.checkpoint
+            .verify_sig_mode(&reg.log_root_key, chk.checkpoint_sig, chk.now)?;
+        if let checkpoint::CheckpointSig::Delegate { cert, .. } = chk.checkpoint_sig {
+            if chk.revoked_delegates.contains(&cert.fingerprint()) {
+                return Err(Reason::CheckpointInvalid);
+            }
         }
     }
     let expected_leaf = prelog_leaf(chk.claims)?;
@@ -648,6 +651,7 @@ mod tests {
                 issuer_key: issuer.public(),
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
+                distrust_root: None,
             },
         );
         Fx {

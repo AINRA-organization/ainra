@@ -617,6 +617,7 @@ fn wire_valid(name: &str, description: &str, built: &Built) -> Vector {
             issuer_key: wire_key(&built.issuer_pub),
             log_root_key: b64::encode(&built.root_pub),
             distrust_from_leaf: None,
+            distrust_root: None,
         },
     );
     let now = built.nbf + (built.exp - built.nbf) / 2;
@@ -1222,6 +1223,7 @@ fn generate() -> Vec<Vector> {
             issuer_key: v.anchors.values().next().unwrap().issuer_key.clone(),
             log_root_key: v.anchors.values().next().unwrap().log_root_key.clone(),
             distrust_from_leaf: None,
+            distrust_root: None,
         };
         v.anchors.clear();
         v.anchors.insert("registrar-99".to_string(), stranger);
@@ -2487,6 +2489,7 @@ fn dir_entry(id: &str, rng: &mut ChaCha20Rng) -> ainra_core::directory::Director
         status_mldsa65: b64::encode(&status.mldsa65),
         status_uri: format!("status://{id}/1"),
         distrust_from_leaf: None,
+        distrust_root: None,
     }
 }
 
@@ -3975,6 +3978,7 @@ fn gate_vectors() -> Vec<Value> {
             .unwrap_or_default(),
         status_uri: uri.clone(),
         distrust_from_leaf: None,
+        distrust_root: None,
     };
     let dir = |entries: Vec<ainra_core::directory::DirectoryEntry>,
                revoked_delegates: Vec<String>| {
@@ -4476,6 +4480,75 @@ fn gate_vectors() -> Vec<Value> {
         v["expect"] = got;
         out.push(v);
     }
+
+    // ── D-111 (PLAN-M53 R1): a distrust cutoff with the log head the root pinned beside it ─────────────────────
+    // A distrusted registrar still holds its log key, so it can fork its log and sign a checkpoint that places new
+    // work below its own cutoff. With the head pinned in the signed directory, its passports are proven against that
+    // head and no other. Each case is the honest bundle, under a directory that pins a head, with one thing changed.
+    // These need no new seed: they reuse the bundles above, so every earlier gate vector keeps its bytes.
+    {
+        let cut = good.checkpoint.size;
+        assert!(
+            good.leaf_index < cut,
+            "the honest passport sits below the cutoff"
+        );
+        let pinned_dir = |root: &str, revoked: Vec<String>| {
+            let mut e = entry(Some(&status_key));
+            e.distrust_from_leaf = Some(cut);
+            e.distrust_root = Some(root.to_string());
+            dir(vec![e], revoked)
+        };
+        // Another history at the same size: what a forked log looks like from outside.
+        let other_root = b64::encode(&merkle::hash_leaf(b"a different history at the same size"));
+        let fp = wire_cert_fingerprint(good.checkpoint_sig.cert.as_ref().expect("delegate cert"));
+        let mut root_only = {
+            let mut e = entry(Some(&status_key));
+            e.distrust_root = Some(good.checkpoint.root.clone());
+            e
+        };
+        root_only.distrust_from_leaf = None;
+        let pin_cases: Vec<(&str, &str, Value, &str)> = vec![
+            ("g38-distrust-pinned-at-the-presented-head",
+             "the registrar is distrusted from the size of the presented checkpoint, and the root pinned that checkpoint's root: earlier work stands",
+             pinned_dir(&good.checkpoint.root, vec![]), "valid"),
+            ("g39-distrust-pinned-another-history",
+             "the root pinned a different root at the same size: the presented checkpoint, though signed by the registrar's own log key, is a forked history",
+             pinned_dir(&other_root, vec![]), "registrar_distrusted"),
+            ("g40-distrust-pinned-delegate-revoked",
+             "the same emergency also revoked the delegate that signed the checkpoint: the root's pin stands in for that signature, so earlier work survives",
+             pinned_dir(&good.checkpoint.root, vec![fp.clone()]), "valid"),
+            ("g41-distrust-unpinned-delegate-revoked",
+             "control for g40: the same revocation under a cutoff with no pinned head refuses the checkpoint, as before D-111",
+             {
+                 let mut e = entry(Some(&status_key));
+                 e.distrust_from_leaf = Some(cut);
+                 dir(vec![e], vec![fp])
+             }, "checkpoint_invalid"),
+            ("g42-distrust-root-without-a-cutoff",
+             "a pinned head with no cutoff beside it is a malformed entry, and a directory with one accredits no one",
+             dir(vec![root_only], vec![]), "no_gate"),
+            ("g43-distrust-root-not-32-bytes",
+             "a pinned head that is not a 32-byte root is a malformed entry: the directory accredits no one",
+             pinned_dir(&b64::encode(&[7u8; 31]), vec![]), "no_gate"),
+        ];
+        for (name, what, directory, want) in pin_cases {
+            let mut v = json!({
+                "name": name, "description": what, "directory": directory, "roots": roots, "bundle": val(&good),
+                "now": now, "audience": "", "freshness": "F2",
+            });
+            let got = ainra_adapter::gate_vector_result(&v);
+            let ok = match want {
+                "valid" | "no_gate" => got["verdict"] == json!(want),
+                reason => got["reason"] == json!(reason),
+            };
+            if !ok {
+                eprintln!("GATE VECTOR {name} exists to test `{want}` but the core says {got}");
+                std::process::exit(1);
+            }
+            v["expect"] = got;
+            out.push(v);
+        }
+    }
     out
 }
 
@@ -4572,6 +4645,7 @@ fn currency_vectors() -> Vec<Value> {
         status_mldsa65: b64::encode(&status_key.public().mldsa65),
         status_uri: uri.clone(),
         distrust_from_leaf: None,
+        distrust_root: None,
     };
     let directory = |revoked_delegates: Vec<String>| {
         serde_json::to_value(dir_sign(
@@ -5166,6 +5240,7 @@ fn link_vectors() -> Vec<Value> {
         status_mldsa65: b64::encode(&w.status_key.public().mldsa65),
         status_uri: format!("status://{id}/1"),
         distrust_from_leaf: distrust,
+        distrust_root: None,
     };
     let dir = |entries, revoked: Vec<String>| {
         serde_json::to_value(dir_sign(dir_base(entries, revoked), &root_ed, &root_slh))
@@ -6292,6 +6367,41 @@ fn link_vectors() -> Vec<Value> {
         );
     }
 
+    // ── D-111 (PLAN-M53 R1): links of a distrusted registrar are proven against the head the root pinned ──────
+    // The ordinary link (l01's record, its own status), under a directory that distrusts the registrar from the size
+    // of the link's checkpoint and pins a head there. No new seed; every earlier link vector keeps its bytes.
+    {
+        let cp = &good["checkpoint"];
+        let cut = cp["size"].as_u64().expect("size");
+        let pin = |root: &str| {
+            let mut e = entry(&reg, Some(cut));
+            e.distrust_root = Some(root.to_string());
+            dir(vec![e], vec![])
+        };
+        let honest_root = cp["root"].as_str().expect("root").to_string();
+        let other_root = b64::encode(&merkle::hash_leaf(b"a different history at the same size"));
+        for (name, what, directory, want) in [
+            ("l76-distrust-pinned-at-the-presented-head",
+             "the registrar is distrusted from the size of the link's checkpoint, and the root pinned that root: the link stands",
+             pin(&honest_root), "valid"),
+            ("l77-distrust-pinned-another-history",
+             "the root pinned a different root at that size: the registrar-signed checkpoint is a forked history",
+             pin(&other_root), "registrar_distrusted"),
+        ] {
+            cases.push(Case {
+                name,
+                what,
+                directory,
+                link: with_status(good.clone(), clear(now - 10)),
+                presented: key(&agent),
+                now,
+                freshness: "F2",
+                capability: None,
+                want,
+            });
+        }
+    }
+
     cases.sort_by(|a, b| a.name.cmp(b.name));
     let mut out = Vec::new();
     for c in cases {
@@ -6809,6 +6919,7 @@ fn decision_vectors() -> Vec<Value> {
                 status_mldsa65: b64::encode(&status_key.public().mldsa65),
                 status_uri: format!("status://{reg}/1"),
                 distrust_from_leaf: None,
+                distrust_root: None,
             }],
             vec![],
         ),
