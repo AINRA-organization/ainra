@@ -48,9 +48,18 @@ catch { console.error(`cert-link-e2e: no live registrar at ${REG} — run \`make
 let TOKEN;
 try { TOKEN = readFileSync(new URL("../../live/.issue-token", import.meta.url), "utf8").trim(); }
 catch { console.error("cert-link-e2e: live/.issue-token missing — start the registrar with `make live-up`"); process.exit(2); }
-const write = (path, body) => j(`${REG}${path}`, {
+// The live registrar allows 30 writes a minute, shared by every drill that runs before this one. A refusal for rate is
+// the registrar working, not this drill failing: wait for its window and ask again, for up to about a minute and a half.
+async function patiently(call) {
+  for (let i = 0; ; i++) {
+    const r = await call();
+    if (r.status !== 429 && !/rate limited/.test(JSON.stringify(r.body)) || i >= 18) return r;
+    await new Promise((res) => setTimeout(res, 5000));
+  }
+}
+const write = (path, body) => patiently(() => j(`${REG}${path}`, {
   method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body),
-});
+}));
 
 // Certificates as an operator already has them, from openssl.
 const dir = mkdtempSync(join(tmpdir(), "ainra-cert-link-"));
@@ -92,11 +101,13 @@ async function whoAnswersFor(key) {
   return gate.verifyLink(link, key, now(), "demo:specimen");
 }
 
+// One operator, one passport; each certificate's key is linked to it in turn.
+const issued = await patiently(() => j(`${REG}/demo/issue`, { method: "POST", body: JSON.stringify({ operator: "specimen", lineage: "cert-agents" }) }));
+if (issued.status !== 200) { fail(`issue failed: ${issued.status} ${JSON.stringify(issued.body)}`); process.exit(1); }
+const p = issued.body;
+ok(`the operator's passport: ${p.sub}`);
 for (const [name, pss] of [["p256", false], ["k256", false], ["ed25519", false], ["rsa", false], ["rsapss", true]]) {
   step(`${name} · a certificate's key, linked and switched off`);
-  const issued = await j(`${REG}/demo/issue`, { method: "POST", body: JSON.stringify({ operator: "specimen", lineage: `cert-${name}` }) });
-  if (issued.status !== 200) { fail(`issue failed: ${issued.status} ${JSON.stringify(issued.body)}`); continue; }
-  const p = issued.body;
   const nbf = p.nbf, exp = Math.min(p.exp, now() + 3600);
   let req;
   try {
