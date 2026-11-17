@@ -26,12 +26,26 @@ echo "== build for the node ($TARGET, static), here"
 CARGO_TARGET_DIR="$PWD/target-node" CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
   cargo build --release -q --target "$TARGET" -p ainra-services --bin registrar-box --bin witnessd -p ainra-cli-rs --bin ainra \
   || { echo "✗ build failed"; exit 1; }
-if command -v qemu-aarch64-static >/dev/null; then # run each once under emulation: a program that cannot start fails here, not there
-  for b in "${BINS[@]}"; do
-    qemu-aarch64-static "$OUT/$b" --help >/dev/null 2>&1; c=$?
-    [ $c -le 2 ] || { echo "✗ $b did not start under emulation (exit $c)"; exit 1; }
-  done
-  echo "   each program starts on a 64-bit ARM processor (emulated here)"
+if command -v qemu-aarch64-static >/dev/null; then
+  # Start each daemon for real under an emulator, in a throwaway folder on a spare loopback port, and require an HTTP
+  # answer: a program that cannot run on the node's processor fails here, before anything there is touched.
+  smoke(){ # smoke NAME URL-PATH ARGS… — start, wait for an answer, stop
+    local name="$1" path="$2"; shift 2
+    local d port pid ok=1
+    d="$(mktemp -d)"; port=$((20000 + RANDOM % 20000))
+    ( cd "$d" && exec env AINRA_STAGE=1 AINRA_CLOCK=pinned AINRA_FRESH_KEYS=1 \
+        qemu-aarch64-static "$OLDPWD/$OUT/$name" "127.0.0.1:$port" "$@" >"$d/log" 2>&1 ) & pid=$!
+    for _ in $(seq 1 40); do curl -s -m 1 -o /dev/null "http://127.0.0.1:$port$path" && { ok=0; break; }; sleep 0.25; done
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    [ $ok = 0 ] || { echo "✗ $name did not answer under emulation:"; tail -3 "$d/log"; }
+    rm -rf "$d"; return $ok
+  }
+  printf '{"seed":"build-for-node-smoke-not-a-secret","operator":"smoke","region":"smoke","contact":"none","note":"smoke"}' \
+    > "$PWD/target-node/smoke-witness.json"
+  smoke registrar-box /accreditation smoke ./data || exit 1
+  smoke witnessd / "$PWD/target-node/smoke-witness.json" || exit 1
+  qemu-aarch64-static "$OUT/ainra" --help >/dev/null 2>&1; [ $? -le 2 ] || { echo "✗ ainra did not start under emulation"; exit 1; }
+  echo "   the registrar door and the witness answered, and the tool ran, on a 64-bit ARM processor (emulated here)"
 fi
 commit="$(git rev-parse HEAD)"
 echo "== copy to $NODE:$DIR (commit ${commit:0:12})"

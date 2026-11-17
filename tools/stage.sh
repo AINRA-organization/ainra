@@ -243,7 +243,12 @@ up)
   mkdir -p "$STAGE" "$PUB"
   [ -f "$TOKEN_FILE" ] || openssl rand -hex 16 > "$TOKEN_FILE" 2>/dev/null || head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE"
   export AINRA_STAGE_ISSUE_TOKEN="$(cat "$TOKEN_FILE")"
-  cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd -p ainra-ceremony --bin accredit -p ainra-cli-rs --bin ainra
+  if [ -s target/release/.prebuilt ] && [ "$(cat target/release/.prebuilt)" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    echo "stage: programs prebuilt for this commit (D-119): nothing compiled here"
+  else
+    cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd -p ainra-ceremony --bin accredit -p ainra-cli-rs --bin ainra \
+      || { echo "stage: the build failed — nothing started"; exit 1; }
+  fi
   bash tools/ainrascan.sh >/dev/null 2>&1 || true   # ensure the browser SDK bundle exists for AINRAscan-on-staging
   echo "== start the staging network (2 registrar classes + witness + artifact server) =="
   : > "$STAGE/pids"
@@ -287,7 +292,14 @@ up)
   echo "    → make stage-status | make stage-smoke | make stage-down"
   ;;
 down)
-  if [ -f "$STAGE/pids" ]; then while read -r p; do kill "$p" 2>/dev/null; done < "$STAGE/pids"; rm -f "$STAGE/pids"; fi
+  # Only a process that is still one of ours: a number in an old pids file may belong to anything by now (a node
+  # runs other programs too, D-117).
+  if [ -f "$STAGE/pids" ]; then
+    while read -r p; do
+      case "$(ps -o comm= -p "$p" 2>/dev/null)" in registrar-box|witnessd|node) kill "$p" 2>/dev/null ;; esac
+    done < "$STAGE/pids"
+    rm -f "$STAGE/pids"
+  fi
   pkill -f "artifact-server.mjs $PUB" 2>/dev/null || true
   echo "staging network stopped."
   ;;

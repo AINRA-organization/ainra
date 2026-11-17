@@ -105,12 +105,23 @@ install)
   probe_sub=$(curl -s -m 5 "http://127.0.0.1:$ART_PORT/registry.json" 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);for(const R of r.registrars||[])for(const e of R.records||[]){const x=e.record?.sub||e.sub;if(x){console.log(x);process.exit(0)}}}catch{}})' 2>/dev/null)
   if [ -n "$probe_sub" ]; then
-    if curl -s -m 5 "http://127.0.0.1:${REG1_ADDR##*:}/present?sub=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$probe_sub")&now=1776729600" 2>/dev/null | grep -q '"claims"'; then
-      seeded=1
+    # A slow machine (a small board, D-119) can take longer than a moment to load a registrar's state: ask for up to
+    # thirty seconds before concluding that it has lost it. The first version asked once, two seconds after start.
+    q="http://127.0.0.1:${REG1_ADDR##*:}/present?sub=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$probe_sub")&now=1776729600"
+    for _ in $(seq 1 30); do curl -s -m 5 "$q" 2>/dev/null | grep -q '"claims"' && { seeded=1; break; }; sleep 1; done
+    if [ "$seeded" -eq 1 ]; then :
     else
       echo "!! the published record lists $probe_sub but the registrar cannot present it —"
       echo "!! the registrar has lost its state while the published files survived. RESEEDING."
     fi
+  fi
+  if [ "$seeded" -eq 0 ] && [ -s stage/public/roots.json ] && [ ! -s stage/genesis/root.seed ] \
+     && [ ! -s stage/genesis/root.seed.gpg ] && [ "${AINRA_STAGE_RESEED:-0}" != 1 ]; then
+    # D-117: a node holds a network whose root it cannot sign for. Seeding again here could only issue into the running
+    # registrars and then stop at the signing; it repairs nothing. Say so, and leave it to the operator.
+    echo "!! NOT re-seeding: this network has published a root, and its seed is not on this machine (a home node)."
+    echo "!! Look first (make stage-health, the registrar's journal); re-seed only from the machine that keeps the seed."
+    seeded=1
   fi
   if [ "$seeded" -eq 0 ]; then
     echo "== seeding the network once (issue / delegate / revoke / renew / accredit / publish) =="
