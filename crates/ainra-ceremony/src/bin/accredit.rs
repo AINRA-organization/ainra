@@ -92,6 +92,9 @@ fn main() {
             status_uri: acc["status_uri"].as_str().unwrap_or("").to_string(),
             distrust_from_leaf: None,
             distrust_root: None,
+            // D-113: the registrar's own statement of where its chain binding begins, carried into the entry the
+            // roots sign. Absent until the registrar binds chains.
+            chains_bound_from_leaf: acc["chains_bound_from_leaf"].as_u64(),
         });
     }
     if entries.is_empty() {

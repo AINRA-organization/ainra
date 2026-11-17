@@ -101,7 +101,7 @@ deprecated).
 ## Don't take our word for it
 
 This SDK is one of **four independent implementations**: a Rust core, this one, a Node reference CLI, and a Python
-verifier. Three of them (the Rust core, this SDK and the Python verifier) agree on all **1169** conformance vectors,
+verifier. Three of them (the Rust core, this SDK and the Python verifier) agree on all **1184** conformance vectors,
 verdict *and* reason (`make diff`); the CLI is held to them on canonical encoding. The corpus is CC0 and the runner
 is language-agnostic, so you can build a fifth and check us:
 

@@ -64,6 +64,11 @@ pub enum Reason {
     ChainWidening,
     /// A delegation link's expiry exceeds its parent's.
     ChainExpired,
+    /// A delegation party is not bound to a passport of its own (D-113): where the directory requires it, every
+    /// delegator must present its own passport from the same registrar, logged under the same checkpoint and in its
+    /// window, and the key that signed its hop must be one of that passport's keys; the last hop must be signed by
+    /// one of the subject passport's own keys.
+    ChainPartyUnbound,
     /// The credential lacks a Merkle inclusion proof to a signed checkpoint.
     NotLogged,
     /// The checkpoint signature (root/delegate + witnesses per policy) did not verify.
@@ -103,7 +108,7 @@ pub enum Reason {
 impl Reason {
     /// Every reason, in declaration order. The match in [`Reason::as_str`] is exhaustive, so a new variant fails to
     /// compile there; this list is held to it by the `all_is_every_reason` test.
-    pub const ALL: [Reason; 21] = [
+    pub const ALL: [Reason; 22] = [
         Reason::RegistrarDistrusted,
         Reason::SigInvalid,
         Reason::AlgDowngrade,
@@ -113,6 +118,7 @@ impl Reason {
         Reason::MandateRevoked,
         Reason::ChainWidening,
         Reason::ChainExpired,
+        Reason::ChainPartyUnbound,
         Reason::NotLogged,
         Reason::CheckpointInvalid,
         Reason::StaleStatus,
@@ -144,6 +150,7 @@ impl Reason {
             Reason::MandateRevoked => "mandate_revoked",
             Reason::ChainWidening => "chain_widening",
             Reason::ChainExpired => "chain_expired",
+            Reason::ChainPartyUnbound => "chain_party_unbound",
             Reason::NotLogged => "not_logged",
             Reason::CheckpointInvalid => "checkpoint_invalid",
             Reason::StaleStatus => "stale_status",
@@ -170,9 +177,9 @@ impl core::fmt::Display for Reason {
 mod tests {
     use super::*;
 
-    // The 21 frozen strings, in enum order (the 20 verify reasons and the gate's own, D-100). If this list changes,
+    // The 22 frozen strings, in enum order (the 21 verify reasons and the gate's own, D-100). If this list changes,
     // vectors break — that is the point.
-    const ALL: [(Reason, &str); 21] = [
+    const ALL: [(Reason, &str); 22] = [
         (Reason::RegistrarDistrusted, "registrar_distrusted"),
         (Reason::SigInvalid, "sig_invalid"),
         (Reason::AlgDowngrade, "alg_downgrade"),
@@ -182,6 +189,7 @@ mod tests {
         (Reason::MandateRevoked, "mandate_revoked"),
         (Reason::ChainWidening, "chain_widening"),
         (Reason::ChainExpired, "chain_expired"),
+        (Reason::ChainPartyUnbound, "chain_party_unbound"),
         (Reason::NotLogged, "not_logged"),
         (Reason::CheckpointInvalid, "checkpoint_invalid"),
         (Reason::StaleStatus, "stale_status"),

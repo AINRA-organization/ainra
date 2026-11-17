@@ -16,7 +16,7 @@ Quickstart::
     if verdict.valid:
         ...
     else:
-        print(verdict.reason)           # one of the 21 frozen reasons
+        print(verdict.reason)           # one of the 22 frozen reasons
 """
 
 from __future__ import annotations

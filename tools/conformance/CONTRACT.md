@@ -53,7 +53,7 @@ A `link` vector may carry an `issuer` member (from `l54`, D-110). Absent or `nul
 `presented_key`. A string, the empty string included: the gate verified a token with that key, and this is the issuer
 name written in the token. An implementation that ignores the member answers `l54` and `l59`, among others, wrongly.
 
-`<reason>` is one of the 21 frozen reason strings (`docs/reasons.json`: the 20 the verify returns, and `denied_by_policy`, which only a gate with its own policy returns, D-100). This is the SAME shape every AINRA surface
+`<reason>` is one of the 22 frozen reason strings (`docs/reasons.json`: the 20 the verify returns, and `denied_by_policy`, which only a gate with its own policy returns, D-100). This is the SAME shape every AINRA surface
 already emits (`docs/PRESENTATION.md`; `ainra._vector_runner` prints exactly `<name>\t<result-json>`), so an existing
 verifier needs only a thin wrapper — see `tools/conformance/adapters/`.
 

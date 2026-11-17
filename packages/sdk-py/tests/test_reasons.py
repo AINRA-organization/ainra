@@ -4,7 +4,7 @@
 The conformance vectors' recorded ``expect`` is the Rust core's verdict; this
 test asserts the independent Python verifier reproduces it byte-for-byte on every
 passport, delta, and directory vector — the same property the differential
-harness enforces — and that all 21 frozen reasons are exercised: the 20 the verify returns by the passport corpus,
+harness enforces — and that all 22 frozen reasons are exercised: the 21 the verify returns by the passport corpus,
 and the gate's own ``denied_by_policy`` (D-100) by the gate corpus, the only place a verdict can carry it.
 """
 

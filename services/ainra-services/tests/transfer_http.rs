@@ -124,6 +124,7 @@ impl Roots {
                 status_mldsa65: a["status_key"]["mldsa65"].as_str().unwrap().into(),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
                 status_uri: a["status_uri"].as_str().unwrap().into(),
             })
             .collect();

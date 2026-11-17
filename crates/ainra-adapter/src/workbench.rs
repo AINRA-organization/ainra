@@ -38,14 +38,15 @@ pub const REQUEST_MESSAGE_PREFIX: &str = "ainra/directory-change-request/v1 ";
 /// Turning this on is a decision with its own record, never an edit to make a request pass.
 pub const LEGAL_ENTITY_EXISTS: bool = false;
 
-/// The six request types of R0.
-pub const TYPES: [&str; 6] = [
+/// The six request types of R0, and BIND_CHAINS (D-113).
+pub const TYPES: [&str; 7] = [
     "ACCREDIT",
     "WITHDRAW",
     "DISTRUST_FROM_LEAF",
     "REVOKE_DELEGATE",
     "REGISTRAR_KEY_ROLL",
     "ROOT_KEY_ROLL",
+    "BIND_CHAINS",
 ];
 
 // ── the checks ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -96,6 +97,8 @@ pub const CHECKS: &[Check] = &[
         rule: "The compliance record reproduces the failure after the cure window ended, no later than the filing, from at least two vantage points on distinct networks, each report named by its SHA-256." },
     Check { id: "adverse-grace", stage: "check-request", built: true,
         rule: "An adverse WITHDRAW comes only after distrust: the registrar already carries a distrust cutoff in epoch N, the record names a public breach record (notice 3 or later), and the request is filed at least 90 days after it, so holders have had time to move (D-094 item 11)." },
+    Check { id: "chains-bound", stage: "check-request", built: true,
+        rule: "A BIND_CHAINS is filed by the registrar about itself, names the leaf from which its delegation chains are bound to their parties' passports (change.leaf), and only for a registrar that does not bind them yet: a binding is never moved (D-113)." },
     Check { id: "entry-shape", stage: "check-request", built: true,
         rule: "An ACCREDIT entry is for the request's registrar, decodes every key at its exact size (Ed25519 32 B, ML-DSA-65 1952 B, SLH-DSA 32 B), carries status keys and a status URI, and sets no distrust cutoff or pinned head." },
     Check { id: "proof-of-possession", stage: "check-request", built: true,
@@ -125,6 +128,8 @@ pub const CHECKS: &[Check] = &[
         rule: "Every entry of epoch N is still present unless a WITHDRAW in the proposal names it." },
     Check { id: "proposal-cutoff", stage: "check-proposal", built: true,
         rule: "No distrust cutoff of epoch N is lifted or moved later, and a log head pinned at a cutoff is never dropped, nor changed while the cutoff stays (D-111)." },
+    Check { id: "proposal-chains-bound", stage: "check-proposal", built: true,
+        rule: "Where epoch N binds a registrar's delegation chains from a leaf, epoch N+1 binds them from the same leaf: a binding is never dropped or moved (D-113)." },
     Check { id: "proposal-revocations-kept", stage: "check-proposal", built: true,
         rule: "Every delegate revoked in epoch N is still revoked." },
     Check { id: "proposal-rederive", stage: "check-proposal", built: true,
@@ -516,6 +521,9 @@ fn changed_fields(a: &DirectoryEntry, b: &DirectoryEntry) -> Vec<&'static str> {
     if a.distrust_root != b.distrust_root {
         f.push("distrust_root");
     }
+    if a.chains_bound_from_leaf != b.chains_bound_from_leaf {
+        f.push("chains_bound_from_leaf");
+    }
     f
 }
 
@@ -635,7 +643,7 @@ pub fn check_request(
     }
     let allowed = match t {
         "ACCREDIT" => (true, false, false),
-        "DISTRUST_FROM_LEAF" => (false, true, false),
+        "DISTRUST_FROM_LEAF" | "BIND_CHAINS" => (false, true, false),
         "REVOKE_DELEGATE" => (false, false, true),
         _ => (false, false, false),
     };
@@ -648,7 +656,7 @@ pub fn check_request(
         return refuse(
             "request-shape",
             format!(
-                "{t} carries a change field another type uses (entry is ACCREDIT's, leaf DISTRUST_FROM_LEAF's, cert REVOKE_DELEGATE's)"
+                "{t} carries a change field another type uses (entry is ACCREDIT's, leaf DISTRUST_FROM_LEAF's and BIND_CHAINS', cert REVOKE_DELEGATE's)"
             ),
         );
     }
@@ -816,11 +824,15 @@ pub fn check_request(
                     entry.status_uri.as_str(),
                 ),
             ];
-            let differ: Vec<&str> = pairs
+            let mut differ: Vec<&str> = pairs
                 .iter()
                 .filter(|(_, served, asked)| *served != Some(*asked))
                 .map(|(f, _, _)| *f)
                 .collect();
+            // D-113: where the registrar binds its chains is its own statement, served beside its keys.
+            if a["chains_bound_from_leaf"].as_u64() != entry.chains_bound_from_leaf {
+                differ.push("chains_bound_from_leaf");
+            }
             if !differ.is_empty() {
                 return refuse(
                     "accreditation-match",
@@ -932,6 +944,30 @@ pub fn check_request(
                 );
             }
             passed.push("delegate-owned");
+        }
+        if t == "BIND_CHAINS" {
+            if !self_filed {
+                return refuse(
+                    "chains-bound",
+                    format!(
+                        "BIND_CHAINS is filed only by the registrar whose chains it binds; {:?} is not {}",
+                        r.filer, r.registrar
+                    ),
+                );
+            }
+            let Some(leaf) = r.change.leaf else {
+                return refuse("chains-bound", "BIND_CHAINS carries no change.leaf");
+            };
+            if let Some(old) = cur.chains_bound_from_leaf {
+                return refuse(
+                    "chains-bound",
+                    format!(
+                        "{} already binds its chains from leaf {old} in epoch {epoch}; a binding is never moved (asked: leaf {leaf})",
+                        r.registrar
+                    ),
+                );
+            }
+            passed.push("chains-bound");
         }
         if t == "DISTRUST_FROM_LEAF" {
             let Some(leaf) = r.change.leaf else {
@@ -1296,6 +1332,15 @@ fn apply(
                     )));
                 }
             }
+            "BIND_CHAINS" => {
+                let leaf = r.change.leaf.unwrap_or(0);
+                for e in entries.iter_mut().filter(|e| e.registrar == id) {
+                    e.chains_bound_from_leaf = Some(leaf);
+                    diff.push(line(format!(
+                        "~ bind {id}'s delegation chains to their parties' passports from leaf {leaf}"
+                    )));
+                }
+            }
             "REVOKE_DELEGATE" => {
                 let cert = r.change.cert.as_ref().and_then(cert_of).ok_or_else(|| {
                     refusal(
@@ -1605,6 +1650,22 @@ pub fn check_proposal(
                     );
                 }
                 Some(new) => {
+                    // D-113: a chain binding is never dropped or moved.
+                    if let Some(from) = old.chains_bound_from_leaf {
+                        if new.chains_bound_from_leaf != Some(from) {
+                            return refuse(
+                                "proposal-chains-bound",
+                                format!(
+                                    "{} binds its chains from leaf {from} in epoch {n}, and {} in epoch {}",
+                                    old.registrar,
+                                    new.chains_bound_from_leaf
+                                        .map(|c| format!("from leaf {c}"))
+                                        .unwrap_or_else(|| "not at all".into()),
+                                    p.epoch
+                                ),
+                            );
+                        }
+                    }
                     // D-111: a pinned head is never dropped, and stays the same while the cutoff stays where it is.
                     if old.distrust_root.is_some()
                         && (new.distrust_root.is_none()
@@ -1985,6 +2046,7 @@ mod tests {
                 status_mldsa65: b64::encode(&s.mldsa65),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
                 status_uri: format!("status://{}/1", self.id),
             }
         }
@@ -2590,6 +2652,80 @@ mod tests {
     fn reseal(p: &mut Value) {
         let d: Directory = serde_json::from_value(p["directory"].clone()).unwrap();
         p["signing_bytes_sha256"] = json!(sha256_hex(&d.signing_bytes().unwrap()));
+    }
+
+    #[test]
+    fn a_registrar_binds_its_chains_once_and_the_binding_never_moves() {
+        big(|| {
+            let w = world();
+            let bind = |leaf: Option<u64>, filer: &str, by: &Reg| {
+                let mut r = base_request("BIND_CHAINS", "registrar-07", filer);
+                r.change.leaf = leaf;
+                self_signed(r, by)
+            };
+            // The registrar binds its own chains, signed by its current issuer key.
+            let ok = check(&bind(Some(12), "registrar-07", &w.a)).expect("an honest binding");
+            assert!(ok.passed.contains(&"chains-bound"));
+            // Nobody else binds them for it; it names its leaf; its signature is its own.
+            refused_by(check(&bind(Some(12), "monitor-01", &w.a)), "chains-bound");
+            refused_by(check(&bind(None, "registrar-07", &w.a)), "chains-bound");
+            refused_by(
+                check(&bind(Some(12), "registrar-07", &w.b)),
+                "self-signature",
+            );
+            // It is applied, and said in the diff.
+            let p = proposal_of(w, vec![bind(Some(12), "registrar-07", &w.a)]);
+            let e07 = p["directory"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["registrar"] == json!("registrar-07"))
+                .unwrap()
+                .clone();
+            assert_eq!(e07["chains_bound_from_leaf"], json!(12));
+            assert!(
+                check_p(w, &p).is_ok(),
+                "{:?}",
+                check_p(w, &p).err().map(|e| e.to_string())
+            );
+            // Once bound, a second binding is refused, and a later epoch may neither drop nor move it.
+            let mut bound = w.base.clone();
+            for e in bound
+                .entries
+                .iter_mut()
+                .filter(|e| e.registrar == "registrar-07")
+            {
+                e.chains_bound_from_leaf = Some(12);
+            }
+            sign_dir(&w.root_ed, &w.root_slh, &mut bound);
+            refused_by(
+                check_request(&bind(Some(20), "registrar-07", &w.a), Some(&bound), None),
+                "chains-bound",
+            );
+            // A later epoch over the bound one, applying an unrelated request, that drops or moves the binding.
+            let honest = serde_json::to_value(
+                propose(Some(&bound), vec![revoke(w)], 1_600_000, &[]).unwrap(),
+            )
+            .unwrap();
+            assert!(check_proposal(&honest.to_string(), Some(&bound), &[]).is_ok());
+            for moved in [Value::Null, json!(13)] {
+                let mut x = honest.clone();
+                for e in x["directory"]["entries"].as_array_mut().unwrap() {
+                    if e["registrar"] == "registrar-07" {
+                        if moved.is_null() {
+                            e.as_object_mut().unwrap().remove("chains_bound_from_leaf");
+                        } else {
+                            e["chains_bound_from_leaf"] = moved.clone();
+                        }
+                    }
+                }
+                reseal(&mut x);
+                proposal_refused_by(
+                    check_proposal(&x.to_string(), Some(&bound), &[]),
+                    "proposal-chains-bound",
+                );
+            }
+        });
     }
 
     #[test]

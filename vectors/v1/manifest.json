@@ -3,6 +3,7 @@
     "alg_downgrade": 26,
     "ceiling_exceeded": 24,
     "chain_expired": 48,
+    "chain_party_unbound": 8,
     "chain_widening": 25,
     "checkpoint_invalid": 72,
     "expired": 36,
@@ -14,15 +15,15 @@
     "name_malformed": 30,
     "not_logged": 75,
     "not_yet_valid": 30,
-    "registrar_distrusted": 24,
+    "registrar_distrusted": 25,
     "revoked": 48,
-    "schema_violation": 134,
+    "schema_violation": 137,
     "sig_invalid": 48,
     "stale_status": 24,
     "unknown_registrar": 24,
-    "valid": 309
+    "valid": 312
   },
-  "count": 1169,
+  "count": 1184,
   "note": "CC0 conformance vectors. Each is a real signed credential + expected verdict. Regenerate with `make vectors`.",
   "version": "v1"
 }

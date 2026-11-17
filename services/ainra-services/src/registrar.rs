@@ -57,6 +57,15 @@ pub struct HopSpec {
     pub from: String,
     pub to: String,
     pub granted: Vec<String>,
+    /// D-113: the delegator's own hybrid signature over the hop's canonical bytes (`{exp, from, granted, to}`, with
+    /// `exp` the new passport's), made with the key in the delegator's passport at this registrar. With `sig_to` on
+    /// every hop, the chain is BOUND: the registrar holds no party's key and generates none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_from: Option<HybridB64>,
+    /// D-113: the delegatee's counter-signature over the same bytes: the next party's passport key, or for the last
+    /// hop the new passport's own `holder_key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_to: Option<HybridB64>,
 }
 
 /// ADR-017 tier-audit evidence, held REGISTRAR-SIDE (Standard §4: evidence lives at the registrar, never at the
@@ -265,6 +274,11 @@ pub struct IssuedRecord {
     pub chain_keys: Vec<WireHybridPublic>,
     pub hops: Vec<ActLink>,
     pub hop_proofs: Vec<WireHopProof>,
+    /// D-113: each delegator's own passport from this registrar, with its inclusion proof — what binds the keys
+    /// that signed the hops to the names the hops give. Empty for an unbound or root-issued lineage; omitted then,
+    /// so every earlier record keeps its bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_parties: Vec<WireParty>,
     /// Engine-tracked convenience mirror of the status bit (authoritative status is the signed list).
     pub revoked: bool,
 }
@@ -288,6 +302,16 @@ impl WireHybridPublic {
             mldsa65: b64::decode(&self.mldsa65).ok()?,
         })
     }
+}
+
+/// D-113: one delegator's own passport as a record and a bundle carry it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WireParty {
+    /// base64url of the party passport's canonical claim bytes, as in a presentation.
+    pub claims: String,
+    pub issuer_sig: WireHybridPublic,
+    pub leaf_index: u64,
+    pub inclusion_proof: Vec<String>,
 }
 
 /// Wire form of a per-hop inclusion proof.
@@ -347,6 +371,10 @@ pub struct Accreditation {
     pub status_key: WireHybridPublic,
     pub log_origin: String,
     pub status_uri: String,
+    /// D-113: from this leaf index on, this registrar's delegation chains are bound to their parties' passports.
+    /// Absent until the registrar binds chains, so every earlier accreditation keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chains_bound_from_leaf: Option<u64>,
 }
 
 /// Every directory change-request message starts with this (PLAN-M52 step 5); the adapter's
@@ -396,6 +424,9 @@ pub struct RegistrarBox {
     seed: Seed,
     /// The unix time the certs were issued at — persisted for deterministic reload.
     create_now: u64,
+    /// D-113: delegation chains this registrar logs from this leaf index on are bound to their parties' passports;
+    /// it refuses to issue one that is not. Carried in its accreditation, so the root's directory entry can say so.
+    chains_bound_from_leaf: Option<u64>,
     /// What an A1 request needs here (PLAN-M51 step 3). Not persisted: whoever opens the registrar installs it, and
     /// until they do every A1 request is refused.
     principal_policy: principal::PrincipalPolicy,
@@ -517,6 +548,7 @@ impl RegistrarBox {
             exp,
             seed: Seed::None,
             create_now: now,
+            chains_bound_from_leaf: None,
             principal_policy: principal::PrincipalPolicy::default(),
         })
     }
@@ -607,6 +639,7 @@ impl RegistrarBox {
                 ))
             }
         };
+        me.chains_bound_from_leaf = snap["chains_bound_from_leaf"].as_u64();
         // Restore records + the status-index cursor.
         if let Some(records) = snap["records"].as_array() {
             for r in records {
@@ -799,7 +832,20 @@ impl RegistrarBox {
             status_key: WireHybridPublic::from_core(&self.status.public()),
             log_origin: self.log_origin(),
             status_uri: self.status_uri(),
+            chains_bound_from_leaf: self.chains_bound_from_leaf,
         }
+    }
+
+    /// D-113: bind delegation chains from the current end of the log on, and return that leaf index. Idempotent:
+    /// once bound, the position never moves (an earlier position would condemn chains logged before it; a later one
+    /// would let unbound chains in after the registrar said it binds them). The root states it in the directory.
+    pub fn bind_chains(&mut self) -> u64 {
+        *self.chains_bound_from_leaf.get_or_insert(self.log.size())
+    }
+
+    /// D-113: where this registrar's chain binding begins, if it binds chains.
+    pub fn chains_bound_from_leaf(&self) -> Option<u64> {
+        self.chains_bound_from_leaf
     }
 
     /// A registrar files a directory change request about its own entry (PLAN-M52 step 5) by signing the request's
@@ -839,6 +885,7 @@ impl RegistrarBox {
                 // A registrar never distrusts itself; a cutoff is set by the ROOT, in the signed directory.
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: self.chains_bound_from_leaf,
             },
         );
         TrustAnchors { registrars }
@@ -946,7 +993,37 @@ impl RegistrarBox {
         // matching secret keys elsewhere); otherwise we generate them here. With NO hops there are NO chain
         // parties — caller-supplied keys are ignored rather than baked into a chainless record, which would make
         // it permanently unverifiable (`chain_keys` non-empty + `act_chain` empty ⇒ schema_violation; review #11).
-        let n_parties = if spec.hops.is_empty() {
+        // D-113: a chain whose every hop carries both parties' signatures is BOUND, and takes the path below this
+        // one. A partly signed chain is neither. A registrar that binds chains issues no other kind.
+        let signed = spec
+            .hops
+            .iter()
+            .filter(|h| h.sig_from.is_some() && h.sig_to.is_some())
+            .count();
+        if signed > 0 && signed < spec.hops.len()
+            || spec
+                .hops
+                .iter()
+                .any(|h| h.sig_from.is_some() != h.sig_to.is_some())
+        {
+            return Err(IssueError::Malformed(
+                "a chain is signed by its parties on every hop or on none (D-113)".into(),
+            ));
+        }
+        let bound = !spec.hops.is_empty() && signed == spec.hops.len();
+        if !spec.hops.is_empty() && !bound && self.chains_bound_from_leaf.is_some() {
+            return Err(IssueError::Malformed(
+                "this registrar binds delegation chains (D-113): each hop must be signed by its delegator and \
+                 delegatee with the keys in their own passports here"
+                    .into(),
+            ));
+        }
+        let (bound_pubs, bound_parties) = if bound {
+            self.bound_parties(spec, &sub)?
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let n_parties = if spec.hops.is_empty() || bound {
             0
         } else {
             spec.hops.len() + 1
@@ -983,6 +1060,29 @@ impl RegistrarBox {
             };
             let msg = chain::hop_signing_bytes(&link)
                 .map_err(|e| IssueError::Malformed(format!("hop bytes: {e:?}")))?;
+            if bound {
+                // The parties signed; the registrar only checks that they did, under their passports' keys.
+                let sig = |w: &Option<HybridB64>| -> Result<(String, String), IssueError> {
+                    let w = w
+                        .as_ref()
+                        .ok_or_else(|| IssueError::Malformed("hop signature".into()))?;
+                    Ok((w.ed25519.clone(), w.mldsa65.clone()))
+                };
+                (link.sig_ed25519, link.sig_mldsa65) = sig(&h.sig_from)?;
+                (link.sig_child_ed25519, link.sig_child_mldsa65) = sig(&h.sig_to)?;
+                chain::verify_hop_sig(&link, &bound_pubs[i], &bound_pubs[i + 1]).map_err(|_| {
+                    IssueError::Malformed(format!(
+                        "hop {i} ({} → {}) is not signed by both parties' passport keys (D-113)",
+                        h.from, h.to
+                    ))
+                })?;
+                link.log_leaf = b64::encode(
+                    &chain::hop_leaf(&link)
+                        .map_err(|e| IssueError::Malformed(format!("hop leaf: {e:?}")))?,
+                );
+                act_chain.push(link);
+                continue;
+            }
             let ds = party_keys[i]
                 .sign(&msg)
                 .map_err(|e| IssueError::Malformed(format!("delegator sign: {e:?}")))?;
@@ -1125,6 +1225,23 @@ impl RegistrarBox {
             .map_err(|e| IssueError::Malformed(format!("issuer sign: {e:?}")))?;
 
         self.next_status_idx += 1;
+        // D-113: each delegator's own passport, proven under this issuance's checkpoint.
+        let mut chain_parties: Vec<WireParty> = Vec::with_capacity(bound_parties.len());
+        for party in &bound_parties {
+            let p = self
+                .log
+                .inclusion_proof(party.leaf_index)
+                .ok_or_else(|| IssueError::Io("party inclusion proof".into()))?;
+            chain_parties.push(WireParty {
+                claims: b64::encode(party.claims.as_bytes()),
+                issuer_sig: WireHybridPublic {
+                    ed25519: party.issuer_sig_ed25519.clone(),
+                    mldsa65: party.issuer_sig_mldsa65.clone(),
+                },
+                leaf_index: party.leaf_index,
+                inclusion_proof: p.iter().map(|h| b64::encode(h)).collect(),
+            });
+        }
         let record = IssuedRecord {
             sub: sub.clone(),
             iss: format!("did:ainra:{}:{}:{}", self.id, spec.operator, spec.lineage),
@@ -1151,12 +1268,17 @@ impl RegistrarBox {
             checkpoint_root: b64::encode(&cp.root),
             checkpoint_sig: WireCheckpointSig::from_core(&signed.sig),
             inclusion_proof: cred_proof.iter().map(|h| b64::encode(h)).collect(),
-            chain_keys: party_keys
-                .iter()
-                .map(|k| WireHybridPublic::from_core(&k.public()))
-                .collect(),
+            chain_keys: if bound {
+                bound_pubs.iter().map(WireHybridPublic::from_core).collect()
+            } else {
+                party_keys
+                    .iter()
+                    .map(|k| WireHybridPublic::from_core(&k.public()))
+                    .collect()
+            },
             hops: act_chain,
             hop_proofs,
+            chain_parties,
             revoked: false,
         };
         // The new credential is now its lineage's continuity head (ADR-017): future reissues chain from THIS leaf.
@@ -1166,6 +1288,60 @@ impl RegistrarBox {
         );
         self.records.insert(sub, record.clone());
         Ok(record)
+    }
+
+    /// D-113: the keys of a bound chain's parties, in order (each delegator's passport key, then the new passport's
+    /// own `holder_key`), and the delegators' passports. Every delegator must hold an unrevoked passport here, and
+    /// the last hop must end at the passport being issued.
+    fn bound_parties(
+        &self,
+        spec: &IssueSpec,
+        sub: &str,
+    ) -> Result<(Vec<crypto::HybridPublic>, Vec<IssuedRecord>), IssueError> {
+        let key_of = |ed: &str, ml: &str| -> Option<crypto::HybridPublic> {
+            Some(crypto::HybridPublic {
+                ed25519: b64::decode(ed).ok()?.try_into().ok()?,
+                mldsa65: b64::decode(ml).ok()?,
+            })
+        };
+        let mut pubs = Vec::with_capacity(spec.hops.len() + 1);
+        let mut parties = Vec::with_capacity(spec.hops.len());
+        for (i, h) in spec.hops.iter().enumerate() {
+            let rec = self.records.get(&h.from).ok_or_else(|| {
+                IssueError::Malformed(format!(
+                    "hop {i}: {} holds no passport at this registrar, so it cannot delegate here (D-113)",
+                    h.from
+                ))
+            })?;
+            if rec.revoked {
+                return Err(IssueError::LineageRevoked(format!(
+                    "hop {i}: {} is revoked and cannot delegate",
+                    h.from
+                )));
+            }
+            let k = passport_field(rec, "/keys/0/ed25519")
+                .zip(passport_field(rec, "/keys/0/mldsa65"))
+                .and_then(|(ed, ml)| key_of(&ed, &ml))
+                .ok_or_else(|| IssueError::Malformed(format!("hop {i}: {} has no key", h.from)))?;
+            pubs.push(k);
+            parties.push(rec.clone());
+        }
+        if spec.hops.last().map(|h| h.to.as_str()) != Some(sub) {
+            return Err(IssueError::Malformed(format!(
+                "the last hop must end at the passport being issued, {sub}"
+            )));
+        }
+        let holder = spec.holder_key.as_ref().ok_or_else(|| {
+            IssueError::Malformed(
+                "a bound chain ends at the agent's own key: the request must carry holder_key (D-063, D-113)"
+                    .into(),
+            )
+        })?;
+        pubs.push(
+            key_of(&holder.ed25519, &holder.mldsa65)
+                .ok_or_else(|| IssueError::Malformed("holder_key does not decode".into()))?,
+        );
+        Ok((pubs, parties))
     }
 
     /// ADR-017 renewal: reissue `sub` with a FRESH `[now, now + 366 d]` window, a NEW status index, and a
@@ -1465,6 +1641,9 @@ impl RegistrarBox {
             "inclusion_proof": cur.inclusion_proof,
             "mandate_revocations": [],
         });
+        if !cur.chain_parties.is_empty() {
+            bundle["chain_parties"] = serde_json::to_value(&cur.chain_parties).ok()?;
+        }
         // M6 (D-021): the delegate-signed FRESH HEAD + its delegate cert. A currency-mode verifier verifies the head
         // (cert → the registrar's log root, delegate sig, F1 recency), binds it to the presented list by `head_hash`,
         // and tracks its monotonic `seq` — so a genuine but SUPERSEDED status snapshot cannot be replayed to
@@ -1561,6 +1740,11 @@ impl RegistrarBox {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
+        // D-113: and so is every delegator's own passport.
+        for party in r.chain_parties.iter_mut() {
+            let p = self.log.inclusion_proof(party.leaf_index)?;
+            party.inclusion_proof = p.iter().map(|h| b64::encode(h)).collect();
+        }
         Some(r)
     }
 
@@ -1590,6 +1774,7 @@ impl RegistrarBox {
             "id": self.id,
             "accreditation": self.accreditation(),
             "create_now": self.create_now,
+            "chains_bound_from_leaf": self.chains_bound_from_leaf,
             "nbf": self.nbf,
             "exp": self.exp,
             "next_status_idx": self.next_status_idx,
@@ -1706,6 +1891,7 @@ pub fn verify_record_offline_with(
                 issuer_sig: parts.issuer_sig,
                 now,
                 chain_keys: parts.chain_keys,
+                chain_parties: parts.chain_parties,
                 hop_proofs: parts.hop_proofs,
                 status_list,
                 status_issued_at,
@@ -1732,6 +1918,7 @@ struct PresentationParts {
     claims: Vec<u8>,
     issuer_sig: crypto::HybridSig,
     chain_keys: Vec<crypto::HybridPublic>,
+    chain_parties: Vec<ainra_core::verify::PartyEvidence>,
     hop_proofs: Vec<HopLogProof>,
     checkpoint: Checkpoint,
     checkpoint_sig: CheckpointSig,
@@ -1771,6 +1958,22 @@ fn reconstruct_presentation(rec: &IssuedRecord) -> Result<PresentationParts, ain
         })
         .collect::<Option<Vec<_>>>()
         .ok_or(ainra_core::Reason::NotLogged)?;
+    let chain_parties = rec
+        .chain_parties
+        .iter()
+        .map(|w| {
+            Some(ainra_core::verify::PartyEvidence {
+                claims: b64::decode(&w.claims).ok()?,
+                issuer_sig: crypto::HybridSig {
+                    ed25519: b64::decode(&w.issuer_sig.ed25519).ok()?,
+                    mldsa65: b64::decode(&w.issuer_sig.mldsa65).ok()?,
+                },
+                leaf_index: w.leaf_index,
+                inclusion_proof: decode_proof(&w.inclusion_proof)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ainra_core::Reason::SchemaViolation)?;
     let issuer_sig = crypto::HybridSig {
         ed25519: b64::decode(&rec.issuer_sig_ed25519).unwrap_or_default(),
         mldsa65: b64::decode(&rec.issuer_sig_mldsa65).unwrap_or_default(),
@@ -1779,6 +1982,7 @@ fn reconstruct_presentation(rec: &IssuedRecord) -> Result<PresentationParts, ain
         claims: rec.claims.clone().into_bytes(),
         issuer_sig,
         chain_keys,
+        chain_parties,
         hop_proofs,
         checkpoint,
         checkpoint_sig,
@@ -2129,11 +2333,15 @@ mod tests {
                 from: "ainra:registrar-07:acme:owner@1.0.0".into(),
                 to: "ainra:registrar-07:acme:desk@1.0.0".into(),
                 granted: vec!["read:invoices".into(), "sign:invoice".into()],
+                sig_from: None,
+                sig_to: None,
             },
             HopSpec {
                 from: "ainra:registrar-07:acme:desk@1.0.0".into(),
                 to: "ainra:registrar-07:acme:bot@1.0.0".into(),
                 granted: vec!["read:invoices".into()],
+                sig_from: None,
+                sig_to: None,
             },
         ];
         let rec = rb.issue(&s, &[], &mut rng).unwrap();
@@ -2156,6 +2364,155 @@ mod tests {
             b["hop_proofs"],
             "the presented hop proofs must be recomputed, not carried over from issuance"
         );
+    }
+
+    // ── D-113 (PLAN-M53 R2): a bound chain, issued by a registrar that holds none of the parties' keys ───────────
+
+    /// The hop a party signs: `{exp, from, granted, to}` with `exp` the new passport's.
+    fn sign_hop(from: &str, to: &str, granted: &[&str], kp: &crypto::HybridKeypair) -> HybridB64 {
+        let link = ActLink {
+            from: from.into(),
+            to: to.into(),
+            granted: granted.iter().map(|s| s.to_string()).collect(),
+            exp: EXP,
+            sig_ed25519: String::new(),
+            sig_mldsa65: String::new(),
+            sig_child_ed25519: String::new(),
+            sig_child_mldsa65: String::new(),
+            log_leaf: String::new(),
+        };
+        let sig = kp.sign(&chain::hop_signing_bytes(&link).unwrap()).unwrap();
+        HybridB64 {
+            ed25519: b64::encode(&sig.ed25519),
+            mldsa65: b64::encode(&sig.mldsa65),
+        }
+    }
+
+    #[test]
+    fn a_bound_chain_is_signed_by_its_parties_and_verifies_with_their_passports() {
+        let tmp = std::env::temp_dir().join("ainra-rb-d113");
+        let _ = std::fs::remove_dir_all(&tmp);
+        // Seeded, so the reload at the end can rebuild its keys.
+        let mut rb =
+            RegistrarBox::create_seeded(&tmp, "registrar-07", 64, 1130, NBF - 1000, NBF, EXP)
+                .unwrap();
+        let mut rng = ChaCha20Rng::seed_from_u64(1130);
+        let reg = "registrar-07";
+        let name = |l: &str| format!("ainra:{reg}:acme:{l}@1.0.0");
+        // The two delegators get passports for keys they hold; the registrar keeps no secret for either.
+        let mut parties = Vec::new();
+        for l in ["owner", "desk"] {
+            let (kp, key, pop) = holder_csr(reg, &mut rng);
+            let mut s = spec("acme", l, "1.0.0");
+            s.scope_ceiling = vec!["read:invoices".into(), "sign:invoice".into()];
+            s.holder_key = Some(key);
+            s.holder_pop = Some(pop);
+            rb.issue(&s, &[], &mut rng).unwrap();
+            parties.push(kp);
+        }
+        let from = rb.bind_chains();
+        assert_eq!(
+            rb.bind_chains(),
+            from,
+            "binding is idempotent: the position never moves"
+        );
+        assert_eq!(rb.accreditation().chains_bound_from_leaf, Some(from));
+        let (bot, bot_key, bot_pop) = holder_csr(reg, &mut rng);
+        let hops = |sign: &dyn Fn(usize) -> (HybridB64, HybridB64)| {
+            let (a0, b0) = sign(0);
+            let (a1, b1) = sign(1);
+            vec![
+                HopSpec {
+                    from: name("owner"),
+                    to: name("desk"),
+                    granted: vec!["read:invoices".into(), "sign:invoice".into()],
+                    sig_from: Some(a0),
+                    sig_to: Some(b0),
+                },
+                HopSpec {
+                    from: name("desk"),
+                    to: name("bot"),
+                    granted: vec!["read:invoices".into()],
+                    sig_from: Some(a1),
+                    sig_to: Some(b1),
+                },
+            ]
+        };
+        let honest = |i: usize| {
+            if i == 0 {
+                let g = ["read:invoices", "sign:invoice"];
+                (
+                    sign_hop(&name("owner"), &name("desk"), &g, &parties[0]),
+                    sign_hop(&name("owner"), &name("desk"), &g, &parties[1]),
+                )
+            } else {
+                let g = ["read:invoices"];
+                (
+                    sign_hop(&name("desk"), &name("bot"), &g, &parties[1]),
+                    sign_hop(&name("desk"), &name("bot"), &g, &bot),
+                )
+            }
+        };
+        let mut s = spec("acme", "bot", "1.0.0");
+        s.holder_key = Some(bot_key.clone());
+        s.holder_pop = Some(bot_pop.clone());
+
+        // A chain the registrar would have to sign for its parties is refused once it binds chains.
+        let mut unbound = s.clone();
+        unbound.hops = hops(&honest);
+        for h in unbound.hops.iter_mut() {
+            h.sig_from = None;
+            h.sig_to = None;
+        }
+        assert!(matches!(
+            rb.issue(&unbound, &[], &mut rng),
+            Err(IssueError::Malformed(_))
+        ));
+        // A hop signed by a key that is not the delegator's passport key is refused.
+        let rogue = crypto::HybridKeypair::generate(&mut rng);
+        let mut forged = s.clone();
+        forged.hops = hops(&honest);
+        forged.hops[0].sig_from = Some(sign_hop(
+            &name("owner"),
+            &name("desk"),
+            &["read:invoices", "sign:invoice"],
+            &rogue,
+        ));
+        assert!(matches!(
+            rb.issue(&forged, &[], &mut rng),
+            Err(IssueError::Malformed(_))
+        ));
+
+        s.hops = hops(&honest);
+        let rec = rb.issue(&s, &[], &mut rng).unwrap();
+        assert_eq!(rec.chain_parties.len(), 2);
+        assert!(rec.leaf_index >= from);
+        // Grow the log so the presentation proves against a newer checkpoint than issuance.
+        rb.issue(&spec("acme", "later", "1.0.0"), &[], &mut rng)
+            .unwrap();
+        assert_eq!(rb.verify_record(&rec.sub, VERIFY_NOW), Verdict::Valid);
+        let bundle = rb.present(&rec.sub, VERIFY_NOW, "F3").unwrap();
+        assert_eq!(bundle["chain_parties"].as_array().map(|a| a.len()), Some(2));
+
+        // The same bundle through the wire path every gate uses, against anchors that bind chains.
+        let wire: ainra_adapter::WirePresentation = serde_json::from_value(bundle.clone()).unwrap();
+        let anchors = rb.trust_anchors();
+        assert_eq!(
+            ainra_adapter::verify_wire(&wire, &anchors, VERIFY_NOW, ""),
+            Verdict::Valid
+        );
+        // Without its party passports it is refused by name.
+        let mut stripped = wire.clone();
+        stripped.chain_parties.clear();
+        assert_eq!(
+            ainra_adapter::verify_wire(&stripped, &anchors, VERIFY_NOW, ""),
+            Verdict::invalid(ainra_core::Reason::SchemaViolation)
+        );
+        // And it survives a reload with its binding position.
+        rb.save().unwrap();
+        let back = RegistrarBox::load(&tmp).unwrap();
+        assert_eq!(back.chains_bound_from_leaf(), Some(from));
+        assert_eq!(back.verify_record(&rec.sub, VERIFY_NOW), Verdict::Valid);
     }
 
     #[test]
@@ -2285,11 +2642,15 @@ mod tests {
                 from: format!("ainra:{reg}:acme:owner@1.0.0"),
                 to: format!("ainra:{reg}:acme:support-desk@1.0.0"),
                 granted: vec!["read:tickets".into(), "reply:ticket".into()],
+                sig_from: None,
+                sig_to: None,
             },
             HopSpec {
                 from: format!("ainra:{reg}:acme:support-desk@1.0.0"),
                 to: format!("ainra:{reg}:acme:support-bot@1.0.0"),
                 granted: vec!["read:tickets".into()],
+                sig_from: None,
+                sig_to: None,
             },
         ];
         let rec = rb.issue(&s, &[], &mut rng).unwrap();
@@ -2567,6 +2928,8 @@ mod tests {
             from: format!("ainra:{reg}:acme:owner@1.0.0"),
             to: format!("ainra:{reg}:acme:helper-bot@1.0.0"),
             granted: vec!["read:invoices".into()],
+            sig_from: None,
+            sig_to: None,
         }];
         let rec = rb.issue(&s, &[], &mut rng).unwrap();
         // The delegation parties' consent signatures are theirs to give — renewal of a delegation is a

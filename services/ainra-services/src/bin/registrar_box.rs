@@ -10,6 +10,7 @@
 //!   GET  /record?sub=…                  → one full record
 //!   GET  /verify?sub=…&now=T            → the live verdict (reflects revocations)
 //!   POST /revoke          {sub, now}    → the emitted signed status delta
+//!   POST /bind-chains     {}            → D-113: bind delegation chains from the end of the log on (idempotent)
 //!   GET  /status-list?now=T             → the full signed Token Status List
 //!   GET  /fresh-head?now=T              → the 30-second delegate-signed fresh head
 //!   GET  /deltas?since=S                → the signed deltas a client at head S still needs
@@ -837,6 +838,21 @@ fn main() {
                     },
                     None => (400, r#"{"error":"sub required"}"#.to_string()),
                 }
+            }
+
+            // D-113 (PLAN-M53 R2): from the end of the log on, every delegation chain this registrar issues is bound to
+            // its parties' own passports. Write-authorized, idempotent, saved before it answers; the position appears
+            // in `/accreditation`, where the root reads it for the directory.
+            ("POST", "/bind-chains") => {
+                if !write_authorized(req, &st.issue_token, open_writes) {
+                    return (
+                        401,
+                        r#"{"error":"unauthorized (bearer token required)"}"#.to_string(),
+                    );
+                }
+                let from = st.rb.bind_chains();
+                persist(&st.rb, &id);
+                (200, json!({ "chains_bound_from_leaf": from }).to_string())
             }
 
             // PLAN-M47 § Later — the public demo door, for links: what `/demo/issue` is for passports. No bearer

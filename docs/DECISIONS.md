@@ -3684,3 +3684,65 @@ passes a key.
 
 *Status:* ACCEPTED 2026-11-17, on the operator's 15 November answer ("RSA next"). Plan: PLAN-M55 step 3.
 
+
+## D-113 — A delegation chain names parties that hold passports (PLAN-M53 R2)
+
+*Problem:* the first independent review (D-104) found that a delegation hop's two signatures were checked under keys
+the presentation itself supplied (`chain_keys`). Anyone who could write a passport could also write its chain: make
+up keys for "the owner" and "the desk", sign the hops with them, and present those keys. The chain then proved no
+more than the registrar's word. The code had said since M2 that key resolution was the caller's job, "from the
+parties' passports", and nothing did it.
+
+*Decision:*
+
+- **A directory entry may say, per registrar, from which log position its chains are bound:**
+  `chains_bound_from_leaf`. For a passport that registrar logged at that leaf or after, and that carries a chain,
+  the verifier requires every party to be bound to a passport of its own. Keyed on the log position for the reason the
+  distrust cutoff is (D-044): an entry cannot be moved below it. Absent, chains are checked as before D-113, which is
+  what keeps the 178 earlier chain vectors at their recorded verdicts. It is set in the signed directory, so only the
+  roots can set it, and anyone can see it.
+- **The presentation carries `chain_parties`:** one passport per delegator (hop *i*'s `from`), with its issuer
+  signature, its leaf index and its inclusion proof. The last party is the subject, whose passport is the one
+  presented.
+- **Step 9d, after the log step,** because only then is the passport's leaf index a proven fact and so only then is
+  it known whether the rule applies. Under the rule each party passport must pass the schema gate, be issued by the
+  same registrar as the passport (its `iss`), name exactly the party the hop names (`sub` = the hop's `from`), carry
+  that registrar's valid signature, be inside its window now, and be in the log under the presentation's own
+  checkpoint (below any distrust cutoff, which stays `registrar_distrusted`). The key that signed each hop as delegator
+  must be one of that party passport's `keys`, and the last hop's counter-signature must be by one of the subject
+  passport's own `keys`. Any of these failing is **`chain_party_unbound`**, a new reason (21 → 22). Party passports
+  where the rule does not apply, or one too few, are `schema_violation`: one shape per rule.
+- **The registrar holds no party's key.** It issues a bound chain only when every hop carries both parties'
+  signatures (`HopSpec.sig_from`, `sig_to`), checks them under the delegators' passports and the new passport's own
+  `holder_key` (D-063), and refuses an unsigned chain once it binds chains. `POST /bind-chains` (write-authorized,
+  idempotent) binds them from the end of its log; its accreditation then says where, and the directory carries it.
+  The directory workbench gains `BIND_CHAINS`, a request the registrar files about itself (`chains-bound`), and a
+  binding is never dropped or moved (`proposal-chains-bound`).
+
+*Held to:*
+- `vectors/v1` chain-bound, chain-party-unbound, chain-parties-shape and chain-party-distrusted: 15 vectors on their own
+  seed (1169 → 1184). Every earlier vector is byte-identical.
+- `make diff`: 1184 of 1184 in the Rust core, the TypeScript SDK and Python.
+- Removed one at a time on 17 November 2026, each rule turns exactly its own vector: the delegator's key (0000), the
+  subject's key (0001), the name (0007), the same registrar (0003), the issuer signature (0004), the window (0005),
+  the inclusion proof (0006), the cutoff on a party (distrusted-0000), the count (shape-0000 and -0001), party
+  passports where the rule does not apply (shape-0002), and the log position (bound-0002). In Python the count rule
+  is also caught by its catch-all: without it, the missing party raises and the verifier answers `schema_violation`.
+- The registrar test `a_bound_chain_is_signed_by_its_parties_and_verifies_with_their_passports`: an unsigned chain and
+  a hop signed by a key outside the delegator's passport are refused; the bound one verifies after the log has grown,
+  through the wire path every gate uses; without its party passports it is refused; it survives a reload.
+- The workbench test `a_registrar_binds_its_chains_once_and_the_binding_never_moves`.
+
+*Cost:* a verifier now sees each delegator's passport, every claim of it (docs/LEAK-LEDGER.md). Selective disclosure
+was given up in D-090; this follows from it.
+
+*Limits:*
+- A party's own revocation does not revoke what it delegated. The subject's status bit still does, and the registrar
+  refuses to issue a new chain from a revoked delegator. Revoking a subtree is later work.
+- Every party must be at the subject's registrar. A chain across registrars is refused while the rule applies.
+- The fixture registry in `site/data` keeps its unbound specimen chain: its directory does not bind chains, so it
+  verifies as before, and says nothing about the test network.
+
+*Not changed:* the Standard, the passport format, the hop's signed bytes (D-012), every earlier vector and verdict.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's word of 17 November ("do all"). Plan: PLAN-M53 R2.

@@ -59,6 +59,30 @@ issue(){ # addr operator lineage version tier auth 'cap,cap' 'ceil,ceil' [audit]
 seeded(){ local r; r="$(post "$1/$4" "$3")"
   if [ -z "$r" ] || echo "$r" | grep -q '"error"'; then echo "stage: $2 was not accepted by the registrar at $1"; SEED_BAD=1; fi; }
 
+# D-113 (PLAN-M53 R2): registrar-07 binds its delegation chains from the end of its log, then issues the chain again,
+# bound: owner and support-desk get passports for keys of their own, and support-bot@1.1.0 is issued from hops both
+# parties signed. The registrar holds none of those keys; `ainra chain-specs` makes them and keeps none. The unbound
+# support-bot@1.0.0 stays: it was logged before the binding began, so it is checked as before (keyed on the log
+# position). Idempotent: a network that already has the bound chain is left as it is.
+bind_chain_seed(){
+  local bot="ainra:$REG1_ID:acme:support-bot@1.1.0" r exp dir f
+  if get "$REG1_ADDR/record?sub=$bot" | grep -q '"sub"'; then echo "stage: $bot is already issued — nothing to bind"; return 0; fi
+  r="$(post "$REG1_ADDR/bind-chains" '{}')"
+  echo "$r" | grep -q '"chains_bound_from_leaf"' || { echo "stage: $REG1_ID did not bind its chains"; SEED_BAD=1; return 1; }
+  exp=$(get "$REG1_ADDR/record?sub=ainra:$REG1_ID:acme:support-bot@1.0.0" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).exp))}catch{}})')
+  [ -n "$exp" ] || { echo "stage: cannot read $REG1_ID's passport window"; SEED_BAD=1; return 1; }
+  dir="$(mktemp -d)"
+  ./target/release/ainra chain-specs --registrar "$REG1_ID" --operator acme --exp "$exp" \
+      --party owner@1.0.0 --grant read:tickets,reply:ticket --party support-desk@1.0.0 --grant read:tickets \
+      --subject support-bot@1.1.0 --out "$dir" >/dev/null \
+    || { echo "stage: chain-specs failed"; rm -rf "$dir"; SEED_BAD=1; return 1; }
+  for f in "$dir"/*.json; do
+    post "$REG1_ADDR/issue" "$(cat "$f")" | grep -q '"sub"' \
+      || { echo "stage: $REG1_ID refused $(basename "$f" .json) of the bound chain"; SEED_BAD=1; }
+  done
+  rm -rf "$dir"
+}
+
 publish(){ # fetch each daemon's public artifacts → static files with the contract path scheme
   # D-035: republish is idempotent — drop stale per-registrar artifacts first, so the published contract reflects
   # ONLY the currently-live registrars. A leftover dir from a prior onboarding (registrar-22) once inflated
@@ -185,7 +209,7 @@ up)
   mkdir -p "$STAGE" "$PUB"
   [ -f "$TOKEN_FILE" ] || openssl rand -hex 16 > "$TOKEN_FILE" 2>/dev/null || head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE"
   export AINRA_STAGE_ISSUE_TOKEN="$(cat "$TOKEN_FILE")"
-  cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd -p ainra-ceremony --bin accredit
+  cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd -p ainra-ceremony --bin accredit -p ainra-cli-rs --bin ainra
   bash tools/ainrascan.sh >/dev/null 2>&1 || true   # ensure the browser SDK bundle exists for AINRAscan-on-staging
   echo "== start the staging network (2 registrar classes + witness + artifact server) =="
   : > "$STAGE/pids"
@@ -208,6 +232,7 @@ up)
   seeded "$REG1_ADDR" "the revocation of data-export" "{\"sub\":\"ainra:$REG1_ID:acme:data-export@2.0.0\",\"now\":$NOW}" revoke
   seeded "$REG2_ADDR" "the revocation of crawler"     "{\"sub\":\"ainra:$REG2_ID:operator-03:crawler@0.9.0\",\"now\":$NOW}" revoke
   seeded "$REG2_ADDR" "the renewal of scheduler"      "{\"sub\":\"ainra:$REG2_ID:operator-03:scheduler@2.2.0\",\"new_version\":\"2.3.0\",\"now\":$RENEW_AT}" renew
+  bind_chain_seed
   [ "${SEED_BAD:-0}" = 0 ] || { echo "stage: the seed was not accepted as written — nothing accredited, nothing published"; exit 1; }
   echo "== accredit the network under a REAL genesis dual-root (FROST 5-of-9 + SLH-DSA) =="
   accredit_net || exit 1
@@ -233,6 +258,12 @@ down)
   echo "staging network stopped."
   ;;
 publish) publish || exit 1; echo "republished."; ;;
+bind-chains) # D-113, on the running network: bind registrar-07's chains, issue the bound chain, re-sign, republish
+  cargo build --release -q -p ainra-ceremony --bin accredit -p ainra-cli-rs --bin ainra
+  bind_chain_seed || exit 1
+  [ "${SEED_BAD:-0}" = 0 ] || exit 1
+  accredit_net || exit 1
+  publish || exit 1; echo "bound, accredited at epoch $STAGE_EPOCH and republished."; ;;
 accredit) # sign the directory again over the registrars as they answer now, then publish it; restarts nothing
   cargo build --release -q -p ainra-ceremony --bin accredit
   accredit_net || exit 1

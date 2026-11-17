@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
-"""The 21 frozen INVALID reasons (decision D-004): the 20 the verify returns, in verify-precedence order, and the
+"""The 22 frozen INVALID reasons (decision D-004): the 21 the verify returns, in verify-precedence order, and the
 gate's own ``denied_by_policy`` (D-100), which only a gate with a local policy returns, in place of ``valid``.
 
 These machine strings are frozen: they are the exact tokens the CC0 conformance
@@ -27,6 +27,8 @@ NOT_LOGGED = "not_logged"
 #: D-044 — the registrar is accredited, but this credential was logged at/after its distrust cutoff.
 REGISTRAR_DISTRUSTED = "registrar_distrusted"
 CHECKPOINT_INVALID = "checkpoint_invalid"
+#: D-113 — a delegation party is not bound to a passport of its own, where the directory requires it.
+CHAIN_PARTY_UNBOUND = "chain_party_unbound"
 
 # ADR-019 / D-047 — the instance rung. Four reasons, none reused from above: an integrator debugging a rejected
 # running copy must not be handed ``expired``, which reads as "your passport ran out" when the passport is fine.
@@ -55,6 +57,7 @@ ALL = (
     NOT_LOGGED,
     REGISTRAR_DISTRUSTED,
     CHECKPOINT_INVALID,
+    CHAIN_PARTY_UNBOUND,
     INSTANCE_EXPIRED,
     INSTANCE_SCOPE_EXCEEDS,
     INSTANCE_SIG_INVALID,

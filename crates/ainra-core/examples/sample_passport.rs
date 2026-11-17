@@ -246,6 +246,7 @@ fn build(spec: BuildSpec) -> serde_json::Value {
             log_root_key: root.public(),
             distrust_from_leaf: None,
             distrust_root: None,
+            chains_bound_from_leaf: None,
         },
     );
     let anchors = verify::TrustAnchors { registrars };
@@ -254,6 +255,7 @@ fn build(spec: BuildSpec) -> serde_json::Value {
         issuer_sig: issuer_sig.clone(),
         now,
         chain_keys: party_keys.iter().map(|k| k.public()).collect(),
+        chain_parties: Vec::new(),
         hop_proofs: hop_proofs
             .iter()
             .map(|(i, p)| verify::HopLogProof {

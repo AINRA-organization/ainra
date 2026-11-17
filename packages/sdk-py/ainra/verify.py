@@ -142,7 +142,7 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
     # `act_chain` is NOT required. ainra-core declares it `#[serde(default)]` (passport.rs:141) — a root-issued
     # passport with no delegation may omit it entirely, and Rust and the TS SDK both accept that. This SDK
     # required it, so it rejected, with `schema_violation`, the very bundle shipped in the external verifier kit
-    # (kits/verifier/sample-artifacts/bundle-valid.json, which has no act_chain). The 1169-vector corpus cannot
+    # (kits/verifier/sample-artifacts/bundle-valid.json, which has no act_chain). The passport corpus cannot
     # catch it: the generator always emits the field, even when empty, so the omitted case is never on the wire.
     # Found by the M30 policy-parity harness — see docs/POLICY-PARITY.md.
     required = (
@@ -293,7 +293,7 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
     # credential claiming authority past the grant's end. Python accepted that; Rust and TS refuse it.
     #
     # No vector could see the split, and it is worth naming why: the generator sets every hop's ``exp`` equal to
-    # the passport's, and at equality both rules agree. A four-way differential over 1169 vectors proved agreement
+    # the passport's, and at equality both rules agree. A four-way differential over the whole passport corpus proved agreement
     # on every byte it was given and had nothing to say about the case nobody generated.
     if act_chain:
         eff_exp = act_chain[0].get("exp")
@@ -432,6 +432,15 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
         if cutoff is not None and int(hp.get("leaf_index") or 0) >= int(cutoff):
             return invalid(R.REGISTRAR_DISTRUSTED, **ident())
 
+    # ── Step 15d: D-113 (PLAN-M53 R2) — bound delegation parties ──────────
+    # Only now is ``leaf_index`` proven, so only now is it known whether the directory's rule covers this passport.
+    # Mirrors verify.rs ``check_parties`` and sdk-ts ``checkParties``.
+    bad_parties = _check_parties(
+        presentation, claims, act_chain, chain_keys, anchor, reg, now, size, cp_root, cutoff
+    )
+    if bad_parties is not None:
+        return invalid(bad_parties, **ident())
+
     # 10. ADR-019 / D-047 — the instance rung, LAST and deliberately so. Everything above establishes that this
     #     passport is real, unexpired, in scope, unrevoked and logged; only then is it worth asking whether the
     #     presenter may speak for it. The ordering is what makes passport revocation kill every instance under it
@@ -511,6 +520,87 @@ def _hybrid_ok(pub_ed, pub_ml, sig, msg: bytes) -> bool:
     if sig_ed is None or sig_ml is None:
         return False
     return ed25519_verify(pub_ed, sig_ed, msg) and mldsa65_verify(pub_ml, sig_ml, msg)
+
+
+def _party_claims(raw):
+    """A party passport's claims, held to the same schema gate as a presented one, or ``None``."""
+    import json
+
+    try:
+        c = json.loads(raw.decode("utf-8"))
+        canonicalize(c)
+    except Exception:
+        return None
+    if not isinstance(c, dict) or c.get("vct") != VCT or _forbidden_present(c):
+        return None
+    if any(k in c for k in _RESERVED_KEYS):
+        return None
+    for f in ("iss", "sub", "nbf", "exp", "authority", "tier", "capabilities", "scope_ceiling", "keys", "status", "log", "cnf"):
+        if f not in c:
+            return None
+    if any(isinstance(x, bool) or not isinstance(x, int) or x < 0 for x in (c["nbf"], c["exp"])):
+        return None
+    if not isinstance(c["keys"], list) or not c["keys"] or not all(isinstance(k, dict) for k in c["keys"]):
+        return None
+    return c
+
+
+def _has_key(keys, key) -> bool:
+    if not isinstance(key, dict):
+        return False
+    ed, ml = b64d(key.get("ed25519")), b64d(key.get("mldsa65"))
+    if ed is None or ml is None:
+        return False
+    return any(b64d(k.get("ed25519")) == ed and b64d(k.get("mldsa65")) == ml for k in keys if isinstance(k, dict))
+
+
+def _check_parties(presentation, claims, act_chain, chain_keys, anchor, reg, now, size, cp_root, cutoff):
+    """D-113: ``None`` when the chain's parties are bound or the rule does not apply; else the reason."""
+    parties = presentation.get("chain_parties") or []
+    if not isinstance(parties, list):
+        return R.SCHEMA_VIOLATION
+    bound_from = anchor.get("chains_bound_from_leaf")
+    bound = bound_from is not None and int(presentation.get("leaf_index") or 0) >= int(bound_from)
+    if not bound or not act_chain:
+        # Party passports belong only where the rule asks for them: one shape per rule.
+        return R.SCHEMA_VIOLATION if parties else None
+    if len(parties) != len(act_chain):
+        return R.SCHEMA_VIOLATION
+    unbound = R.CHAIN_PARTY_UNBOUND
+    issuer_key = anchor.get("issuer_key") or {}
+    iss_ed_pub = b64d(issuer_key.get("ed25519")) or b""
+    iss_ml_pub = b64d(issuer_key.get("mldsa65")) or b""
+    for i, hop in enumerate(act_chain):
+        party = parties[i] if isinstance(parties[i], dict) else {}
+        raw = b64d(party.get("claims"))
+        q = _party_claims(raw) if raw is not None else None
+        if q is None:
+            return unbound
+        if parse_issuer(q.get("iss")) != reg or q.get("sub") != hop.get("from"):
+            return unbound
+        sig = party.get("issuer_sig") or {}
+        s_ed = b64f(sig.get("ed25519"), ED25519_SIG_LEN)
+        s_ml = b64f(sig.get("mldsa65"), MLDSA65_SIG_LEN)
+        if s_ed is None or s_ml is None:
+            return unbound
+        if not ed25519_verify(iss_ed_pub, s_ed, raw) or not mldsa65_verify(iss_ml_pub, s_ml, raw):
+            return unbound
+        if now < q["nbf"] or now >= q["exp"]:
+            return unbound
+        idx = party.get("leaf_index")
+        if isinstance(idx, bool) or not isinstance(idx, int) or idx < 0:
+            return R.SCHEMA_VIOLATION
+        leaf = leaf_hash(canon_bytes({k: v for k, v in q.items() if k != "log"}))
+        proof = _decode_proof(party.get("inclusion_proof"))
+        if proof is None or root_from_inclusion(leaf, idx, size, proof) != cp_root:
+            return unbound
+        if cutoff is not None and idx >= int(cutoff):
+            return R.REGISTRAR_DISTRUSTED  # same cutoff, same reason, as every hop
+        if not _has_key(q["keys"], chain_keys[i]):
+            return unbound
+    if not _has_key(claims.get("keys") or [], chain_keys[len(act_chain)]):
+        return unbound
+    return None
 
 
 def _verify_instance(inst, claims: dict, passport_leaf: bytes, now: int, expected_aud: str):

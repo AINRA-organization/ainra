@@ -44,6 +44,7 @@ fn main() {
         "events" => cmd_events(rest),
         "verify-request" => cmd_verify_request(rest),
         "verify-decisions" => cmd_verify_decisions(rest),
+        "chain-specs" => cmd_chain_specs(rest),
         "link" => cmd_link(rest),
         "link-revoke" => cmd_link_revoke(rest),
         "links" => cmd_links(rest),
@@ -816,6 +817,154 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// D-113 (PLAN-M53 R2): the issue requests for a BOUND delegation chain, for a registrar reached over HTTP. Each party
+/// gets a key of its own from the OS's randomness and a passport request for it (`holder_key` + proof of possession);
+/// the subject's request carries every hop signed by both of its parties with those keys. The registrar then holds no
+/// party's key and generates none. The keys themselves are not written anywhere: these are TEST-network specimens,
+/// and a key nobody keeps is a key nobody can misuse.
+fn cmd_chain_specs(a: &[String]) -> i32 {
+    use ainra_core::{b64, chain, crypto, passport::ActLink};
+    use ainra_services::registrar::{holder_pop_message, HopSpec, HybridB64};
+    let (Some(reg), Some(op), Some(exp), Some(subject), Some(out)) = (
+        opt(a, "registrar"),
+        opt(a, "operator"),
+        opt(a, "exp").and_then(|e| e.parse::<u64>().ok()),
+        opt(a, "subject"),
+        opt(a, "out"),
+    ) else {
+        eprintln!("chain-specs --registrar ID --operator OP --exp T --party LINEAGE@VER… --grant CAPS… --subject LINEAGE@VER --out DIR");
+        return 2;
+    };
+    let parties = opt_multi(a, "party");
+    let grants: Vec<Vec<String>> = opt_multi(a, "grant")
+        .iter()
+        .map(|g| {
+            g.split(',')
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty())
+                .collect()
+        })
+        .collect();
+    if parties.is_empty() || grants.len() != parties.len() {
+        eprintln!("chain-specs: one --grant per --party (hop i is granted by party i)");
+        return 2;
+    }
+    let mut seed = [0u8; 32];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut seed))
+        .is_err()
+    {
+        eprintln!("chain-specs: no OS randomness");
+        return 1;
+    }
+    let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
+    let wire = |ed: &[u8], ml: &[u8]| HybridB64 {
+        ed25519: b64::encode(ed),
+        mldsa65: b64::encode(ml),
+    };
+    let split = |lv: &str| {
+        lv.split_once('@')
+            .map(|(l, v)| (l.to_string(), v.to_string()))
+    };
+    let mut names = Vec::new();
+    let mut keys = Vec::new();
+    for lv in parties.iter().map(String::as_str).chain([subject]) {
+        let Some((l, v)) = split(lv) else {
+            eprintln!("chain-specs: {lv} is not LINEAGE@VERSION");
+            return 2;
+        };
+        names.push((format!("ainra:{reg}:{op}:{l}@{v}"), l, v));
+        keys.push(crypto::HybridKeypair::generate(&mut rng));
+    }
+    let request =
+        |i: usize, caps: &[String], ceiling: &[String]| -> Result<serde_json::Value, String> {
+            let p = keys[i].public();
+            let key = wire(&p.ed25519, &p.mldsa65);
+            let msg = holder_pop_message(reg, &key).map_err(|e| e.to_string())?;
+            let sig = keys[i].sign(msg.as_bytes()).map_err(|e| format!("{e:?}"))?;
+            let spec = IssueSpec {
+                operator: op.into(),
+                lineage: names[i].1.clone(),
+                version: names[i].2.clone(),
+                tier: opt(a, "tier").unwrap_or("L1").into(),
+                auth_class: "A2".into(),
+                principal_proof: opt(a, "proof").unwrap_or("deadbeef00000000").into(),
+                capabilities: caps.to_vec(),
+                scope_ceiling: ceiling.to_vec(),
+                hops: vec![],
+                audit: None,
+                holder_key: Some(key),
+                holder_pop: Some(wire(&sig.ed25519, &sig.mldsa65)),
+                principal_evidence: None,
+            };
+            serde_json::to_value(spec).map_err(|e| e.to_string())
+        };
+    let mut written = Vec::new();
+    let n = parties.len();
+    for (i, name) in names.iter().take(n).enumerate() {
+        // Each delegator may do what the chain's first grant allows: the owner grants it, the next parties hold it.
+        match request(i, &grants[0], &grants[0]) {
+            Ok(v) => written.push((format!("{:02}-{}.json", i + 1, name.1), v)),
+            Err(e) => {
+                eprintln!("chain-specs: {e}");
+                return 1;
+            }
+        }
+    }
+    // The subject: its capabilities are the last grant; its ceiling the first, the widest the chain allows.
+    let mut subj = match request(n, &grants[n - 1], &grants[0]) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("chain-specs: {e}");
+            return 1;
+        }
+    };
+    let mut hops = Vec::new();
+    for i in 0..n {
+        let link = ActLink {
+            from: names[i].0.clone(),
+            to: names[i + 1].0.clone(),
+            granted: grants[i].clone(),
+            exp,
+            sig_ed25519: String::new(),
+            sig_mldsa65: String::new(),
+            sig_child_ed25519: String::new(),
+            sig_child_mldsa65: String::new(),
+            log_leaf: String::new(),
+        };
+        let Ok(msg) = chain::hop_signing_bytes(&link) else {
+            eprintln!("chain-specs: hop {i} does not canonicalise");
+            return 1;
+        };
+        let (Ok(f), Ok(t)) = (keys[i].sign(&msg), keys[i + 1].sign(&msg)) else {
+            eprintln!("chain-specs: signing hop {i} failed");
+            return 1;
+        };
+        hops.push(HopSpec {
+            from: link.from,
+            to: link.to,
+            granted: link.granted,
+            sig_from: Some(wire(&f.ed25519, &f.mldsa65)),
+            sig_to: Some(wire(&t.ed25519, &t.mldsa65)),
+        });
+    }
+    subj["hops"] = serde_json::to_value(hops).unwrap_or_default();
+    written.push((format!("{:02}-{}.json", n + 1, names[n].1), subj));
+    if let Err(e) = std::fs::create_dir_all(out) {
+        eprintln!("{out}: {e}");
+        return 1;
+    }
+    for (f, v) in &written {
+        let path = Path::new(out).join(f);
+        if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(v).unwrap_or_default()) {
+            eprintln!("{}: {e}", path.display());
+            return 1;
+        }
+        println!("{}", path.display());
+    }
+    0
+}
+
 fn print_help() {
     println!(
         r#"ainra — the reference AINRA command line (offline, persistent; no daemon required)
@@ -847,6 +996,10 @@ GATE (D-062 / D-068)
         why did a gate refuse this request? The same check @ainra/edge makes: the directory must verify
         against both roots; the credential under the GATE's policy; then the RFC 9421 request signature.
         Q is {{method, authority, path, headers: [[name, value], …], body_b64u}}. Prints ALLOW or the reason.
+  chain-specs --registrar ID --operator OP --exp T --party LINEAGE@VER… --grant CAPS… --subject LINEAGE@VER --out DIR
+        D-113: the issue requests for a BOUND delegation chain, for a registrar reached over HTTP: each party gets a key
+        of its own and a passport request with proof of possession; the subject's request carries every hop signed by
+        both of its parties. The keys are written nowhere.
   link <dir> --passport P --key K --pop S --nbf T --exp T [--alg Ed25519|ES256K|ES256] [--scope C ...]
         AINRA Link (D-078): link a key an agent already uses (K, base64url) to passport P of this registrar: a
         32-byte Ed25519 key, with --alg ES256K a 33-byte compressed secp256k1 point (D-082), or with --alg ES256 a
@@ -870,7 +1023,8 @@ GATE (D-062 / D-068)
   directory request TYPE --filed-at T --out F (--registrar DIR | --subject ID --filer NAME) [--leaf N [--head H]] [--cert C]
                     [--evidence E] [--test-root]
         file a directory change request (PLAN-M52 R0): ACCREDIT, WITHDRAW, DISTRUST_FROM_LEAF, REVOKE_DELEGATE,
-        REGISTRAR_KEY_ROLL or ROOT_KEY_ROLL. With --registrar it is signed with that registrar's own keys.
+        REGISTRAR_KEY_ROLL, ROOT_KEY_ROLL or BIND_CHAINS (D-113, with --leaf). With --registrar it is signed with that
+        registrar's own keys.
   directory check-request R [--directory D --roots RT] [--accreditation A] | --list-checks
         refuse a request with a named reason (docs/ACCREDITATION-CHECKS.md is the --list-checks output).
   directory propose [--base D --roots RT] --request R… --issued-at T --out P

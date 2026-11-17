@@ -611,6 +611,234 @@ fn wire_key(k: &crypto::HybridPublic) -> WireKey {
     }
 }
 
+// ── D-113 (PLAN-M53 R2): delegation parties bound to their own passports ─────────────────────────────────────────
+
+/// What to break in a bound-chain credential. `Ok` builds a genuinely bound chain.
+#[derive(Clone, Copy, PartialEq)]
+enum BoundTweak {
+    Ok,
+    /// Hop 0's delegator signs with a key that is not in the owner's passport (the R2 witness).
+    RogueDelegator,
+    /// The last hop is counter-signed by a key that is not the subject passport's own.
+    RogueSubjectKey,
+    /// The agent is named under another registrar, in its hops and its passport alike (signed by this registrar's
+    /// key): only the same-registrar rule refuses it.
+    PartyOtherRegistrar,
+    /// The owner's passport carries the owner's key under another name: only the name rule refuses it.
+    PartyWrongName,
+    /// The owner's passport has closed by `now`.
+    PartyExpired,
+    /// The agent's passport is logged after the subject and its hops, so a cutoff can fall between them.
+    AgentLoggedLast,
+}
+
+/// A bound chain owner → agent → subject: both delegators hold passports from the same registrar, logged under the
+/// same checkpoint as the subject, and every hop is signed by the keys those passports name. Returns the credential
+/// and the two party passports as a presentation carries them.
+fn build_bound(seed: u64, tweak: BoundTweak) -> (Built, Vec<WireParty>) {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x4149_4E52_4100_D113 ^ seed);
+    let issuer = crypto::HybridKeypair::generate(&mut rng);
+    let root = crypto::TestRootSlh::generate(&mut rng);
+    let (reg, op) = ("registrar-03", "acme");
+    let (nbf, exp) = (1_000u64, 3_000u64);
+    let owner_kp = crypto::HybridKeypair::generate(&mut rng);
+    let agent_kp = crypto::HybridKeypair::generate(&mut rng);
+    let subject_kp = crypto::HybridKeypair::generate(&mut rng);
+    let rogue_kp = crypto::HybridKeypair::generate(&mut rng);
+    let agent_reg = if tweak == BoundTweak::PartyOtherRegistrar {
+        "registrar-04"
+    } else {
+        reg
+    };
+    let name = |l: &str| {
+        let r = if l == "agent" { agent_reg } else { reg };
+        format!("ainra:{r}:{op}:{l}@1.0.0")
+    };
+    let key_json = |k: &crypto::HybridPublic| json!({ "ed25519": b64::encode(&k.ed25519), "mldsa65": b64::encode(&k.mldsa65) });
+    let body_for =
+        |lineage: &str, iss_reg: &str, key: &crypto::HybridPublic, idx: u64, win: (u64, u64)| {
+            json!({
+                "vct": ainra_core::PASSPORT_VCT,
+                "iss": format!("did:ainra:{iss_reg}:{op}:{lineage}"),
+                "sub": format!("ainra:{iss_reg}:{op}:{lineage}@1.0.0"),
+                "nbf": win.0, "exp": win.1,
+                "authority": { "class": "A2", "principal_proof": "deadbeef" },
+                "tier": "L1",
+                "capabilities": caps(&["read:tickets", "reply:ticket"]),
+                "scope_ceiling": caps(&["read:tickets", "reply:ticket"]),
+                "keys": [ key_json(key) ],
+                "cnf": { "jkt": "thumb" },
+                "status": { "status_list": { "idx": idx, "uri": format!("status://{reg}/1") } },
+            })
+        };
+    let owner_win = if tweak == BoundTweak::PartyExpired {
+        (nbf, 1_500)
+    } else {
+        (nbf, exp)
+    };
+    let owner_lineage = if tweak == BoundTweak::PartyWrongName {
+        "deputy"
+    } else {
+        "owner"
+    };
+    let owner_body = body_for(owner_lineage, reg, &owner_kp.public(), 1, owner_win);
+    let agent_body = body_for("agent", agent_reg, &agent_kp.public(), 2, (nbf, exp));
+
+    // The hops, signed by the parties' own keys unless the tweak says otherwise.
+    let hop_signers: [(&crypto::HybridKeypair, &crypto::HybridKeypair); 2] = [
+        (
+            if tweak == BoundTweak::RogueDelegator {
+                &rogue_kp
+            } else {
+                &owner_kp
+            },
+            &agent_kp,
+        ),
+        (
+            &agent_kp,
+            if tweak == BoundTweak::RogueSubjectKey {
+                &rogue_kp
+            } else {
+                &subject_kp
+            },
+        ),
+    ];
+    let hops = [
+        (
+            name("owner"),
+            name("agent"),
+            caps(&["read:tickets", "reply:ticket"]),
+        ),
+        (name("agent"), name("support-bot"), caps(&["read:tickets"])),
+    ];
+    let mut act_chain: Vec<ActLink> = Vec::new();
+    for (i, (from, to, granted)) in hops.iter().enumerate() {
+        let mut link = ActLink {
+            from: from.clone(),
+            to: to.clone(),
+            granted: granted.clone(),
+            exp,
+            sig_ed25519: String::new(),
+            sig_mldsa65: String::new(),
+            sig_child_ed25519: String::new(),
+            sig_child_mldsa65: String::new(),
+            log_leaf: String::new(),
+        };
+        let msg = chain::hop_signing_bytes(&link).expect("hop signing bytes");
+        let ps = hop_signers[i].0.sign(&msg).expect("delegator sign");
+        link.sig_ed25519 = b64::encode(&ps.ed25519);
+        link.sig_mldsa65 = b64::encode(&ps.mldsa65);
+        let cs = hop_signers[i].1.sign(&msg).expect("delegatee sign");
+        link.sig_child_ed25519 = b64::encode(&cs.ed25519);
+        link.sig_child_mldsa65 = b64::encode(&cs.mldsa65);
+        link.log_leaf = b64::encode(&chain::hop_leaf(&link).expect("hop leaf"));
+        act_chain.push(link);
+    }
+    let mut body = body_for("support-bot", reg, &subject_kp.public(), 3, (nbf, exp));
+    body["capabilities"] = json!(caps(&["read:tickets"]));
+    body["act_chain"] = serde_json::to_value(&act_chain).expect("act_chain");
+
+    // One log: three fillers, the owner's passport, the agent's (or later), the subject, its hops.
+    let canon_bytes = |v: &Value| canon::canonicalize(v).expect("canon").into_bytes();
+    let mut log = merkle::TestLog::new();
+    for k in 0..3u8 {
+        log.append(&[k]);
+    }
+    let owner_index = log.append(&canon_bytes(&owner_body));
+    let mut agent_index = if tweak == BoundTweak::AgentLoggedLast {
+        0
+    } else {
+        log.append(&canon_bytes(&agent_body))
+    };
+    let leaf_index = log.append(&canon_bytes(&body));
+    let hop_indices: Vec<u64> = act_chain
+        .iter()
+        .map(|h| log.append(&chain::hop_signing_bytes(h).expect("hop bytes")))
+        .collect();
+    if tweak == BoundTweak::AgentLoggedLast {
+        agent_index = log.append(&canon_bytes(&agent_body));
+    }
+    let cp = checkpoint::Checkpoint {
+        origin: format!("ainra-log/{reg}"),
+        tree_size: log.size(),
+        root: log.root(),
+    };
+    let cp_sig = checkpoint_sig(&cp, &root, &mut rng, false, None);
+
+    // Each passport gets its `log` back-reference and the issuer's signature over the whole.
+    let sign_full = |mut b: Value| -> (Vec<u8>, crypto::HybridSig) {
+        let leaf = merkle::hash_leaf(&canon_bytes(&b));
+        b["log"] = json!({ "leaf": b64::encode(&leaf), "root": b64::encode(&cp.root), "checkpoint": "cp-1" });
+        let claims = canon_bytes(&b);
+        let sig = issuer.sign(&claims).expect("sign claims");
+        (claims, sig)
+    };
+    let party = |b: &Value, index: u64| {
+        let (claims, sig) = sign_full(b.clone());
+        WireParty {
+            claims: b64::encode(&claims),
+            issuer_sig: WireSig {
+                ed25519: b64::encode(&sig.ed25519),
+                mldsa65: b64::encode(&sig.mldsa65),
+            },
+            leaf_index: index,
+            inclusion_proof: log
+                .inclusion_proof(index)
+                .expect("party proof")
+                .iter()
+                .map(|h| b64::encode(h))
+                .collect(),
+        }
+    };
+    let parties = vec![
+        party(&owner_body, owner_index),
+        party(&agent_body, agent_index),
+    ];
+    let (claims, issuer_sig) = sign_full(body);
+    let bits = vec![false; 16];
+    let built = Built {
+        claims,
+        issuer_pub: issuer.public(),
+        issuer_sig,
+        root_pub: root.public(),
+        registrar: reg.to_string(),
+        proof: log.inclusion_proof(leaf_index).expect("proof"),
+        cp,
+        cp_sig,
+        leaf_index,
+        status_list: status::StatusList::from_bits(bits),
+        status_len: 16,
+        chain_keys: vec![
+            hop_signers[0].0.public(),
+            agent_kp.public(),
+            hop_signers[1].1.public(),
+        ],
+        hop_proofs: hop_indices
+            .iter()
+            .map(|&i| (i, log.inclusion_proof(i).expect("hop proof")))
+            .collect(),
+        nbf,
+        exp,
+    };
+    (built, parties)
+}
+
+/// A bound-chain vector: the directory binds chains from `from_leaf`, and the presentation carries `parties`.
+fn bound_vector(
+    name: &str,
+    built: &Built,
+    parties: Vec<WireParty>,
+    from_leaf: Option<u64>,
+) -> Vector {
+    let mut v = wire_valid(name, "", built);
+    v.anchors
+        .get_mut(&built.registrar)
+        .expect("anchor")
+        .chains_bound_from_leaf = from_leaf;
+    v.presentation.chain_parties = parties;
+    v
+}
+
 /// Assemble a wire vector for a HAPPY-PATH presentation over `built`. Failure variants clone this and tweak.
 fn wire_valid(name: &str, description: &str, built: &Built) -> Vector {
     let mut anchors = BTreeMap::new();
@@ -621,6 +849,7 @@ fn wire_valid(name: &str, description: &str, built: &Built) -> Vector {
             log_root_key: b64::encode(&built.root_pub),
             distrust_from_leaf: None,
             distrust_root: None,
+            chains_bound_from_leaf: None,
         },
     );
     let now = built.nbf + (built.exp - built.nbf) / 2;
@@ -632,6 +861,7 @@ fn wire_valid(name: &str, description: &str, built: &Built) -> Vector {
         },
         now,
         chain_keys: built.chain_keys.iter().map(wire_key).collect(),
+        chain_parties: Vec::new(),
         hop_proofs: built
             .hop_proofs
             .iter()
@@ -1227,6 +1457,7 @@ fn generate() -> Vec<Vector> {
             log_root_key: v.anchors.values().next().unwrap().log_root_key.clone(),
             distrust_from_leaf: None,
             distrust_root: None,
+            chains_bound_from_leaf: None,
         };
         v.anchors.clear();
         v.anchors.insert("registrar-99".to_string(), stranger);
@@ -2122,6 +2353,117 @@ fn generate() -> Vec<Vector> {
         ));
     }
 
+    // ── D-113 (PLAN-M53 R2): a chain's parties bound to their own passports, where the directory says so. Each vector
+    //    holds the three implementations to one answer; every earlier vector keeps its verdict because its directory
+    //    entry does not carry the rule. ──
+    {
+        let ok = |n: &str, seed: u64, from: Option<u64>| {
+            let (b, parties) = build_bound(seed, BoundTweak::Ok);
+            bound_vector(n, &b, parties, from)
+        };
+        let mut v = ok("chain-bound-0000", 1, Some(0));
+        v.description =
+            "a chain whose two delegators present their own passports, and whose keys are theirs"
+                .into();
+        out.push(v);
+        let mut v = ok("chain-bound-0001", 2, Some(0));
+        v.description = "the same, another seed".into();
+        out.push(v);
+        // The rule is keyed on the log position: a passport logged before it is checked as before D-113.
+        let (b, _) = build_bound(3, BoundTweak::Ok);
+        let mut v = bound_vector("chain-bound-0002", &b, Vec::new(), Some(b.leaf_index + 1));
+        v.description =
+            "an unbound chain logged before the registrar's rule began: checked as before D-113"
+                .into();
+        out.push(v);
+        // The witness R2 names: hop 0 signed and presented under a key the owner's passport does not carry.
+        let (b, parties) = build_bound(6, BoundTweak::RogueDelegator);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0000", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "a hop is signed by a key that is not in the passport of the party it names (D-113, the R2 witness)",
+        ));
+        let (b, parties) = build_bound(7, BoundTweak::RogueSubjectKey);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0001", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "the last hop is counter-signed by a key that is not the subject passport's own",
+        ));
+        let (b, mut parties) = build_bound(8, BoundTweak::Ok);
+        parties.swap(0, 1);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0002", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "the party passports are presented in the wrong order: each names another party than its hop",
+        ));
+        let (b, parties) = build_bound(9, BoundTweak::PartyOtherRegistrar);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0003", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "a party is named under another registrar than the passport it delegates to, in its hops and its passport",
+        ));
+        let (b, parties) = build_bound(17, BoundTweak::PartyWrongName);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0007", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "a party passport carries the right key under another name than the hop gives",
+        ));
+        let (b, mut parties) = build_bound(10, BoundTweak::Ok);
+        let mut sig = b64::decode(&parties[0].issuer_sig.ed25519).unwrap();
+        sig[0] ^= 1;
+        parties[0].issuer_sig.ed25519 = b64::encode(&sig);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0004", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "a party passport's issuer signature does not verify",
+        ));
+        let (b, parties) = build_bound(11, BoundTweak::PartyExpired);
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0005", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "a party passport has closed by the time of the check",
+        ));
+        let (b, mut parties) = build_bound(12, BoundTweak::Ok);
+        parties[1].leaf_index = parties[0].leaf_index;
+        out.push(invalid(
+            bound_vector("chain-party-unbound-0006", &b, parties, Some(0)),
+            Reason::ChainPartyUnbound,
+            "a party passport is not in the log at the position the presentation gives",
+        ));
+        // Shape: the rule asks for one passport per delegator, and none where it does not apply.
+        let (b, _) = build_bound(13, BoundTweak::Ok);
+        out.push(invalid(
+            bound_vector("chain-parties-shape-0000", &b, Vec::new(), Some(0)),
+            Reason::SchemaViolation,
+            "the directory binds this chain and the presentation carries no party passports",
+        ));
+        let (b, mut parties) = build_bound(14, BoundTweak::Ok);
+        parties.pop();
+        out.push(invalid(
+            bound_vector("chain-parties-shape-0001", &b, parties, Some(0)),
+            Reason::SchemaViolation,
+            "one party passport fewer than the chain has delegators",
+        ));
+        let (b, parties) = build_bound(15, BoundTweak::Ok);
+        out.push(invalid(
+            bound_vector("chain-parties-shape-0002", &b, parties, None),
+            Reason::SchemaViolation,
+            "party passports presented where the directory does not bind chains",
+        ));
+        // The distrust cutoff reaches party passports as it reaches hops.
+        let (b, parties) = build_bound(16, BoundTweak::AgentLoggedLast);
+        let mut v = bound_vector("chain-party-distrusted-0000", &b, parties.clone(), Some(0));
+        v.anchors
+            .get_mut(&b.registrar)
+            .expect("anchor")
+            .distrust_from_leaf = Some(parties[1].leaf_index);
+        out.push(invalid(
+            v,
+            Reason::RegistrarDistrusted,
+            "a party passport logged at or after its registrar's distrust cutoff, though the passport and its hops are before it",
+        ));
+    }
+
     out
 }
 
@@ -2493,6 +2835,7 @@ fn dir_entry(id: &str, rng: &mut ChaCha20Rng) -> ainra_core::directory::Director
         status_uri: format!("status://{id}/1"),
         distrust_from_leaf: None,
         distrust_root: None,
+        chains_bound_from_leaf: None,
     }
 }
 
@@ -3982,6 +4325,7 @@ fn gate_vectors() -> Vec<Value> {
         status_uri: uri.clone(),
         distrust_from_leaf: None,
         distrust_root: None,
+        chains_bound_from_leaf: None,
     };
     let dir = |entries: Vec<ainra_core::directory::DirectoryEntry>,
                revoked_delegates: Vec<String>| {
@@ -4649,6 +4993,7 @@ fn currency_vectors() -> Vec<Value> {
         status_uri: uri.clone(),
         distrust_from_leaf: None,
         distrust_root: None,
+        chains_bound_from_leaf: None,
     };
     let directory = |revoked_delegates: Vec<String>| {
         serde_json::to_value(dir_sign(
@@ -5244,6 +5589,7 @@ fn link_vectors() -> Vec<Value> {
         status_uri: format!("status://{id}/1"),
         distrust_from_leaf: distrust,
         distrust_root: None,
+        chains_bound_from_leaf: None,
     };
     let dir = |entries, revoked: Vec<String>| {
         serde_json::to_value(dir_sign(dir_base(entries, revoked), &root_ed, &root_slh))
@@ -7089,6 +7435,7 @@ fn decision_vectors() -> Vec<Value> {
                 status_uri: format!("status://{reg}/1"),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
             }],
             vec![],
         ),

@@ -26,6 +26,7 @@ named so that their absence is visible, not implied.
 | `adverse-notice-chain` | yes | An adverse request (DISTRUST_FROM_LEAF or WITHDRAW filed against another registrar) carries a compliance record: at least two notices, numbered 1, 2, … in time order and at least 14 days apart, each named by its SHA-256, and a cure window that ends at least 30 days after notice 1 and before the request was filed (D-094 item 11). |
 | `adverse-vantage` | yes | The compliance record reproduces the failure after the cure window ended, no later than the filing, from at least two vantage points on distinct networks, each report named by its SHA-256. |
 | `adverse-grace` | yes | An adverse WITHDRAW comes only after distrust: the registrar already carries a distrust cutoff in epoch N, the record names a public breach record (notice 3 or later), and the request is filed at least 90 days after it, so holders have had time to move (D-094 item 11). |
+| `chains-bound` | yes | A BIND_CHAINS is filed by the registrar about itself, names the leaf from which its delegation chains are bound to their parties' passports (change.leaf), and only for a registrar that does not bind them yet: a binding is never moved (D-113). |
 | `entry-shape` | yes | An ACCREDIT entry is for the request's registrar, decodes every key at its exact size (Ed25519 32 B, ML-DSA-65 1952 B, SLH-DSA 32 B), carries status keys and a status URI, and sets no distrust cutoff or pinned head. |
 | `proof-of-possession` | yes | An ACCREDIT proves possession of every new key: a hybrid signature by the issuer key, a hybrid signature by the status key, and an SLH-DSA signature by the log root, each over the request message. |
 | `accreditation-match` | yes | When a copy of the registrar's served `/accreditation` is given (`--accreditation`), the entry's keys and status URI equal it. |
@@ -45,6 +46,7 @@ named so that their absence is visible, not implied.
 | `proposal-requests` | yes | Each request the proposal applies is listed under the SHA-256 it really has, passes every request check against epoch N, appears once, and is the only request about its registrar (several REVOKE_DELEGATE excepted). |
 | `proposal-no-drop` | yes | Every entry of epoch N is still present unless a WITHDRAW in the proposal names it. |
 | `proposal-cutoff` | yes | No distrust cutoff of epoch N is lifted or moved later, and a log head pinned at a cutoff is never dropped, nor changed while the cutoff stays (D-111). |
+| `proposal-chains-bound` | yes | Where epoch N binds a registrar's delegation chains from a leaf, epoch N+1 binds them from the same leaf: a binding is never dropped or moved (D-113). |
 | `proposal-revocations-kept` | yes | Every delegate revoked in epoch N is still revoked. |
 | `proposal-rederive` | yes | The new directory is exactly what epoch N and the listed requests produce, re-derived from those alone. |
 | `proposal-diff` | yes | The human-readable diff, with the request each line cites, is exactly the re-derived one. |

@@ -267,6 +267,8 @@ pub fn build(out_root: &std::path::Path) -> std::io::Result<serde_json::Value> {
                         from: from.to_string(),
                         to: to.to_string(),
                         granted: granted.iter().map(|s| s.to_string()).collect(),
+                        sig_from: None,
+                        sig_to: None,
                     })
                     .collect(),
                 // ADR-017: every L3+ fixture lineage carries deterministic placeholder audit evidence whose

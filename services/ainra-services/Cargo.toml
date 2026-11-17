@@ -58,3 +58,4 @@ drill-sabotage = []
 [dev-dependencies]
 k256 = { workspace = true }   # ES256K test keys (D-082); the registrar itself verifies through ainra-core
 p256 = { workspace = true }   # ES256 test keys (D-108)
+ainra-adapter = { path = "../../crates/ainra-adapter" }   # D-113: a bound chain's bundle checked through the wire path every gate uses

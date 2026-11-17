@@ -866,6 +866,7 @@ mod tests {
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
             },
         );
         let anchors = TrustAnchors { registrars };

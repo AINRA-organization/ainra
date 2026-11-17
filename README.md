@@ -174,7 +174,7 @@ repository, which the host deploys to https://ainra.org/. Pushing this repositor
 ```
                       the STANDARD + CC0 conformance vectors (vectors/)  ── anyone builds against these
                                           │
-  crates/ainra-core  ── the pure verify/issue library (N7: no I/O, no clock) ── the nine-step verify (a tenth for a running copy's credential), 21 reasons
+  crates/ainra-core  ── the pure verify/issue library (N7: no I/O, no clock) ── the nine-step verify (a tenth for a running copy's credential), 22 reasons
         │  hybrid Ed25519 + ML-DSA-65 (both-or-invalid) · RFC 6962 Merkle · Token Status List
         ▼
   crates/ainra-adapter ── the ONE place external bytes become core verify types, and the canonical verdict event.
@@ -196,7 +196,7 @@ repository, which the host deploys to https://ainra.org/. Pushing this repositor
 
 The verify path is **RFCs + FIPS + OSI-licensed deps only** — no vendor, no bespoke crypto. Four independent
 implementations exist: `ainra-core`, the TypeScript SDK and the Python SDK give the same verdict and the same named
-reason on every one of the **1169** passport vectors (`make diff`), the Node CLI (P0) matches their canonical encoding
+reason on every one of the **1184** passport vectors (`make diff`), the Node CLI (P0) matches their canonical encoding
 byte for byte, and the same core compiled to WebAssembly agrees again in a browser.
 
 **Validity (ADR-017):** the *identity* — the lineage and its AINRA Number — is permanent; the *credential* defaults

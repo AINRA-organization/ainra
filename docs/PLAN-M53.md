@@ -95,9 +95,11 @@ verifier proves a distrusted registrar's passport against that head. Ceremony to
 DISTRUST_FROM_LEAF. WITNESS: a forked-log passport below the cutoff is refused in all three implementations, and an
 honest pre-cutoff one verifies.
 
-**R2. Bind delegation party keys to the parties named** (D-104). A hop's dual signature is checked under keys the
-presentation supplies, so it proves no more than the issuer's word. Each party must be bound to its own passport.
-This is a presentation format change. WITNESS: a chain signed by keys that are not the named parties' is refused.
+**R2. Bind delegation party keys to the parties named** (D-104, D-113). **Done 17 November 2026.** A hop's dual
+signature was checked under keys the presentation supplies, so it proved no more than the issuer's word. Where the
+directory binds a registrar's chains, each party is now bound to its own passport, presented beside the chain.
+WITNESS: `vectors/v1/chain-party-unbound-0000`, a chain signed by a key that is not the named party's, refused as
+`chain_party_unbound` by the three implementations; each rule of the check is caught by its own vector.
 
 **R3. Re-key the TEST staging registrars** (D-104, the operator's decision). Their keys derive from their public ids.
 Fresh keys from the OS CSPRNG, re-accredited in the TEST directory. This wipes the TEST network's state.

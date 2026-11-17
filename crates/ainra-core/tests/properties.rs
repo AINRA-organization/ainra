@@ -67,6 +67,7 @@ fn build_valid(seed: u64, nbf: u64, exp: u64, caps: &[&str]) -> ValidCred {
             log_root_key: root.public(),
             distrust_from_leaf: None,
             distrust_root: None,
+            chains_bound_from_leaf: None,
         },
     );
     ValidCred {
@@ -103,6 +104,7 @@ fn p1_sign_then_verify_is_valid() {
             issuer_sig: c.issuer_sig.clone(),
             now,
             chain_keys: Vec::new(),
+            chain_parties: Vec::new(),
             hop_proofs: Vec::new(),
             status_list: status::StatusList::from_bits(vec![false; 4]),
             status_issued_at: now,

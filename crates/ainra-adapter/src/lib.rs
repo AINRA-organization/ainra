@@ -44,6 +44,10 @@ pub struct WireRegistrar {
     /// D-111: the log head the root pinned at the cutoff (base64url, 32 bytes). Only beside `distrust_from_leaf`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distrust_root: Option<String>,
+    /// D-113: delegation parties must be bound for this registrar's passports logged at leaf index >= n. Absent =
+    /// chains checked as before D-113, so every existing vector and directory decodes unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chains_bound_from_leaf: Option<u64>,
 }
 
 /// D-111: a pinned head as the core holds it. `Err` for a head that does not decode to 32 bytes, or one without a
@@ -66,6 +70,14 @@ pub struct WireCheckpoint {
 pub struct WireHopProof {
     pub leaf_index: u64,
     pub proof: Vec<String>,
+}
+/// D-113: one delegator's own passport, as a presentation carries it.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WireParty {
+    pub claims: String,
+    pub issuer_sig: WireSig,
+    pub leaf_index: u64,
+    pub inclusion_proof: Vec<String>,
 }
 /// A checkpoint signature in one of the two ADR-002 modes.
 #[derive(Serialize, Deserialize, Clone)]
@@ -93,6 +105,10 @@ pub struct WirePresentation {
     pub now: u64,
     // One key per chain PARTY (hops + 1): [delegator_0, delegatee_0=delegator_1, …, subject] (M2 D-012).
     pub chain_keys: Vec<WireKey>,
+    /// D-113: one passport per delegator, where the directory binds chains. Omitted when empty, so every earlier
+    /// vector and bundle keeps its bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_parties: Vec<WireParty>,
     pub hop_proofs: Vec<WireHopProof>,
     pub status_list: String,
     pub status_len: u64,
@@ -264,6 +280,7 @@ pub fn anchors_from_json(v: &serde_json::Value) -> verify::TrustAnchors {
                 log_root_key: root,
                 distrust_from_leaf: w.distrust_from_leaf,
                 distrust_root: pin,
+                chains_bound_from_leaf: w.chains_bound_from_leaf,
             },
         );
     }
@@ -281,6 +298,7 @@ struct Decoded {
     claims: Vec<u8>,
     issuer_sig: crypto::HybridSig,
     chain_keys: Vec<crypto::HybridPublic>,
+    chain_parties: Vec<verify::PartyEvidence>,
     hop_proofs: Vec<verify::HopLogProof>,
     checkpoint_sig: checkpoint::CheckpointSig,
     status_list: status::StatusList,
@@ -339,6 +357,22 @@ fn presentation_parts(p: &WirePresentation) -> D<Decoded> {
             mldsa65: bad(b64::decode(&k.mldsa65))?,
         });
     }
+    let mut chain_parties = Vec::with_capacity(p.chain_parties.len());
+    for w in &p.chain_parties {
+        let mut inclusion_proof = Vec::with_capacity(w.inclusion_proof.len());
+        for s in &w.inclusion_proof {
+            inclusion_proof.push(decode32(s)?);
+        }
+        chain_parties.push(verify::PartyEvidence {
+            claims: bad(b64::decode(&w.claims))?,
+            issuer_sig: crypto::HybridSig {
+                ed25519: bad(b64::decode(&w.issuer_sig.ed25519))?,
+                mldsa65: bad(b64::decode(&w.issuer_sig.mldsa65))?,
+            },
+            leaf_index: w.leaf_index,
+            inclusion_proof,
+        });
+    }
     let mut hop_proofs = Vec::with_capacity(p.hop_proofs.len());
     for hp in &p.hop_proofs {
         let mut proof = Vec::with_capacity(hp.proof.len());
@@ -379,6 +413,7 @@ fn presentation_parts(p: &WirePresentation) -> D<Decoded> {
         claims,
         issuer_sig,
         chain_keys,
+        chain_parties,
         hop_proofs,
         checkpoint_sig,
         status_list,
@@ -438,6 +473,7 @@ pub fn verify_wire_policy(
         // the CALLER's clock, not `p.now` — freshness and expiry are the verifier's policy, never the presenter's
         now,
         chain_keys: d.chain_keys,
+        chain_parties: d.chain_parties,
         hop_proofs: d.hop_proofs,
         status_list: d.status_list,
         status_issued_at: p.status_issued_at,
@@ -778,6 +814,7 @@ pub fn run(v: &Vector) -> Verdict {
                 log_root_key: root,
                 distrust_from_leaf: r.distrust_from_leaf,
                 distrust_root: pin,
+                chains_bound_from_leaf: r.chains_bound_from_leaf,
             },
         );
     }
@@ -1047,6 +1084,7 @@ pub fn anchors_from_export_json(reg: &serde_json::Value) -> verify::TrustAnchors
             log_root_key,
             distrust_from_leaf: acc["distrust_from_leaf"].as_u64(),
             distrust_root,
+            chains_bound_from_leaf: acc["chains_bound_from_leaf"].as_u64(),
         },
     );
     verify::TrustAnchors { registrars }
@@ -1260,6 +1298,7 @@ fn trust_json(
                 log_root_key: b64::encode(&r.log_root_key),
                 distrust_from_leaf: r.distrust_from_leaf,
                 distrust_root: r.distrust_root.map(|x| b64::encode(&x)),
+                chains_bound_from_leaf: r.chains_bound_from_leaf,
             };
             (
                 id.clone(),

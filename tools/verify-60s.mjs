@@ -201,7 +201,7 @@ for (const s of src.samples) printOne(src.label, s.rec.sub, s.rec.tier, s.v);
 if (src.samples.length === 2 && src.samples[0].rec.sub === src.samples[1].rec.sub)
   console.log(dim("  (the same passport twice: as issued, then after its registrar revoked it)"));
 const why = whyRed(src);
-console.log(`\n${dim("named-reason legend (the 21 frozen INVALID reasons):")}`);
+console.log(`\n${dim("named-reason legend (the 22 frozen INVALID reasons):")}`);
 for (const [k, txt] of Object.entries(REASONS)) if (k !== "_note" && k !== "valid") console.log(dim(`  ${k.padEnd(20)} ${txt}`));
 console.log(`\n${dim("cookbook →")} docs/quickstarts/  ${dim("· issue your own →")} make issue-first`);
 if (src.label !== "LOCAL TESTBED") console.log(dim(`honest label: this is a ${src.label} — no trust migrates to a production root, born only at the recorded genesis ceremony.`));

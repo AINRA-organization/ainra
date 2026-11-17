@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 // AINRA verify-only SDK — a faithful mirror of ainra-core (independent implementation #2 for the diff-harness).
-// The nine verify steps, their fixed order, and the 21 frozen reason strings match crates/ainra-core/src/verify.rs.
+// The nine verify steps, their fixed order, and the 22 frozen reason strings match crates/ainra-core/src/verify.rs.
 //
 // Validity (ADR-017): the IDENTITY (lineage + AINRA Number) is permanent; the CREDENTIAL defaults to 366 days and
 // renews invisibly (T−30 d reissue, overlap issuance, a logged `prev_leaf` continuity chain). The window check is
@@ -48,7 +48,7 @@ export {
   WIT_HEADER, WIT_TYP, WIMSE_TAG, WIT_MAX_SECS, WIMSE_SIG_MAX_SECS,
 } from "./wimse.js";
 
-// ── Verdicts + the 21 frozen reasons (the 20 the verify returns, and the gate's own, D-100) ───────────────────────────────────────────────────────────────────────────
+// ── Verdicts + the 22 frozen reasons (the 21 the verify returns, and the gate's own, D-100) ───────────────────────────────────────────────────────────────────────────
 export type Reason =
   | "sig_invalid"
   | "alg_downgrade"
@@ -58,6 +58,8 @@ export type Reason =
   | "mandate_revoked"
   | "chain_widening"
   | "chain_expired"
+  // D-113: a delegation party is not bound to a passport of its own, where the directory requires it.
+  | "chain_party_unbound"
   | "not_logged"
   | "checkpoint_invalid"
   | "stale_status"
@@ -389,6 +391,11 @@ export interface RegistrarInfo {
    *  log to place new work below the cutoff. The head is the root's statement, so the registrar's checkpoint
    *  signature is not asked for. Undefined beside a cutoff: a directory from before D-111, checked as before. */
   distrustRoot?: Uint8Array;
+  /** D-113 (PLAN-M53 R2): delegation parties are bound for this registrar's passports logged at leaf index >= it.
+   *  Each delegator must present its own passport (same registrar, same checkpoint, in its window) and the key that
+   *  signed its hop must be one of that passport's keys; the last hop's delegatee must be one of the subject's own
+   *  keys (`chain_party_unbound` otherwise). Undefined: a directory from before D-113, chains checked as before. */
+  chainsBoundFromLeaf?: number;
   /** The registrar's status-list-signing hybrid key (from the directory). The GA {@link Verifier} authenticates a
    *  presented status list against this before trusting a single bit — so a presenter cannot forge an all-clear
    *  status to bypass revocation (D-020). Absent when anchors are hand-built (raw `runVector` conformance path). */
@@ -403,6 +410,13 @@ export type TrustAnchors = Record<string, RegistrarInfo>;
 export interface HopLogProof {
   leafIndex: number;
   proof: Uint8Array[];
+}
+/** D-113: one delegator's own passport, hop-aligned, logged under the presentation's checkpoint. */
+export interface PartyEvidence {
+  claims: Uint8Array;
+  issuerSig: HybridSig;
+  leafIndex: number;
+  inclusionProof: Uint8Array[];
 }
 /** ADR-002 delegate certificate + delegate signature. */
 export interface DelegateCert {
@@ -426,6 +440,8 @@ export interface Presentation {
   issuerSig: HybridSig;
   now: number;
   chainKeys: HybridPublic[];
+  /** D-113: one passport per delegator where the directory binds chains; empty otherwise. */
+  chainParties: PartyEvidence[];
   hopProofs: HopLogProof[];
   /** The status list as PACKED bytes (LSB-first) — never a `boolean[]` (see {@link unpackStatus}). Read a lineage
    *  with {@link statusBit}. */
@@ -849,6 +865,10 @@ function verifyInner(pres: Presentation, anchors: TrustAnchors): void {
       throw new Reject("registrar_distrusted");
   }
 
+  // 9d. D-113 (PLAN-M53 R2): bound delegation parties. Only now is the leaf index proven, so only now is it known
+  //     whether the directory's rule covers this passport. Mirrors verify.rs `check_parties`.
+  checkParties(pres, p, reg, registrar);
+
   // 10. ADR-019 — the instance rung, LAST and deliberately so. Everything above establishes the passport is real,
   //     unexpired, in scope, unrevoked and logged; only then is it worth asking whether the presenter may speak
   //     for it. The ordering is what makes passport revocation kill every instance with `revoked` from step 7,
@@ -891,6 +911,46 @@ function verifyInstance(
   if (verifyHybrid(ic.ikey, popSigningBytes(pop, ic), pop.sig)) throw new Reject("instance_pop_invalid");
 }
 
+function checkParties(pres: Presentation, p: ReturnType<typeof parseChecked>, reg: RegistrarInfo, registrar: string): void {
+  const bound = reg.chainsBoundFromLeaf !== undefined && pres.leafIndex >= reg.chainsBoundFromLeaf;
+  if (!bound || p.act_chain.length === 0) {
+    // Party passports belong only where the rule asks for them: one shape per rule.
+    if (pres.chainParties.length > 0) throw new Reject("schema_violation");
+    return;
+  }
+  if (pres.chainParties.length !== p.act_chain.length) throw new Reject("schema_violation");
+  const hasKey = (keys: { ed25519: string; mldsa65: string }[], k: HybridPublic) =>
+    keys.some((e) => {
+      const ed = strictB64u(e.ed25519);
+      const ml = strictB64u(e.mldsa65);
+      return ed !== null && ml !== null && eqBytes(ed, k.ed25519) && eqBytes(ml, k.mldsa65);
+    });
+  for (let i = 0; i < p.act_chain.length; i++) {
+    const party = pres.chainParties[i];
+    let q: ReturnType<typeof parseChecked>;
+    try {
+      q = parseChecked(party.claims);
+    } catch {
+      throw new Reject("chain_party_unbound");
+    }
+    if (parseDidRegistrar(q.iss) !== registrar || q.sub !== p.act_chain[i].from) throw new Reject("chain_party_unbound");
+    if (verifyHybrid(reg.issuerKey, party.claims, party.issuerSig)) throw new Reject("chain_party_unbound");
+    if (pres.now < q.nbf || pres.now >= q.exp) throw new Reject("chain_party_unbound");
+    let leaf: Uint8Array;
+    try {
+      leaf = prelogLeaf(party.claims);
+    } catch {
+      throw new Reject("chain_party_unbound");
+    }
+    if (!verifyInclusion(leaf, party.leafIndex, pres.checkpoint.size, party.inclusionProof, pres.checkpoint.root))
+      throw new Reject("chain_party_unbound");
+    if (reg.distrustFromLeaf !== undefined && party.leafIndex >= reg.distrustFromLeaf)
+      throw new Reject("registrar_distrusted"); // same cutoff, same reason, as every hop
+    if (!hasKey(q.keys, pres.chainKeys[i])) throw new Reject("chain_party_unbound");
+  }
+  if (!hasKey(p.keys, pres.chainKeys[p.act_chain.length])) throw new Reject("chain_party_unbound");
+}
+
 function prelogLeaf(claims: Uint8Array): Uint8Array {
   let body: Record<string, unknown>;
   try {
@@ -922,12 +982,14 @@ interface WireCheckpointSig {
 export interface WireVector {
   name: string;
   expect: { verdict: string; reason?: string };
-  anchors: Record<string, { issuer_key: WireKey; log_root_key: string; distrust_from_leaf?: number; distrust_root?: string }>;
+  anchors: Record<string, { issuer_key: WireKey; log_root_key: string; distrust_from_leaf?: number; distrust_root?: string; chains_bound_from_leaf?: number }>;
   presentation: {
     claims: string;
     issuer_sig: WireKey;
     now: number;
     chain_keys: WireKey[];
+    /** D-113: one passport per delegator, where the directory binds chains. Absent on every earlier vector. */
+    chain_parties?: { claims: string; issuer_sig: WireKey; leaf_index: number; inclusion_proof: string[] }[];
     hop_proofs: { leaf_index: number; proof: string[] }[];
     status_list: string;
     status_len: number;
@@ -1058,12 +1120,20 @@ function decodePresentation(pr: PresentedBundle, revoked: Set<string>, now: numb
   // it must not here. A negative leaf index passed the Merkle check here and slipped under a distrust cutoff
   // (2026-11-07 review).
   if (!isU64(pr.leaf_index) || !pr.hop_proofs.every((hp) => isU64(hp.leaf_index))) throw new Reject("schema_violation");
+  const parties = pr.chain_parties ?? [];
+  if (!Array.isArray(parties) || !parties.every((w) => isU64(w.leaf_index))) throw new Reject("schema_violation");
   if (!isU64(pr.checkpoint?.size) || !isU64(pr.status_issued_at)) throw new Reject("schema_violation");
   return {
     claims: dec(pr.claims),
     issuerSig: { ed25519: dec(pr.issuer_sig.ed25519), mldsa65: dec(pr.issuer_sig.mldsa65) },
     now,
     chainKeys: pr.chain_keys.map((k) => ({ ed25519: dec(k.ed25519), mldsa65: dec(k.mldsa65) })),
+    chainParties: parties.map((w) => ({
+      claims: dec(w.claims),
+      issuerSig: { ed25519: dec(w.issuer_sig.ed25519), mldsa65: dec(w.issuer_sig.mldsa65) },
+      leafIndex: w.leaf_index,
+      inclusionProof: w.inclusion_proof.map((x) => dec(x)),
+    })),
     hopProofs: pr.hop_proofs.map((hp) => ({ leafIndex: hp.leaf_index, proof: hp.proof.map((s) => dec(s)) })),
     statusBits: unpackStatus(dec(pr.status_list), pr.status_len),
     statusBitLen: pr.status_len,
@@ -1102,6 +1172,7 @@ export function runVector(v: WireVector): Verdict {
         // implementation silently returns VALID where the reference returns registrar_distrusted — which is what
         // `make diff` caught on the first run of these vectors.
         distrustFromLeaf: r.distrust_from_leaf ?? undefined,
+        chainsBoundFromLeaf: r.chains_bound_from_leaf ?? undefined,
       };
       // D-111: a pinned head travels with its cutoff; a malformed one is a malformed anchor (schema_violation).
       if (r.distrust_root !== undefined) {
@@ -1507,6 +1578,8 @@ export interface WireDirectoryEntry {
   distrust_from_leaf?: number;
   /** D-111: the log head pinned at the cutoff (base64url, 32 bytes). Only beside `distrust_from_leaf`. */
   distrust_root?: string;
+  /** D-113: delegation parties are bound from this log position on. Absent on every earlier directory. */
+  chains_bound_from_leaf?: number;
   registrar: string;
   issuer_ed25519: string;
   issuer_mldsa65: string;
@@ -1586,6 +1659,11 @@ export function verifyDirectory(d: WireDirectory, rootEd25519: Uint8Array, rootS
       logRootKey: lr,
       distrustFromLeaf: typeof e.distrust_from_leaf === "number" ? e.distrust_from_leaf : undefined,
     };
+    // D-113: a u64 or nothing — serde refuses anything else on the Rust side, so the directory does not decode there.
+    if (e.chains_bound_from_leaf !== undefined) {
+      if (!isU64(e.chains_bound_from_leaf)) return null;
+      info.chainsBoundFromLeaf = e.chains_bound_from_leaf;
+    }
     // D-111: a pinned head is meaningful only beside a cutoff and is exactly 32 bytes; anything else is a malformed
     // entry, and a directory with one accredits no one (mirrors `Directory::accredit`).
     if (e.distrust_root !== undefined) {
@@ -2276,7 +2354,7 @@ const DECISION_FIELDS = new Set(["v", "gate", "seq", "at", "kind", "subject", "p
 const DECISION_OPTIONAL = new Set(["passport", "operator", "reason", "status", "checkpoint"]);
 const FROZEN_REASONS: ReadonlySet<string> = new Set([
   "registrar_distrusted", "sig_invalid", "alg_downgrade", "expired", "not_yet_valid", "revoked", "mandate_revoked",
-  "chain_widening", "chain_expired", "not_logged", "checkpoint_invalid", "stale_status", "name_malformed",
+  "chain_widening", "chain_expired", "chain_party_unbound", "not_logged", "checkpoint_invalid", "stale_status", "name_malformed",
   "ceiling_exceeded", "unknown_registrar", "schema_violation", "instance_expired", "instance_scope_exceeds",
   "instance_sig_invalid", "instance_pop_invalid", "denied_by_policy",
 ]);

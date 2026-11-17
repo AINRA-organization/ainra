@@ -62,6 +62,12 @@ pub struct DirectoryEntry {
     /// Present only beside `distrust_from_leaf`; omitted when absent, so every earlier directory keeps its bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distrust_root: Option<String>,
+    /// **Delegation parties are bound from this log position on (D-113, PLAN-M53 R2).** Present = every passport
+    /// this registrar logged at leaf index `>= n` that carries a delegation chain must present each delegator's own
+    /// passport, and the keys that signed its hops must be those parties' keys. Omitted when absent, so every earlier
+    /// directory keeps its bytes; absent means chains are checked as they were before D-113.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chains_bound_from_leaf: Option<u64>,
     /// The registrar's status-list URI (the status signature is bound to it).
     pub status_uri: String,
 }
@@ -185,6 +191,7 @@ impl Directory {
                     log_root_key: log_root,
                     distrust_from_leaf: e.distrust_from_leaf,
                     distrust_root,
+                    chains_bound_from_leaf: e.chains_bound_from_leaf,
                 },
             );
         }
@@ -329,6 +336,7 @@ mod tests {
             status_uri: alloc::format!("status://{id}/1"),
             distrust_from_leaf: None,
             distrust_root: None,
+            chains_bound_from_leaf: None,
         }
     }
 

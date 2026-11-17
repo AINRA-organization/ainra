@@ -54,6 +54,13 @@ pub struct RegistrarInfo {
     /// not take honest earlier work down with it. `None` beside a cutoff is a directory from before D-111, checked as
     /// it always was.
     pub distrust_root: Option<[u8; 32]>,
+    /// **Delegation parties are bound from here on (D-113, PLAN-M53 R2).** `Some(n)`: every passport this registrar
+    /// logged at leaf index `>= n` that carries a delegation chain must bind each party to a passport of its own
+    /// ([`Presentation::chain_parties`]); a chain whose parties are not bound is `chain_party_unbound`. Keyed on the
+    /// log position for the reason the distrust cutoff is: a registrar cannot move an entry below it. `None` is a
+    /// directory from before D-113, and chains are checked as they always were: under the keys the presentation
+    /// supplies, which prove no more than the registrar's word.
+    pub chains_bound_from_leaf: Option<u64>,
 }
 
 /// The set of accredited registrars, keyed by registrar id (`registrar-01`, …).
@@ -67,6 +74,20 @@ pub struct TrustAnchors {
 pub struct HopLogProof {
     pub leaf_index: u64,
     pub proof: Vec<[u8; 32]>,
+}
+
+/// One delegation party's own passport (D-113): the passport of the party that delegates hop `i`, issued by the same
+/// registrar as the presented passport and logged under the same checkpoint. It is what binds the key that signed the
+/// hop to the name the hop gives.
+#[derive(Debug, Clone)]
+pub struct PartyEvidence {
+    /// The party passport's canonical claim bytes, exactly as its issuer signed them.
+    pub claims: Vec<u8>,
+    /// The issuer's hybrid signature over `claims`.
+    pub issuer_sig: crypto::HybridSig,
+    /// Where the party passport's pre-log leaf sits in the tree the presentation's checkpoint commits to.
+    pub leaf_index: u64,
+    pub inclusion_proof: Vec<[u8; 32]>,
 }
 
 /// One dynamic-mandate node's inclusion evidence against the passport's `mandates_root` (D-013).
@@ -89,6 +110,10 @@ pub struct Presentation<'a> {
     /// hop i's delegatee (which IS hop i+1's delegator — continuity by construction). Length MUST be hops + 1
     /// when a chain is present; empty otherwise. (D-012.)
     pub chain_keys: Vec<crypto::HybridPublic>,
+    /// D-113: one passport per DELEGATOR (hop `i`'s `from`), hop-aligned, when the registrar's directory entry binds
+    /// chains ([`RegistrarInfo::chains_bound_from_leaf`]); empty otherwise. The last party is the subject, whose own
+    /// passport is the one presented.
+    pub chain_parties: Vec<PartyEvidence>,
     /// Per-hop inclusion proofs for each hop's `log_leaf`, hop-aligned, against the same checkpoint below.
     pub hop_proofs: Vec<HopLogProof>,
     /// Decoded status list covering the passport's status index.
@@ -256,6 +281,12 @@ fn verify_inner(pres: &Presentation, anchors: &TrustAnchors) -> core::result::Re
         }
     }
 
+    // 9d. D-113 (PLAN-M53 R2): bound delegation parties. Only now is the passport's leaf index a proven fact, so only
+    //     now can the verifier know whether the directory's rule covers it. Under the rule, each key that signed a hop
+    //     must belong to the party the hop names, by that party's own passport, and the last hop's delegatee must be
+    //     the subject itself.
+    check_parties(pres, &p, reg, &registrar)?;
+
     // 10. ADR-019 — the instance rung, LAST and deliberately so. Everything above establishes that this passport
     //     is real, unexpired, in scope, unrevoked and logged; only then is it worth asking whether the presenter is
     //     entitled to speak for it. The ordering is also what makes `instance-passport-revoked-*` behave the way the
@@ -280,6 +311,71 @@ fn verify_inner(pres: &Presentation, anchors: &TrustAnchors) -> core::result::Re
         )?;
     }
 
+    Ok(())
+}
+
+/// D-113: the step-9d check. Assumes steps 1–9 passed (the checkpoint is authentic and `pres.leaf_index` is proven).
+fn check_parties(
+    pres: &Presentation,
+    p: &Passport,
+    reg: &RegistrarInfo,
+    registrar: &str,
+) -> core::result::Result<(), Reason> {
+    let bound = matches!(reg.chains_bound_from_leaf, Some(n) if pres.leaf_index >= n);
+    if !bound || p.act_chain.is_empty() {
+        // Party passports belong only where the rule asks for them: one shape per rule.
+        return if pres.chain_parties.is_empty() {
+            Ok(())
+        } else {
+            Err(Reason::SchemaViolation)
+        };
+    }
+    if pres.chain_parties.len() != p.act_chain.len() {
+        return Err(Reason::SchemaViolation); // one passport per delegator
+    }
+    let has_key = |keys: &[crate::passport::KeyEntry], k: &crypto::HybridPublic| {
+        keys.iter().any(|e| {
+            b64::decode_array::<{ crypto::ED25519_PK }>(&e.ed25519).ok() == Some(k.ed25519)
+                && b64::decode(&e.mldsa65).ok().as_deref() == Some(k.mldsa65.as_slice())
+        })
+    };
+    for (i, (hop, party)) in p
+        .act_chain
+        .iter()
+        .zip(pres.chain_parties.iter())
+        .enumerate()
+    {
+        let unbound = Reason::ChainPartyUnbound;
+        let q = Passport::parse_checked(&party.claims).map_err(|_| unbound)?;
+        let (q_reg, _, _) = AinraName::parse_did(&q.iss).map_err(|_| unbound)?;
+        if q_reg != registrar || q.sub != hop.from {
+            return Err(unbound);
+        }
+        crypto::verify_hybrid(&reg.issuer_key, &party.claims, &party.issuer_sig)
+            .map_err(|_| unbound)?;
+        if pres.now < q.nbf || pres.now >= q.exp {
+            return Err(unbound);
+        }
+        let leaf = prelog_leaf(&party.claims).map_err(|_| unbound)?;
+        checkpoint::verify_logged(
+            &leaf,
+            party.leaf_index,
+            &pres.checkpoint,
+            &party.inclusion_proof,
+        )
+        .map_err(|_| unbound)?;
+        if let Some(cut) = reg.distrust_from_leaf {
+            if party.leaf_index >= cut {
+                return Err(Reason::RegistrarDistrusted); // same cutoff, same reason, as every hop
+            }
+        }
+        if !has_key(&q.keys, &pres.chain_keys[i]) {
+            return Err(unbound);
+        }
+    }
+    if !has_key(&p.keys, &pres.chain_keys[p.act_chain.len()]) {
+        return Err(Reason::ChainPartyUnbound);
+    }
     Ok(())
 }
 
@@ -396,6 +492,7 @@ mod tests {
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
             },
         );
 
@@ -417,6 +514,7 @@ mod tests {
                 issuer_sig: self.issuer_sig.clone(),
                 now: 1_500,
                 chain_keys: Vec::new(),
+                chain_parties: Vec::new(),
                 hop_proofs: Vec::new(),
                 status_list: status::StatusList::from_bits(alloc::vec![false, false, false]),
                 status_issued_at: 1_490,
@@ -538,6 +636,7 @@ mod tests {
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
             },
         );
         let anchors = TrustAnchors { registrars };
@@ -548,6 +647,7 @@ mod tests {
                 issuer_sig: issuer_sig.clone(),
                 now: 1_500,
                 chain_keys,
+                chain_parties: Vec::new(),
                 hop_proofs,
                 status_list: status::StatusList::from_bits(alloc::vec![false, false, false]),
                 status_issued_at: 1_490,
@@ -841,6 +941,7 @@ mod tests {
                 log_root_key: root.public(),
                 distrust_from_leaf: None,
                 distrust_root: None,
+                chains_bound_from_leaf: None,
             },
         );
         let anchors = TrustAnchors { registrars };
@@ -850,6 +951,7 @@ mod tests {
             issuer_sig,
             now: 1_500,
             chain_keys: Vec::new(),
+            chain_parties: Vec::new(),
             hop_proofs: Vec::new(),
             status_list: status::StatusList::from_bits(alloc::vec![false, false, false]),
             status_issued_at: 1_490,

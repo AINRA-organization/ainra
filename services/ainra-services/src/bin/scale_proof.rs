@@ -133,6 +133,7 @@ fn device_verification() {
             log_root_key: root.public(),
             distrust_from_leaf: None,
             distrust_root: None,
+            chains_bound_from_leaf: None,
         },
     );
     let anchors = TrustAnchors { registrars };
@@ -141,6 +142,7 @@ fn device_verification() {
         issuer_sig: issuer_sig.clone(),
         now: VERIFY_NOW,
         chain_keys: vec![],
+        chain_parties: Vec::new(),
         hop_proofs: vec![],
         status_list: status_list.clone(),
         status_issued_at: VERIFY_NOW - 5,

@@ -112,6 +112,7 @@ fn verify_against(
         issuer_sig: p.issuer_sig.clone(),
         now: VERIFY_AT,
         chain_keys: vec![],
+        chain_parties: Vec::new(),
         hop_proofs: Vec::<HopLogProof>::new(),
         status_list: status::StatusList::from_bits(vec![false; 16]),
         status_issued_at: VERIFY_AT - 5,

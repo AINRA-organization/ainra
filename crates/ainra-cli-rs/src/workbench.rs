@@ -187,6 +187,17 @@ fn request(args: &[String]) -> Result<(), i32> {
                 "status_ed25519": a["status_key"]["ed25519"], "status_mldsa65": a["status_key"]["mldsa65"],
                 "status_uri": a["status_uri"],
             });
+            // D-113: a registrar that binds its chains from the start says so in its first entry.
+            if let Some(n) = a["chains_bound_from_leaf"].as_u64() {
+                change["entry"]["chains_bound_from_leaf"] = json!(n);
+            }
+        }
+        "BIND_CHAINS" => {
+            let Some(leaf) = opt(args, "leaf").and_then(|s| s.parse::<u64>().ok()) else {
+                eprintln!("BIND_CHAINS needs --leaf <n> (where the registrar's chain binding begins, D-113)");
+                return Err(2);
+            };
+            change["leaf"] = json!(leaf);
         }
         "DISTRUST_FROM_LEAF" => {
             let Some(leaf) = opt(args, "leaf").and_then(|s| s.parse::<u64>().ok()) else {

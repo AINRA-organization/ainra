@@ -10,6 +10,18 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Security — a delegation chain names parties that hold passports (D-113, PLAN-M53 R2)
+
+- A delegation hop's two signatures were checked under keys the presentation supplied, so a chain proved no more than
+  the registrar's word (found by the first independent review, D-104). Where the directory says a registrar binds its
+  chains (`chains_bound_from_leaf`, keyed on the log position), each delegator must now present its own passport
+  (`chain_parties`): same registrar, same checkpoint, in its window, and carrying the key that signed its hop; the last
+  hop must be signed by the subject's own key. Otherwise `chain_party_unbound`, a new reason (21 → 22).
+- The registrar holds no party's key: it issues a bound chain only from hops both parties signed, and refuses an
+  unsigned one once it binds chains (`POST /bind-chains`). The directory workbench gains `BIND_CHAINS`; a binding is
+  never dropped or moved.
+- `vectors/v1` 1169 → 1184; every earlier vector is byte-identical and keeps its verdict.
+
 ## [0.9.0] — 2026-11-17
 
 The release commit; its board is `docs/releases/v0.9.0-board.md`. Published to npm and PyPI from the tag, by the
