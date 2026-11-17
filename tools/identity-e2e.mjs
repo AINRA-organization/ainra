@@ -210,7 +210,7 @@ const sizes = (h) => ({ total: Object.entries(h).reduce((n, [k, v]) => n + k.len
                         line: Math.max(...Object.entries(h).map(([k, v]) => k.length + String(v).length + 2)) });
 
 let REF = null;
-async function send({ path = "/orders", method = "POST", sign = true, pathOnWire, headersOverride, ref }) {
+async function send({ path = "/orders", method = "POST", sign = true, pathOnWire, headersOverride, ref, dryRun = false }) {
   const { pop } = splitPresentation(await presentationFor());
   const headers = {
     [PRESENTATION_HEADER]: ref ?? REF, [POP_HEADER]: Buffer.from(JSON.stringify(pop)).toString("base64url"), host: authority,
@@ -219,6 +219,7 @@ async function send({ path = "/orders", method = "POST", sign = true, pathOnWire
     req: { method, authority, path, headers }, keyid: ic.iid, nonce: "r-" + randomBytes(6).toString("hex"), created: now(), instanceSign,
   }));
   Object.assign(headers, headersOverride ?? {});
+  if (dryRun) return { headers };
   const r = await fetch(`http://${authority}${pathOnWire ?? path}`, { method, headers });
   return { status: r.status, reason: r.headers.get("x-ainra-reason"), ...sizes(headers), headers };
 }
@@ -279,6 +280,26 @@ step("6 · every way of misusing it is refused, by name");
   const r = await send({ pathOnWire: "/admin/refunds" });
   r.status === 403 && r.reason === "presentation_sig_invalid"
     ? ok(`moved to another path → 403 ${r.reason}`) : fail(`moved path: ${r.status} ${r.reason}`);
+}
+{
+  // A reverse proxy's forwarding header is the client's word, not the address the request reached: a request signed
+  // for this server, sent with another Host and an X-Forwarded-Host naming this one, must not pass (threat review,
+  // 17 Nov 2026). The gate reads Host only.
+  // `fetch` silently puts the real address back in Host whatever it is given, so this goes out through node:http,
+  // which sends the Host it is told to; the server echoes nothing, so the check is the gate's answer alone.
+  const raw = (headers) => new Promise((done, bad) => {
+    const q = http.request({ host: "127.0.0.1", port, path: "/orders", method: "POST", headers },
+      (res) => { res.resume(); res.on("end", () => done({ status: res.statusCode, reason: res.headers["x-ainra-reason"] })); });
+    q.on("error", bad); q.end();
+  });
+  const control = await raw((await send({ dryRun: true })).headers);   // the same transport, the signed Host: allowed
+  control.status === 200 ? ok("the same transport with the Host it was signed for → 200 (the control)")
+    : fail(`control over node:http: ${control.status} ${control.reason}`);
+  const signed = await send({ dryRun: true });
+  const r = await raw({ ...signed.headers, host: "other.example", "x-forwarded-host": authority, forwarded: `host=${authority}` });
+  r.status === 403 && r.reason === "presentation_sig_invalid"
+    ? ok(`another Host, with X-Forwarded-Host and Forwarded naming this one → 403 ${r.reason}`)
+    : fail(`forwarded host: ${r.status} ${r.reason}`);
 }
 {
   const r = await send({ sign: false });
