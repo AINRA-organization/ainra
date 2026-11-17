@@ -84,7 +84,7 @@ The bundled `package.json` uses a local path dependency so the kit runs inside t
 with the published package and reinstall:
 
 ```json
-"dependencies": { "@ainra/sdk": "^0.8.1" }
+"dependencies": { "@ainra/sdk": "^0.9.0" }
 ```
 
 ## What the three sample checks mean

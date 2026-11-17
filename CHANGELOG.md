@@ -10,6 +10,20 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-17
+
+The release commit; its board is `docs/releases/v0.9.0-board.md`. Published to npm and PyPI from the tag, by the
+release workflow, on the operator's instruction. The release in which AINRA reaches beneath other identity systems
+(PLAN-M55 steps 1 to 3), with one security change to how a registrar is distrusted:
+- **links for P-256 keys** (D-108), **issuer links** (D-110) and **RSA keys** (D-112): a key another system already
+  issued, or the key an identity system issues tokens with, can be given an accountable owner and an off-switch;
+- **a distrust cutoff pins the registrar's log head** (D-111): work a registrar logged after its cutoff cannot be
+  slipped under it;
+- the published test network has keys and a root nobody else can recompute or sign under (D-107, D-109);
+- the pilot outlives requests it cannot read (INC-2026-013); the hosted verifier takes every key type.
+
+Versions 0.8.1 → 0.9.0 in the five packages. Every earlier vector is byte-identical; the link corpus grows 43 → 92.
+
 ### Added — RSA keys for links: RS256 and PS256 (D-112, PLAN-M55 step 3)
 
 - The large identity providers sign their tokens with RSA. A link, and so an issuer link, can now be for an RSA key
@@ -1369,7 +1383,11 @@ A recorded 5-of-9 ceremony · ≥3 independent external verifiers · a 14-day/3-
 witnesses on separate infra. The machinery for all four is built and smoke-proven; `make genesis-status` shows the
 honest count (**7/11** today). See `GENESIS-CHECKLIST.md` and `outreach/`.
 
-[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/JacobJandon/ainra/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/JacobJandon/ainra/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/JacobJandon/ainra/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/JacobJandon/ainra/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/JacobJandon/ainra/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/JacobJandon/ainra/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/JacobJandon/ainra/compare/v0.4.0...v0.4.1

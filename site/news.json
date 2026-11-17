@@ -9,6 +9,33 @@
   },
   "entries": [
     {
+      "id": "v0.9.0",
+      "date": "2026-11-17",
+      "kind": "release",
+      "major": true,
+      "title": "0.9.0: the keys other systems already issue can be linked",
+      "body": [
+        "Most AI agents already have an identity from somewhere else: a key in a certificate or a platform keystore, or a token from their company's identity system. This release lets AINRA stand beneath those, without reissuing anything. A key on the P-256 curve, the key an identity system signs its tokens with, and since today an RSA key, the kind the large identity providers use, can each be linked: given an accountable owner and a switch anyone can see turned off, checked offline.",
+        "It also closes a gap in how a registrar is distrusted. When the directory distrusts one, it now records how far that registrar's log had reached at the cutoff, so nothing it logs afterwards can be passed off as older work.",
+        "All three of our verifiers agree on every one of the 92 link test vectors, and every earlier vector is unchanged. Everything still runs under a test root."
+      ],
+      "proof": [
+        {
+          "label": "The signed release",
+          "href": "https://github.com/JacobJandon/ainra/releases/tag/v0.9.0"
+        },
+        {
+          "label": "Everything in it",
+          "href": "https://github.com/JacobJandon/ainra/blob/main/CHANGELOG.md"
+        }
+      ],
+      "covers": {
+        "releases": [
+          "0.9.0"
+        ]
+      }
+    },
+    {
       "id": "issuer-links",
       "date": "2026-11-16",
       "kind": "rules",
