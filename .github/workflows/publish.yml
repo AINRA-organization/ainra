@@ -221,4 +221,10 @@ jobs:
           printf 'npm %s (need >= %s)\n' "$have" "$need"
           [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ] || {
             echo "npm $have is too old for trusted publishing — provenance would be silently skipped"; exit 1; }
-      - run: cd packages/sdk-ts && npm ci --no-audit --no-fund && npm run build && npm publish --dry-run --provenance --access public
+      # The same rule as the publish step: a version older than npm's latest (a patch for an older line) goes under its
+      # line's tag. npm itself refuses to give it `latest` implicitly, which stopped the 0.9.1 dry run (17 Nov 2026).
+      - run: |
+          cd packages/sdk-ts && npm ci --no-audit --no-fund && npm run build
+          v="$(node -p "require('./package.json').version")"; latest="$(npm view @ainra/sdk dist-tags.latest 2>/dev/null || true)"
+          tag=""; if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$v" "$latest" | sort -V | tail -1)" != "$v" ]; then tag="line-${v%.*}"; fi
+          npm publish --dry-run --provenance --access public ${tag:+--tag "$tag"}

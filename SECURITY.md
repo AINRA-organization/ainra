@@ -108,7 +108,8 @@ honest issuer already signs canonical bytes: the 1169 earlier conformance vector
 verdicts. Three new vectors (`duplicate-key-0000` to `-0002`) pin the rule in every implementation; with the check
 removed, they verify again. Decision: [D-118](docs/DECISIONS.md).
 
-**What you should do.** Upgrade every AINRA package to **0.10.1**, or **0.9.1** if you stay on the 0.9 line. If you
+**What you should do.** Upgrade every AINRA package to **0.10.1**, or **0.9.1** if you stay on the 0.9 line
+(advisory [GHSA-mjqm-fr4p-r3cr](https://github.com/JacobJandon/ainra/security/advisories/GHSA-mjqm-fr4p-r3cr)). If you
 verify with your own code, require the signed claim bytes to be canonical before you read a field.
 
 **The order we did it in, and what we would do again.** The fix went to main a few hours before the packages: for
