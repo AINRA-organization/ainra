@@ -87,6 +87,45 @@ The historical examples in "Our posture" above are exactly that record: each one
 decision in the log. That is the standard your report will be held to — and the reason a good report here is
 permanent, not just patched.
 
+## Post-mortem: a passport that repeated a key could be read two ways (D-118, fixed in 0.10.1 and 0.9.1)
+
+**What was wrong.** A passport is checked from the bytes its registrar signed. A link's and a decision record's bytes
+must already be canonical, so each has one spelling; a passport's did not have to be. JSON readers disagree about a
+key written twice in one object: JavaScript's and Python's keep the last copy, others keep the first, some refuse.
+So a passport whose signed claims said `"tier":"L3"` and then `"tier":"L1"` was VALID with tier L1 in `@ainra/sdk`
+and the Python package `ainra`, and with tier L3 in a verifier written with a first-copy reader. The Rust core
+refused a repeated key in its typed fields, but kept the last copy inside the free-form objects (`cnf`,
+`transfer_history`), so `@ainra/edge` and the hosted verifier accepted those. Every published version of every
+package is affected: `@ainra/sdk`, `@ainra/middleware` and `@ainra/mcp` (through the SDK), `@ainra/edge`, and PyPI
+`ainra`.
+
+**What was not wrong.** No one outside a registrar could do this: the bytes are signed by an accredited registrar's
+key, and any change to them breaks that signature. Nothing revoked became valid, and no status, log or freshness
+check was skipped. The log holds the canonical body, which is the last-copy reading, so a monitor saw what the
+TypeScript and Python verifiers saw. The harm is two verifiers shown two passports under one signature, by a
+registrar willing to do it.
+
+**How it was found.** By us, on 17 November, while checking an outside list of attacks one by one against the code.
+Its line on "parser differentials" asked whether two verifiers could read one passport differently. We built three
+signed passports that repeat a key (at the top, inside a typed object, inside a free-form one): the TypeScript and
+Python verifiers returned VALID for all three.
+
+**The fix.** All three verifiers require a passport's signed bytes to equal the canonical encoding of what was
+parsed, else `schema_violation`; a repeated key cannot pass, because the canonical form holds each key once. Every
+honest issuer already signs canonical bytes: the 1184 earlier conformance vectors are byte-identical and keep their
+verdicts. Three new vectors (`duplicate-key-0000` to `-0002`) pin the rule in every implementation; with the check
+removed, they verify again. Decision: [D-118](docs/DECISIONS.md).
+
+**What you should do.** Upgrade every AINRA package to **0.10.1**, or **0.9.1** if you stay on the 0.9 line. If you
+verify with your own code, require the signed claim bytes to be canonical before you read a field.
+
+**The order we did it in, and what we would do again.** The fix went to main a few hours before the packages: for
+those hours the public source described a fault the published packages still had. D-106's post-mortem said a fix and
+its release belong in one step, and this time they were not. The fix was first, then this release; next time the
+release goes out with the fix.
+
+---
+
 ## Advisory: RUSTSEC-2026-0385 — non-constant-time masks in `ctutils` (fixed in v0.5.0)
 
 **What it was.** `ctutils` 0.4.2, a constant-time helper crate that `ml-dsa` reaches through `hybrid-array`,

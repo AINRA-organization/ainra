@@ -10,6 +10,19 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-11-17
+
+The release commit; its board is `docs/releases/v0.10.1-board.md`. A security release (incident INC-2026-014, HIGH),
+published to npm and PyPI from the tag on the operator's instruction, beside 0.9.1 for the 0.9 line:
+- **a passport whose signed claims repeat a key is refused** (D-118): the TypeScript and Python verifiers accepted
+  one, keeping the last copy, and the core accepted one inside a free-form object. All three now require the signed
+  bytes to be canonical. Upgrade every package to 0.10.1 (or 0.9.1). The post-mortem is in `SECURITY.md`.
+- Everything else here changes no rule: tools for watching the network (D-116), the root seed sealed and a home node
+  (D-117), a node light enough for a small board (D-119), change proposals and Web4 (D-114, D-115), a kit for agents
+  named by a certificate.
+
+Versions 0.10.0 → 0.10.1 in the five packages.
+
 ### Security — a passport's signed bytes must be canonical (D-118)
 
 - A passport whose signed claims repeated a key was accepted by the TypeScript and Python verifiers (the last copy
@@ -1447,7 +1460,8 @@ A recorded 5-of-9 ceremony · ≥3 independent external verifiers · a 14-day/3-
 witnesses on separate infra. The machinery for all four is built and smoke-proven; `make genesis-status` shows the
 honest count (**7/11** today). See `GENESIS-CHECKLIST.md` and `outreach/`.
 
-[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/JacobJandon/ainra/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/JacobJandon/ainra/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/JacobJandon/ainra/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/JacobJandon/ainra/compare/v0.8.0...v0.8.1
