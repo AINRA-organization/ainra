@@ -1,12 +1,12 @@
 {
-  "published_at": 1794935172,
-  "published_at_iso": "2026-11-17T17:06:12Z",
+  "published_at": 1794953713,
+  "published_at_iso": "2026-11-17T22:15:13Z",
   "network": "staging",
   "root": "test-root",
   "note": "When this copy of the read contract was taken from the network. NOT generated_window.verified_at, which is a pinned staging constant and says nothing about age.",
   "sha256": {
     "index.json": "79b3931a9192ebaef1b89d6f666f2d2c0af097e6ecc59ba530f8fab1887779e7",
-    "registry.json": "364723d6b0d1cd317f627ff0d0b0dea6a07b3214cdc71938b0602e1643156f37",
+    "registry.json": "c48651ece89eb083aba9088ed438bc872701d359eaefc28799ecb3b054ba5357",
     "directory.json": "9e7ef59e18bb6cd44a20a5adf7ed23481a655543659610bd12c49bca3ad650cf",
     "roots.json": "b7de9f94d7785538fc08efb23a12c79fe754b00b22117fc3bd53007ca4c32c96"
   }
