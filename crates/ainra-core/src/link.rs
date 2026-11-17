@@ -67,16 +67,48 @@ pub const SUBJECT_ALG_ES256K: &str = "ES256K";
 /// signed agent cards, token issuers, hardware and platform keystores (D-108). Signatures are 64-byte `r || s` and
 /// must be low-S, the one rule for both ECDSA algorithms here; a signer that returns the high-S twin sends `n - s`.
 pub const SUBJECT_ALG_ES256: &str = "ES256";
+/// RS256 (RFC 7518): RSASSA-PKCS1-v1_5 with SHA-256 — how the large identity providers sign their tokens (D-112).
+pub const SUBJECT_ALG_RS256: &str = "RS256";
+/// PS256 (RFC 7518): RSASSA-PSS with SHA-256, MGF1 with SHA-256 and a salt of exactly 32 bytes (D-112).
+pub const SUBJECT_ALG_PS256: &str = "PS256";
+/// The RSA key family's name, for messages; an RSA link names RS256 or PS256.
+pub const KEY_FAMILY_RSA: &str = "RSA";
+/// RSA moduli Link accepts, in bits, inclusive. Below 2048 is refused by name; above 4096 bounds a gate's work.
+pub const RSA_MIN_BITS: usize = 2048;
+pub const RSA_MAX_BITS: usize = 4096;
+/// The one public exponent Link accepts. Every identity system checked publishes it, and one value means one
+/// canonical encoding of each key.
+pub const RSA_EXPONENT: [u8; 3] = [0x01, 0x00, 0x01];
+const RSA_MAX_BYTES: usize = RSA_MAX_BITS / 8;
+/// DER `AlgorithmIdentifier` for rsaEncryption (1.2.840.113549.1.1.1) with NULL parameters.
+const RSA_ALG_ID: [u8; 15] = [
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+];
+/// DER `DigestInfo` prefix for SHA-256 (RFC 8017 §9.2, note 1).
+const SHA256_DIGEST_INFO: [u8; 19] = [
+    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+    0x00, 0x04, 0x20,
+];
 
 /// A key a caller has already verified a signature with, as Link names it. By length: 32 bytes is an Ed25519 key,
 /// 33 a compressed SEC1 secp256k1 point, 65 an UNCOMPRESSED SEC1 P-256 point (`0x04 || x || y`, the form that key
-/// has in a JWK, a COSE key and a certificate) — so every caller that passes a 32-byte key keeps meaning Ed25519,
-/// and no length means two things.
+/// has in a JWK, a COSE key and a certificate). Anything longer must be an RSA key (D-112) as DER
+/// SubjectPublicKeyInfo — the form a certificate, `openssl rsa -pubout -outform DER` and WebCrypto's `spki` export
+/// carry — in its one canonical encoding: so every caller that passes a 32-byte key keeps meaning Ed25519, and no
+/// length means two things (the shortest RSA key Link accepts is 294 bytes).
+// The RSA variant holds a 4096-bit modulus inline so the key stays `Copy` and allocation-free on the verify path; at
+// about half a kilobyte it is still a small stack value, and the key is read once per check.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentedKey {
     Ed25519([u8; 32]),
     Es256k([u8; 33]),
     Es256([u8; 65]),
+    /// The modulus, big-endian with no leading zero, in the first `len` bytes; the exponent is [`RSA_EXPONENT`].
+    Rsa {
+        n: [u8; RSA_MAX_BYTES],
+        len: u16,
+    },
 }
 
 impl PresentedKey {
@@ -91,14 +123,40 @@ impl PresentedKey {
                 let k: [u8; 65] = b.try_into().ok()?;
                 p256_affine(&k).map(|_| PresentedKey::Es256(k))
             }
+            n if n > 65 => {
+                let m = rsa_spki_modulus(b)?;
+                let mut n = [0u8; RSA_MAX_BYTES];
+                n[..m.len()].copy_from_slice(m);
+                Some(PresentedKey::Rsa {
+                    n,
+                    len: m.len() as u16,
+                })
+            }
             _ => None,
         }
     }
+    /// The key's algorithm, or for an RSA key its family ([`KEY_FAMILY_RSA`]): one RSA key may be linked as RS256 or
+    /// as PS256. Use [`Self::fits`] to ask whether a link's `alg` can be this key's.
     pub fn alg(&self) -> &'static str {
         match self {
             PresentedKey::Ed25519(_) => SUBJECT_ALG_ED25519,
             PresentedKey::Es256k(_) => SUBJECT_ALG_ES256K,
             PresentedKey::Es256(_) => SUBJECT_ALG_ES256,
+            PresentedKey::Rsa { .. } => KEY_FAMILY_RSA,
+        }
+    }
+    /// Whether a link whose `subject.alg` is `alg` can be for this key.
+    pub fn fits(&self, alg: &str) -> bool {
+        match self {
+            PresentedKey::Rsa { .. } => alg == SUBJECT_ALG_RS256 || alg == SUBJECT_ALG_PS256,
+            k => k.alg() == alg,
+        }
+    }
+    /// The RSA modulus, for an RSA key.
+    fn modulus(&self) -> Option<&[u8]> {
+        match self {
+            PresentedKey::Rsa { n, len } => Some(&n[..*len as usize]),
+            _ => None,
         }
     }
     /// The RFC 7638 thumbprint; `None` for bytes that are not a point on the key's curve.
@@ -107,15 +165,168 @@ impl PresentedKey {
             PresentedKey::Ed25519(k) => Some(jwk_thumbprint_ed25519(k)),
             PresentedKey::Es256k(k) => jwk_thumbprint_es256k(k),
             PresentedKey::Es256(k) => jwk_thumbprint_es256(k),
+            PresentedKey::Rsa { .. } => self.modulus().map(jwk_thumbprint_rsa),
         }
     }
-    /// Verify a 64-byte signature by this key over `msg`, in the key's own algorithm.
-    pub fn verify(&self, msg: &[u8], sig: &[u8; 64]) -> bool {
-        match self {
-            PresentedKey::Ed25519(k) => crypto::ed25519_verify(k, msg, sig),
-            PresentedKey::Es256k(k) => es256k_verify(k, msg, sig),
-            PresentedKey::Es256(k) => es256_verify(k, msg, sig),
+    /// Verify a signature by this key over `msg` in the link algorithm `alg` (which must [`Self::fits`] the key).
+    /// Ed25519, ES256K and ES256 signatures are 64 bytes; an RSA signature is exactly as long as the modulus.
+    pub fn verify(&self, alg: &str, msg: &[u8], sig: &[u8]) -> bool {
+        if !self.fits(alg) {
+            return false;
         }
+        match self {
+            PresentedKey::Rsa { .. } => {
+                let n = self.modulus().unwrap_or_default();
+                rsa_verify(n, alg == SUBJECT_ALG_PS256, msg, sig)
+            }
+            k => {
+                let Ok(sig) = <&[u8; 64]>::try_from(sig) else {
+                    return false;
+                };
+                match k {
+                    PresentedKey::Ed25519(k) => crypto::ed25519_verify(k, msg, sig),
+                    PresentedKey::Es256k(k) => es256k_verify(k, msg, sig),
+                    PresentedKey::Es256(k) => es256_verify(k, msg, sig),
+                    PresentedKey::Rsa { .. } => false,
+                }
+            }
+        }
+    }
+}
+
+/// DER length octets for `n` (definite, minimal form).
+fn der_len(n: usize, out: &mut Vec<u8>) {
+    if n < 0x80 {
+        out.push(n as u8);
+    } else if n < 0x100 {
+        out.extend_from_slice(&[0x81, n as u8]);
+    } else {
+        out.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]);
+    }
+}
+
+fn der_tlv(tag: u8, content: &[u8], out: &mut Vec<u8>) {
+    out.push(tag);
+    der_len(content.len(), out);
+    out.extend_from_slice(content);
+}
+
+/// The one canonical DER SubjectPublicKeyInfo of an RSA key with modulus `n` (big-endian, no leading zero) and
+/// exponent 65537: rsaEncryption with NULL parameters, then the RSAPublicKey in a BIT STRING with no unused bits.
+/// Every implementation builds the same bytes, so "is this a key" has one answer everywhere (D-112).
+pub fn rsa_spki(n: &[u8]) -> Vec<u8> {
+    let mut n_int = Vec::with_capacity(n.len() + 1);
+    if n.first().is_some_and(|b| b & 0x80 != 0) {
+        n_int.push(0);
+    }
+    n_int.extend_from_slice(n);
+    let mut rsa_pk = Vec::new();
+    der_tlv(0x02, &n_int, &mut rsa_pk);
+    der_tlv(0x02, &RSA_EXPONENT, &mut rsa_pk);
+    let mut seq = Vec::new();
+    der_tlv(0x30, &rsa_pk, &mut seq);
+    let mut bits = alloc::vec![0u8];
+    bits.extend_from_slice(&seq);
+    let mut body = RSA_ALG_ID.to_vec();
+    der_tlv(0x03, &bits, &mut body);
+    let mut out = Vec::new();
+    der_tlv(0x30, &body, &mut out);
+    out
+}
+
+/// The modulus of an RSA key given as DER SubjectPublicKeyInfo, if and only if the bytes are [`rsa_spki`] of that
+/// modulus (so non-minimal lengths, another exponent, absent parameters or trailing bytes are not a key), and the
+/// modulus is odd and between [`RSA_MIN_BITS`] and [`RSA_MAX_BITS`] bits long.
+pub fn rsa_spki_modulus(der: &[u8]) -> Option<&[u8]> {
+    // Find the modulus INTEGER: it follows SEQUENCE{ algid, BIT STRING{ 00, SEQUENCE{ INTEGER n … } } }. Read the
+    // lengths loosely here; the byte-for-byte comparison with the canonical encoding below is the real check.
+    fn skip_header(b: &[u8], at: usize) -> Option<(usize, usize)> {
+        let first = *b.get(at + 1)?;
+        if first < 0x80 {
+            return Some((at + 2, first as usize));
+        }
+        let k = (first & 0x7f) as usize;
+        if k == 0 || k > 2 {
+            return None;
+        }
+        let mut len = 0usize;
+        for i in 0..k {
+            len = (len << 8) | *b.get(at + 2 + i)? as usize;
+        }
+        Some((at + 2 + k, len))
+    }
+    let (body, _) = skip_header(der, 0)?;
+    let bit = body + RSA_ALG_ID.len();
+    let (bits, _) = skip_header(der, bit)?;
+    let (seq, _) = skip_header(der, bits + 1)?;
+    if der.get(seq) != Some(&0x02) {
+        return None;
+    }
+    let (n_at, n_len) = skip_header(der, seq)?;
+    let mut n = der.get(n_at..n_at.checked_add(n_len)?)?;
+    if n.first() == Some(&0) {
+        n = &n[1..];
+    }
+    if n.is_empty() || n[0] == 0 || n.len() > RSA_MAX_BYTES || n[n.len() - 1] & 1 == 0 {
+        return None;
+    }
+    let bits = n.len() * 8 - n[0].leading_zeros() as usize;
+    if !(RSA_MIN_BITS..=RSA_MAX_BITS).contains(&bits) {
+        return None;
+    }
+    (rsa_spki(n) == der).then_some(n)
+}
+
+/// RFC 7638 thumbprint of an RSA key: base64url(SHA-256(`{"e":"AQAB","kty":"RSA","n":"…"}`)), `n` the modulus
+/// big-endian with no leading zero, the member names RFC 7518 registers.
+pub fn jwk_thumbprint_rsa(n: &[u8]) -> String {
+    #[derive(Serialize)]
+    struct Jwk<'a> {
+        e: String,
+        kty: &'a str,
+        n: String,
+    }
+    use sha2::{Digest, Sha256};
+    let j = Jwk {
+        e: b64::encode(&RSA_EXPONENT),
+        kty: "RSA",
+        n: b64::encode(n),
+    };
+    let s = canon::canonicalize(&j).unwrap_or_default();
+    b64::encode(&Sha256::digest(s.as_bytes()))
+}
+
+/// RS256 or PS256 verification of `sig` over `msg` by the RSA key with modulus `n` and exponent 65537. The signature
+/// is exactly as long as the modulus (RFC 8017 §8.2.2, §8.1.2 step 1). PS256 is RSASSA-PSS with SHA-256, MGF1 with
+/// SHA-256 and a salt of exactly 32 bytes (RFC 7518 §3.5): any other salt length is refused.
+pub fn rsa_verify(n: &[u8], pss: bool, msg: &[u8], sig: &[u8]) -> bool {
+    use rsa::traits::SignatureScheme as _;
+    use sha2::{Digest, Sha256};
+    if sig.len() != n.len() || n.is_empty() {
+        return false;
+    }
+    let bits = (n.len() * 8) as u32;
+    let (Ok(nn), Ok(ee)) = (
+        rsa::BoxedUint::from_be_slice(n, bits),
+        rsa::BoxedUint::from_be_slice(&RSA_EXPONENT, 32),
+    ) else {
+        return false;
+    };
+    let Ok(key) = rsa::PublicKey::new_with_size_limits(nn, ee, RSA_MIN_BITS..=RSA_MAX_BITS) else {
+        return false;
+    };
+    let hashed = Sha256::digest(msg);
+    if pss {
+        rsa::pss::Pss::<rsa::sha2::Sha256>::new_with_salt(32)
+            .verify(&key, &hashed, sig)
+            .is_ok()
+    } else {
+        rsa::pkcs1v15::Pkcs1v15Sign {
+            hash_len: Some(32),
+            prefix: SHA256_DIGEST_INFO.to_vec().into_boxed_slice(),
+        }
+        .verify(&key, &hashed, sig)
+        .is_ok()
     }
 }
 
@@ -193,8 +404,10 @@ impl LinkClaims {
         if again.as_bytes() != bytes {
             return Err(Reason::SchemaViolation);
         }
+        let rsa = c.subject.alg == SUBJECT_ALG_RS256 || c.subject.alg == SUBJECT_ALG_PS256;
         if c.v != LINK_V
-            || !(c.subject.alg == SUBJECT_ALG_ED25519
+            || !(rsa
+                || c.subject.alg == SUBJECT_ALG_ED25519
                 || c.subject.alg == SUBJECT_ALG_ES256K
                 || c.subject.alg == SUBJECT_ALG_ES256)
         {
@@ -210,7 +423,17 @@ impl LinkClaims {
             return Err(Reason::SchemaViolation);
         }
         b64::decode_array::<32>(&c.subject.thumbprint).map_err(|_| Reason::SchemaViolation)?;
-        b64::decode_array::<64>(&c.pop).map_err(|_| Reason::SchemaViolation)?;
+        // The consent: 64 bytes for Ed25519 and the ECDSA algorithms; for RSA as long as a 2048- to 4096-bit modulus
+        // (its exact length is checked against the key in step 5).
+        let pop = b64::decode(&c.pop).map_err(|_| Reason::SchemaViolation)?;
+        let pop_ok = if rsa {
+            (RSA_MIN_BITS / 8..=RSA_MAX_BYTES).contains(&pop.len())
+        } else {
+            pop.len() == 64
+        };
+        if !pop_ok {
+            return Err(Reason::SchemaViolation);
+        }
         b64::decode_array::<32>(&c.log.leaf).map_err(|_| Reason::SchemaViolation)?;
         if c.scope.len() > MAX_LINK_SCOPE || c.scope.iter().any(|s| s.is_empty() || s.len() > 128) {
             return Err(Reason::SchemaViolation);
@@ -479,7 +702,7 @@ pub fn verify_link(
     // 5. the key the caller verified is the linked key — same algorithm, same thumbprint — it was used as the link
     //    says (a request's key for a `jwk` link; a token's issuer key, under this issuer name, for an `issuer`
     //    link), and that key consented to exactly that
-    if chk.presented_key.alg() != c.subject.alg
+    if !chk.presented_key.fits(&c.subject.alg)
         || chk.presented_key.thumbprint().as_deref() != Some(c.subject.thumbprint.as_str())
     {
         return Err(Reason::SigInvalid);
@@ -495,8 +718,8 @@ pub fn verify_link(
         ),
         _ => return Err(Reason::SigInvalid),
     };
-    let pop: [u8; 64] = b64::decode_array(&c.pop).map_err(|_| Reason::SchemaViolation)?;
-    if !chk.presented_key.verify(&msg, &pop) {
+    let pop = b64::decode(&c.pop).map_err(|_| Reason::SchemaViolation)?;
+    if !chk.presented_key.verify(&c.subject.alg, &msg, &pop) {
         return Err(Reason::SigInvalid);
     }
 

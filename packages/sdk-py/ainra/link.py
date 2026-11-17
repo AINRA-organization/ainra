@@ -25,8 +25,9 @@ from . import reasons as R
 from ._b64 import decode as b64d
 from ._b64 import encode as b64e
 from ._canon import CanonError, canon_bytes
-from ._crypto import (ED25519_SIG_LEN, MLDSA65_SIG_LEN, ed25519_verify, es256_verify, es256k_verify, mldsa65_verify,
-                      p256_point, secp256k1_point, sha256)
+from ._crypto import (ED25519_SIG_LEN, MLDSA65_SIG_LEN, RSA_EXPONENT, RSA_MAX_BITS, RSA_MIN_BITS, ed25519_verify,
+                      es256_verify, es256k_verify, mldsa65_verify, p256_point, rsa_spki_modulus, rsa_verify,
+                      secp256k1_point, sha256)
 from ._merkle import leaf_hash, root_from_inclusion
 from .verify import (FRESHNESS, MAX_CAPABILITIES, MAX_STATUS_BITS, _decode_proof, _verify_delegate_checkpoint,
                      pinned_head_holds)
@@ -127,14 +128,18 @@ def _parse_checked(raw: bytes) -> dict:
             raise _Reject(R.SCHEMA_VIOLATION)
     except CanonError:
         raise _Reject(R.SCHEMA_VIOLATION) from None
-    if o["v"] != LINK_V or subject["alg"] not in ("Ed25519", "ES256K", "ES256"):
+    rsa = subject["alg"] in ("RS256", "PS256")
+    if o["v"] != LINK_V or not (rsa or subject["alg"] in ("Ed25519", "ES256K", "ES256")):
         raise _Reject(R.SCHEMA_VIOLATION)
     # A `jwk` link names no issuer; an `issuer` link names exactly one, well-formed (D-110).
     if not ((subject["kind"] == "jwk" and "iss" not in subject)
             or (subject["kind"] == "issuer" and issuer_name_ok(iss))):
         raise _Reject(R.SCHEMA_VIOLATION)
     tp, pop, leaf = b64d(subject["thumbprint"]), b64d(o["pop"]), b64d(log["leaf"])
-    if tp is None or len(tp) != 32 or pop is None or len(pop) != 64 or leaf is None or len(leaf) != 32:
+    # The consent: 64 bytes for Ed25519 and the ECDSA algorithms; for RSA as long as a 2048- to 4096-bit modulus (its
+    # exact length is checked against the key at the consent step, D-112).
+    pop_ok = pop is not None and ((RSA_MIN_BITS // 8 <= len(pop) <= RSA_MAX_BITS // 8) if rsa else len(pop) == 64)
+    if tp is None or len(tp) != 32 or not pop_ok or leaf is None or len(leaf) != 32:
         raise _Reject(R.SCHEMA_VIOLATION)
     if len(o["scope"]) > MAX_CAPABILITIES or any(not s or len(s.encode("utf-8")) > 128 for s in o["scope"]):
         raise _Reject(R.SCHEMA_VIOLATION)
@@ -171,16 +176,27 @@ def jwk_thumbprint_es256(pk: bytes) -> str | None:
     return b64e(sha256(canon_bytes({"crv": "P-256", "kty": "EC", "x": b64e(p[0]), "y": b64e(p[1])})))
 
 
+def jwk_thumbprint_rsa(pk: bytes) -> str | None:
+    """RFC 7638 thumbprint of an RSA key given as its canonical DER SubjectPublicKeyInfo (D-112):
+    base64url(SHA-256(``{"e":"AQAB","kty":"RSA","n":"…"}``)). None for anything that is not such a key."""
+    n = rsa_spki_modulus(pk)
+    if n is None:
+        return None
+    return b64e(sha256(canon_bytes({"e": b64e(RSA_EXPONENT), "kty": "RSA", "n": b64e(n)})))
+
+
 def presented_key_thumbprint(pk: bytes) -> str | None:
     """The RFC 7638 thumbprint of a key a gate has verified, by length: 32 bytes Ed25519, 33 a compressed secp256k1
-    point (ES256K, D-082), 65 an uncompressed P-256 point (ES256, D-108). None for anything else — a gate refuses
-    that key (``sig_invalid``)."""
+    point (ES256K, D-082), 65 an uncompressed P-256 point (ES256, D-108), anything longer an RSA key as its canonical
+    DER SubjectPublicKeyInfo (D-112). None for anything else — a gate refuses that key (``sig_invalid``)."""
     if len(pk) == 32:
         return jwk_thumbprint_ed25519(pk)
     if len(pk) == 33:
         return jwk_thumbprint_es256k(pk)
     if len(pk) == 65:
         return jwk_thumbprint_es256(pk)
+    if len(pk) > 65:
+        return jwk_thumbprint_rsa(pk)
     return None
 
 
@@ -194,6 +210,8 @@ def presented_key_alg(pk: bytes) -> str | None:
         return "ES256K"
     if len(pk) == 65 and p256_point(pk) is not None:
         return "ES256"
+    if len(pk) > 65 and rsa_spki_modulus(pk) is not None:
+        return "RSA"
     return None
 
 
@@ -311,7 +329,8 @@ def _verify(anchors: dict, revoked_delegates: list, link: dict, presented_key: b
     # — same algorithm and thumbprint (by length: 32 bytes Ed25519, 33 a compressed secp256k1 point, D-082; 65 an
     # uncompressed P-256 point, D-108)
     tp, alg = c["subject"]["thumbprint"], presented_key_alg(presented_key)
-    if alg is None or alg != c["subject"]["alg"] or presented_key_thumbprint(presented_key) != tp:
+    fits = alg == c["subject"]["alg"] or (alg == "RSA" and c["subject"]["alg"] in ("RS256", "PS256"))
+    if alg is None or not fits or presented_key_thumbprint(presented_key) != tp:
         raise _Reject(R.SIG_INVALID)
     # …and it was used as the link says (D-110): a request's key for a `jwk` link; a token's issuer key, under
     # this issuer name, for an `issuer` link. The consent is over exactly that.
@@ -322,8 +341,12 @@ def _verify(anchors: dict, revoked_delegates: list, link: dict, presented_key: b
         consent = issuer_pop_signing_bytes(c["registrar"], c["passport"], tp, named, c["nbf"])
     else:
         raise _Reject(R.SIG_INVALID)
-    verify = {"Ed25519": ed25519_verify, "ES256K": es256k_verify, "ES256": es256_verify}[alg]
-    if not verify(presented_key, c["_pop"], consent):
+    if alg == "RSA":
+        ok = rsa_verify(rsa_spki_modulus(presented_key) or b"", c["subject"]["alg"] == "PS256", consent, c["_pop"])
+    else:
+        ok = {"Ed25519": ed25519_verify, "ES256K": es256k_verify, "ES256": es256_verify}[alg](
+            presented_key, c["_pop"], consent)
+    if not ok:
         raise _Reject(R.SIG_INVALID)
     # scope
     if capability is not None and c["scope"] and capability not in c["scope"]:

@@ -10,6 +10,17 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — RSA keys for links: RS256 and PS256 (D-112, PLAN-M55 step 3)
+
+- The large identity providers sign their tokens with RSA. A link, and so an issuer link, can now be for an RSA key
+  of 2048 to 4096 bits with exponent 65537, as `RS256` or `PS256` (salt of exactly 32 bytes). The key is presented as
+  its DER SubjectPublicKeyInfo in its one canonical encoding; nothing changes in how a gate passes a key.
+- Rust core (RustCrypto `rsa` 0.10, verify only), Python (`cryptography`), and the TypeScript SDK (a small
+  verify-only implementation; D-112 records why it is the one exception to "audited libraries only"). The registrar,
+  CLI, MCP tool, gates and hosted verifier take RSA keys.
+- `vectors/v1-link` 77 → 92; every earlier vector is byte-identical. The issuer-link kit gains an RS256 issuer.
+- The edge engine's size ceiling moves from 832 to 896 KiB (it is 862 KiB).
+
 ### Security — a distrusted registrar can no longer slip work under its own cutoff (D-111, PLAN-M53 R1)
 
 - Found by the independent review of 7 November 2026 (D-104) and published there: a registrar the root distrusts

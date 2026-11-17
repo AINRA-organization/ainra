@@ -19,7 +19,10 @@ OUT=packages/edge/wasm
 # 788 KiB (270 KiB compressed). The same choice as before, made the same way: a gate that answers ES256 links
 # like the other two, or one that does not. The curves share the `ecdsa` and `elliptic-curve` code; what is added is
 # P-256's own field arithmetic.
-CEILING_KB=${CEILING_KB:-832}
+# 832 KiB until 2026-11-17. Raised that day for D-112: RSA (rsa 0.10, RS256 and PS256 links, verify only) took the
+# engine to 862 KiB (294 KiB compressed). The same choice, made the same way: the large identity providers sign with
+# RSA, and a gate that cannot answer their keys cannot answer for their agents. 896 leaves the next primitive room.
+CEILING_KB=${CEILING_KB:-896}
 command -v wasm-bindgen >/dev/null 2>&1 || { echo "wasm-bindgen not found — see tools/build-wasm.sh" >&2; exit 1; }
 cargo build -p ainra-wasm --features edge --target wasm32-unknown-unknown --profile wasm-release \
   --target-dir target/wasm-edge

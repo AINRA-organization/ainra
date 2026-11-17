@@ -16,6 +16,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+mod rsa_sign;
+mod rsa_test_keys;
+
 // L5: every bytes → core-types conversion moved to ainra-adapter. This binary keeps only binary concerns
 // (argv, file I/O, printing) and calls the ONE decode path for everything else.
 use ainra_adapter::*;
@@ -6402,6 +6405,172 @@ fn link_vectors() -> Vec<Value> {
         }
     }
 
+    // ── D-112: RSA keys, as RS256 and PS256 — how the large identity providers sign ─────────────────────────────
+    // Fixed test keys (rsa_test_keys.rs), signed by hand (rsa_sign.rs) with a salt derived from the message, so the
+    // corpus regenerates byte for byte. The presented key is the DER SubjectPublicKeyInfo in its one canonical form,
+    // which the generator first checks is exactly what openssl writes. Every earlier vector keeps its bytes.
+    {
+        use rsa_sign::TestRsa;
+        let mut prng = ChaCha20Rng::seed_from_u64(0x5253_4100_0000_0112); // "RSA" · D-112 — a public TEST seed
+        let ka = TestRsa::from_hex(rsa_test_keys::A);
+        let kb = TestRsa::from_hex(rsa_test_keys::B);
+        let kc = TestRsa::from_hex(rsa_test_keys::C);
+        let ko = TestRsa::from_hex(rsa_test_keys::OTHER);
+        let ks = TestRsa::from_hex(rsa_test_keys::SMALL);
+        let kbig = TestRsa::from_hex(rsa_test_keys::BIG);
+        let spki = |k: &TestRsa| ainra_core::link::rsa_spki(&k.n);
+        assert_eq!(
+            b64::encode(&spki(&ka)),
+            rsa_test_keys::A_SPKI_OPENSSL,
+            "the canonical SubjectPublicKeyInfo is what openssl writes"
+        );
+        let tp = |k: &TestRsa| ainra_core::link::jwk_thumbprint_rsa(&k.n);
+        let consent = |t: &str| {
+            ainra_core::link::pop_signing_bytes(&base.registrar, &base.passport, t, base.nbf)
+        };
+        let mut rsa_link = |alg: &str, t: &str, pop: &[u8]| {
+            let (claims, sig, logged) = link_record_alg(&base, alg, t, pop, &w.issuer);
+            with_status(
+                assemble(&claims, &sig, &logged, &mut prng).0,
+                clear(now - 10),
+            )
+        };
+        let a_rs = rsa_link("RS256", &tp(&ka), &ka.sign_rs256(&consent(&tp(&ka))));
+        let b_ps = rsa_link("PS256", &tp(&kb), &kb.sign_ps256(&consent(&tp(&kb)), 32));
+        let c_rs = rsa_link("RS256", &tp(&kc), &kc.sign_rs256(&consent(&tp(&kc))));
+        let b_ps_salt20 = rsa_link("PS256", &tp(&kb), &kb.sign_ps256(&consent(&tp(&kb)), 20));
+        let a_ps_by_rs = rsa_link("PS256", &tp(&ka), &ka.sign_rs256(&consent(&tp(&ka))));
+        let b_ps_short = rsa_link(
+            "PS256",
+            &tp(&kb),
+            &kb.sign_ps256(&consent(&tp(&kb)), 32)[..256],
+        );
+        let s_rs = rsa_link("RS256", &tp(&ks), &[1u8; 256]);
+        let big_rs = rsa_link("RS256", &tp(&kbig), &kbig.sign_rs256(&consent(&tp(&kbig))));
+        let issuer_link = {
+            const ISS: &str = "https://issuer.example";
+            let pop = ko.sign_rs256(&ainra_core::link::issuer_pop_signing_bytes(
+                &base.registrar,
+                &base.passport,
+                &tp(&ko),
+                ISS,
+                base.nbf,
+            ));
+            let (claims, sig, logged) = link_record_subject(
+                &base,
+                json!({ "kind": "issuer", "alg": "RS256", "thumbprint": tp(&ko), "iss": ISS }),
+                &pop,
+                &w.issuer,
+            );
+            with_status(
+                assemble(&claims, &sig, &logged, &mut prng).0,
+                clear(now - 10),
+            )
+        };
+        let key_of = |k: &TestRsa| b64::encode(&spki(k));
+        let mut bare_pkcs1 = spki(&ka);
+        bare_pkcs1.drain(..24); // SEQUENCE + AlgorithmIdentifier + BIT STRING header + unused-bits octet
+        assert_eq!(bare_pkcs1[0], 0x30, "the bare RSAPublicKey");
+        let mut trailing = spki(&ka);
+        trailing.push(0);
+        add!("l78-rs256", "an RSA key (2048 bits) linked as RS256 with its own consent, presented as its DER SubjectPublicKeyInfo", a_rs.clone(), key_of(&ka), now, None, "valid");
+        add!(
+            "l79-ps256",
+            "an RSA key (3072 bits) linked as PS256: RSASSA-PSS, MGF1 with SHA-256, a 32-byte salt",
+            b_ps.clone(),
+            key_of(&kb),
+            now,
+            None,
+            "valid"
+        );
+        add!(
+            "l80-rs256-4096-bits",
+            "the largest RSA key Link accepts: 4096 bits",
+            c_rs,
+            key_of(&kc),
+            now,
+            None,
+            "valid"
+        );
+        add!("l81-ps256-salt-of-20-bytes", "a PS256 consent with a 20-byte salt: valid PSS, but RFC 7518 fixes the salt at the hash length", b_ps_salt20, key_of(&kb), now, None, "sig_invalid");
+        add!(
+            "l82-ps256-link-rs256-consent",
+            "the link says PS256 and the key signed its consent as RS256",
+            a_ps_by_rs,
+            key_of(&ka),
+            now,
+            None,
+            "sig_invalid"
+        );
+        add!("l83-ps256-consent-shorter-than-the-modulus", "a 3072-bit key's consent cut to 256 bytes: an RSA signature is exactly as long as the modulus", b_ps_short, key_of(&kb), now, None, "sig_invalid");
+        add!(
+            "l84-rsa-key-1024-bits",
+            "a 1024-bit RSA key: below 2048 bits it is not a key Link accepts",
+            s_rs,
+            key_of(&ks),
+            now,
+            None,
+            "schema_violation"
+        );
+        add!(
+            "l85-rsa-key-4104-bits",
+            "a 4104-bit RSA key: above 4096 bits it is not a key Link accepts",
+            big_rs,
+            key_of(&kbig),
+            now,
+            None,
+            "schema_violation"
+        );
+        add!("l86-rsa-key-exponent-3", "an RSA key with public exponent 3, exactly as openssl writes it: Link takes 65537 only", a_rs.clone(), rsa_test_keys::E3_SPKI_OPENSSL.to_string(), now, None, "schema_violation");
+        add!(
+            "l87-rsa-key-bare-pkcs1",
+            "key A as a bare PKCS #1 RSAPublicKey, without its SubjectPublicKeyInfo",
+            a_rs.clone(),
+            b64::encode(&bare_pkcs1),
+            now,
+            None,
+            "schema_violation"
+        );
+        add!(
+            "l88-rsa-key-trailing-byte",
+            "key A's SubjectPublicKeyInfo with one byte after it: not the canonical encoding",
+            a_rs.clone(),
+            b64::encode(&trailing),
+            now,
+            None,
+            "schema_violation"
+        );
+        add!(
+            "l89-rs256-link-ed25519-key",
+            "an RS256 link, and the gate presents an Ed25519 key",
+            a_rs,
+            key(&agent),
+            now,
+            None,
+            "sig_invalid"
+        );
+        add!(
+            "l90-ed25519-link-rsa-key",
+            "an Ed25519 link, and the gate presents an RSA key",
+            with_status(good.clone(), clear(now - 10)),
+            key_of(&ka),
+            now,
+            None,
+            "sig_invalid"
+        );
+        add!(
+            "l91-ps256-key-presented-as-another-rsa-key",
+            "a PS256 link for key B, and the gate presents RSA key A",
+            b_ps,
+            key_of(&ka),
+            now,
+            None,
+            "sig_invalid"
+        );
+        add!("l92-rs256-issuer", "an issuer link for an RSA key that signs tokens as RS256, as the large identity providers do", issuer_link, key_of(&ko), now, None, "valid");
+        token_issuer.insert("l92-rs256-issuer", String::from("https://issuer.example"));
+    }
+
     cases.sort_by(|a, b| a.name.cmp(b.name));
     let mut out = Vec::new();
     for c in cases {
@@ -6456,7 +6625,7 @@ fn emit_link(dir: &str) {
         "count": vectors.len(),
         "accept": accept,
         "reject": vectors.len() - accept,
-        "note": "CC0 AINRA Link conformance vectors (D-078, D-082, D-108, D-110): a dual-root-signed directory, one link as a gate receives it (record, registrar signature, inclusion proof, checkpoint, signed status publication), the key the gate already verified a signature with — 32 bytes is Ed25519, 33 a compressed secp256k1 point (ES256K, RFC 8812; l37-l43), 65 an uncompressed P-256 point (ES256, RFC 7518; l44-l53) — and the gate's own clock, freshness class and capability. From l54 a vector may carry `issuer` (D-110): the gate verified a TOKEN with the key, and this is the issuer name in that token; with no `issuer` member the key signed the request itself. A valid answer names the registrar, operator, passport and scope, and for an issuer link the issuer. Real signing throughout; expect computed by ainra-adapter::link_vector_result after accredit, each checked against the case it exists to test. Regenerate with `make vectors`.",
+        "note": "CC0 AINRA Link conformance vectors (D-078, D-082, D-108, D-110, D-111, D-112): a dual-root-signed directory, one link as a gate receives it (record, registrar signature, inclusion proof, checkpoint, signed status publication), the key the gate already verified a signature with — 32 bytes is Ed25519, 33 a compressed secp256k1 point (ES256K, RFC 8812; l37-l43), 65 an uncompressed P-256 point (ES256, RFC 7518; l44-l53), and anything longer the canonical DER SubjectPublicKeyInfo of a 2048- to 4096-bit RSA key with exponent 65537 (RS256 or PS256, RFC 7518; l78-l92) — and the gate's own clock, freshness class and capability. From l54 a vector may carry `issuer` (D-110): the gate verified a TOKEN with the key, and this is the issuer name in that token; with no `issuer` member the key signed the request itself. A valid answer names the registrar, operator, passport and scope, and for an issuer link the issuer. Real signing throughout; expect computed by ainra-adapter::link_vector_result after accredit, each checked against the case it exists to test. Regenerate with `make vectors`.",
     });
     std::fs::write(
         Path::new(dir).join("manifest.json"),

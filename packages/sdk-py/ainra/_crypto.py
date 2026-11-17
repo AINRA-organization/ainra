@@ -29,7 +29,8 @@ import hashlib
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519, mldsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, mldsa, padding
+from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 # Exact FIPS / RFC 8032 sizes — asserted as a conformance gate, matching the
@@ -106,6 +107,84 @@ def p256_point(pub: bytes) -> tuple[bytes, bytes] | None:
     except Exception:
         return None
     return n.x.to_bytes(32, "big"), n.y.to_bytes(32, "big")
+
+
+# ── D-112: RSA keys for Link (RS256, PS256) ─────────────────────────────────────────────────────────────────────
+RSA_MIN_BITS, RSA_MAX_BITS = 2048, 4096
+RSA_EXPONENT = b"\x01\x00\x01"
+_RSA_ALG_ID = bytes.fromhex("300d06092a864886f70d0101010500")
+
+
+def _der_len(n: int) -> bytes:
+    if n < 0x80:
+        return bytes([n])
+    if n < 0x100:
+        return bytes([0x81, n])
+    return bytes([0x82, n >> 8, n & 0xFF])
+
+
+def _tlv(tag: int, content: bytes) -> bytes:
+    return bytes([tag]) + _der_len(len(content)) + content
+
+
+def rsa_spki(n: bytes) -> bytes:
+    """The one canonical DER SubjectPublicKeyInfo of an RSA key with modulus ``n`` (big-endian, no leading zero) and
+    exponent 65537: byte for byte what ``ainra_core::link::rsa_spki``, the TypeScript SDK and openssl produce."""
+    n_int = (b"\x00" + n) if n and n[0] & 0x80 else n
+    rsa_pk = _tlv(0x30, _tlv(0x02, n_int) + _tlv(0x02, RSA_EXPONENT))
+    return _tlv(0x30, _RSA_ALG_ID + _tlv(0x03, b"\x00" + rsa_pk))
+
+
+def rsa_spki_modulus(der: bytes) -> bytes | None:
+    """The modulus of an RSA key given as DER SubjectPublicKeyInfo, if and only if the bytes are ``rsa_spki`` of that
+    modulus and the modulus is odd and 2048 to 4096 bits long; None otherwise. Mirrors ``rsa_spki_modulus`` in Rust."""
+    def header(at: int):
+        if at + 1 >= len(der):
+            return None
+        first = der[at + 1]
+        if first < 0x80:
+            return at + 2, first
+        k = first & 0x7F
+        if k == 0 or k > 2 or at + 2 + k > len(der):
+            return None
+        return at + 2 + k, int.from_bytes(der[at + 2:at + 2 + k], "big")
+    body = header(0)
+    if body is None:
+        return None
+    bits = header(body[0] + len(_RSA_ALG_ID))
+    if bits is None:
+        return None
+    seq = header(bits[0] + 1)
+    if seq is None or seq[0] >= len(der) or der[seq[0]] != 0x02:
+        return None
+    nh = header(seq[0])
+    if nh is None or nh[0] + nh[1] > len(der):
+        return None
+    n = der[nh[0]:nh[0] + nh[1]]
+    if n[:1] == b"\x00":
+        n = n[1:]
+    if not n or n[0] == 0 or len(n) > RSA_MAX_BITS // 8 or n[-1] & 1 == 0:
+        return None
+    if not RSA_MIN_BITS <= int.from_bytes(n, "big").bit_length() <= RSA_MAX_BITS:
+        return None
+    return bytes(n) if rsa_spki(n) == der else None
+
+
+def rsa_verify(n: bytes, pss: bool, msg: bytes, sig: bytes) -> bool:
+    """RS256 (``pss`` False: RSASSA-PKCS1-v1_5, SHA-256) or PS256 (``pss`` True: RSASSA-PSS, SHA-256, MGF1-SHA-256, a
+    salt of exactly 32 bytes) by the RSA key with modulus ``n`` and exponent 65537. The signature is exactly as long as
+    the modulus. Fail closed on any anomaly."""
+    if not n or len(sig) != len(n):
+        return False
+    try:
+        key = _rsa.RSAPublicNumbers(65537, int.from_bytes(n, "big")).public_key()
+        if pss:
+            key.verify(sig, msg, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32), hashes.SHA256())
+        else:
+            key.verify(sig, msg, padding.PKCS1v15(), hashes.SHA256())
+        return True
+    except (InvalidSignature, ValueError):
+        return False
 
 
 def es256_verify(pub: bytes, sig: bytes, msg: bytes) -> bool:

@@ -23,4 +23,8 @@ base64ct = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 k256 = { workspace = true }
 p256 = { workspace = true }
+# D-112: the RSA SIGNING side of the RS256/PS256 link vectors (the verifiers use the rsa crate and their own
+# libraries). Plain modular exponentiation with fixed test keys and a salt derived from the message, so every
+# signature, PSS included, is reproducible byte for byte. Generator only; never on a verify path.
+num-bigint = { version = "0.4", default-features = false, features = ["std"] }
 rand_chacha = { version = "0.3", default-features = false }

@@ -3621,3 +3621,66 @@ stayed open for nine days.
 cutoff or with a cutoff and no pin.
 
 *Status:* ACCEPTED 2026-11-16, on the operator's instruction to continue with the plans. Plan: PLAN-M53 R1.
+
+## D-112 — Link accepts RSA keys, as RS256 and PS256 (M55 step 3)
+
+*Problem:* the large identity providers sign their tokens with RSA. Issuer links (D-110) took Ed25519, secp256k1 and
+P-256 keys only, so the systems most agents' tokens come from could not be linked. D-108 left two questions to this
+step: which library, and how a gate tells an RSA key from the others, since RSA keys have no fixed length.
+
+*Decision:*
+
+- **`subject.alg` may be `RS256` (RSASSA-PKCS1-v1_5 with SHA-256) or `PS256` (RSASSA-PSS with SHA-256, MGF1 with
+  SHA-256, a salt of exactly 32 bytes), as JOSE registers them (RFC 7518).** One RSA key is linked under one of the
+  two; its thumbprint is the RFC 7638 one over `{"e","kty":"RSA","n"}`.
+- **Keys of 2048 to 4096 bits, public exponent 65537 only.** Below 2048 bits is weak; above 4096 bounds a gate's
+  work. One exponent means one encoding per key, and every identity system checked publishes 65537.
+- **The presented key is the DER SubjectPublicKeyInfo**, the form a certificate, `openssl rsa -pubout -outform DER`
+  and WebCrypto's `spki` export carry, **in its one canonical encoding.** Each implementation builds the canonical
+  bytes from the modulus and compares them with what it was given, so non-minimal lengths, absent parameters, a bare
+  PKCS #1 key, another exponent or trailing bytes are not a key. The generator checks that the canonical form is
+  byte for byte what openssl writes.
+- **No change to how a gate passes a key.** 32, 33 and 65 bytes keep their meanings and anything longer must be an
+  RSA key; the shortest one accepted is 294 bytes. The stated-algorithm parameter D-108 anticipated is not needed.
+- **The consent is as long as the modulus**, 256 to 512 bytes at the schema step, exactly the modulus length at the
+  consent step.
+
+*Libraries:*
+- **Rust:** RustCrypto `rsa` 0.10, verify only, default features off (`pkcs1v15` on). Its one advisory
+  (RUSTSEC-2023-0071, the Marvin timing attack) concerns private-key operations and is fixed in 0.10; `cargo audit`
+  is clean. Its digests are the sha2 0.11 line already in the tree.
+- **Python:** `cryptography` (OpenSSL), already a dependency.
+- **TypeScript: a small verify-only implementation, written here.** This is the SDK's one exception to "audited
+  libraries only". None of its audited libraries does RSA, and WebCrypto's RSA is asynchronous, while every check in
+  the SDK is synchronous and runs unchanged in a browser. Making it asynchronous would change every caller of
+  `verifyLink`. The code verifies only: no private key, nothing secret to leak by timing. RS256 is checked by building
+  the one valid encoding and comparing bytes; PS256 follows RFC 8017 §9.1.2 with the salt fixed. It is held to the
+  corpus beside the two library implementations, and the live drill checks it against WebCrypto's own signatures.
+- **Generator:** RS256 and PS256 signing by hand with `num-bigint` and fixed test keys (`rsa_test_keys.rs`, public
+  test material like every seeded key there), with the PSS salt derived from the message, so the corpus regenerates
+  byte for byte.
+
+*Held to:*
+- `vectors/v1-link` l78–l92 on their own seed; the 77 earlier vectors are byte-identical. RS256 at 2048 bits, PS256
+  at 3072, RS256 at 4096; an RS256 issuer link; a 20-byte PSS salt; a PS256 link with an RS256 consent; a consent
+  shorter than the modulus; a 1024-bit key; a 4104-bit key; exponent 3 as openssl writes it; a bare PKCS #1 key; one
+  byte after the key; an RSA key presented for an Ed25519 link and the reverse; another RSA key.
+- `make diff` (92 of 92, three implementations), `make link-parity` (92 of 92, three gates).
+- Removed once on 17 November 2026: the fixed PSS salt (l81 read valid in each of the three implementations), the
+  canonical-encoding comparison (l86, l88), the minimum size (l84). The check that an RSA key fits only an RS256 or
+  PS256 link is also made by the thumbprint, which names the key type, so no vector can isolate it; it stays as
+  defence in depth.
+- `make issuer-link-e2e` step 9: an RS256 issuer whose key and tokens come from the platform's WebCrypto is linked by
+  the registrar, its token attributed, then refused after revocation.
+
+*Cost:* the edge engine grew to 862 KiB (294 KiB compressed); its ceiling moved from 832 to 896 KiB, with the reason
+where it is set. The browser verifier did not grow.
+
+*Limits:* only exponent 65537 and SHA-256. A system that signs with PS384, RS512 or another hash cannot be linked
+yet; PS384 is on the list from the 15 November intelligence brief. Everything still runs under a TEST root.
+
+*Not changed:* the Standard, the passport, every earlier vector and verdict, the link record's fields, how a gate
+passes a key.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's 15 November answer ("RSA next"). Plan: PLAN-M55 step 3.
+

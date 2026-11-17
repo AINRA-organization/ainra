@@ -35,9 +35,12 @@ same token after the issuer's link is revoked is refused, and a token from an un
 "valid". The issuer in that drill has no AINRA code in it, but the drill starts it: no outside system has linked a
 key yet.
 
-**3. RSA issuer keys.** The large identity providers sign with RSA (RS256, PS256). Needs a library choice made
-against the advisory database on the day, and an answer to key size (2048 bits and up). WITNESS: link vectors for
-RSA, agreed by the three implementations and the three gates; a 1024-bit key is refused by name.
+**3. RSA issuer keys** (D-112). **Done 17 November 2026.** The large identity providers sign with RSA (RS256,
+PS256). RustCrypto `rsa` 0.10 (the line that fixed the one advisory, which concerns private-key operations), 2048 to
+4096 bits, exponent 65537 only, the key as its one canonical DER SubjectPublicKeyInfo. WITNESS: `vectors/v1-link`
+l78 to l92, agreed by the three implementations and the three gates; a 1024-bit key, a 4104-bit key, exponent 3 and
+a 20-byte PSS salt are each refused; `make issuer-link-e2e` links an RS256 issuer whose key and tokens come from the
+platform's own WebCrypto.
 
 **4. A kit for agents named by a certificate.** Bring the certificate an agent already has; the kit reads its key,
 makes the consent, and shows the agent attributed and then switched off. It reads certificates; it issues none.

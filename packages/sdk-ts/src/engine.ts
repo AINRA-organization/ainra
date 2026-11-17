@@ -9,6 +9,7 @@
 
 import { inflateSync } from "node:zlib";
 import { canonicalize } from "./canon.js";
+import { RSA_EXPONENT, RSA_MIN_BITS, RSA_MAX_BITS, rsaSpkiModulus, rsaVerify } from "./rsa.js";
 import {
   b64uDecode,
   b64uEncode,
@@ -1912,7 +1913,7 @@ export type LinkVerdict = ({ verdict: "valid" } & LinkAttribution) | { verdict: 
 interface LinkClaims {
   registrar: string;
   passport: string;
-  alg: "Ed25519" | "ES256K" | "ES256";
+  alg: "Ed25519" | "ES256K" | "ES256" | "RS256" | "PS256";
   thumbprint: string;
   /** The issuer name of an `issuer` link; undefined on a `jwk` link. */
   iss: string | undefined;
@@ -1974,13 +1975,17 @@ function parseLinkChecked(raw: Uint8Array): LinkClaims {
     throw new Reject("schema_violation");
   }
   if (!eqBytes(new TextEncoder().encode(again), raw)) throw new Reject("schema_violation");
-  if (v !== LINK_V || (alg !== "Ed25519" && alg !== "ES256K" && alg !== "ES256")) throw new Reject("schema_violation");
+  const isRsa = alg === "RS256" || alg === "PS256";
+  if (v !== LINK_V || (!isRsa && alg !== "Ed25519" && alg !== "ES256K" && alg !== "ES256")) throw new Reject("schema_violation");
   // A `jwk` link names no issuer; an `issuer` link names exactly one, well-formed (D-110).
   if (!((kind === "jwk" && iss === undefined) || (kind === "issuer" && iss !== undefined && ISSUER_NAME.test(iss)))) throw new Reject("schema_violation");
   const tp = strictB64u(thumbprint);
   const pop = strictB64u(popB64);
   const leaf = strictB64u(leafB64);
-  if (tp === null || tp.length !== 32 || pop === null || pop.length !== 64 || leaf === null || leaf.length !== 32)
+  // The consent: 64 bytes for Ed25519 and the ECDSA algorithms; for RSA as long as a 2048- to 4096-bit modulus
+  // (its exact length is checked against the key at the consent step, D-112).
+  const popOk = pop !== null && (isRsa ? pop.length >= RSA_MIN_BITS / 8 && pop.length <= RSA_MAX_BITS / 8 : pop.length === 64);
+  if (tp === null || tp.length !== 32 || !popOk || leaf === null || leaf.length !== 32)
     throw new Reject("schema_violation");
   if (scope.length > MAX_CAPABILITIES || scope.some((s) => s.length === 0 || new TextEncoder().encode(s).length > 128))
     throw new Reject("schema_violation");
@@ -2013,13 +2018,28 @@ export function jwkThumbprintEs256(pk: Uint8Array): string | null {
 }
 
 /** Which Link algorithm a presented key belongs to, by length: 32 bytes is Ed25519, 33 a compressed secp256k1 point
- *  (ES256K, D-082), 65 an uncompressed P-256 point (ES256, D-108). `null` for anything else, and for 65 bytes that are
- *  not a point on P-256: no other 65-byte string is a key (an uncompressed secp256k1 point is malformed, vector l42). */
-export function presentedKeyAlg(pk: Uint8Array): "Ed25519" | "ES256K" | "ES256" | null {
+ *  (ES256K, D-082), 65 an uncompressed P-256 point (ES256, D-108), and anything longer an RSA key as its canonical DER
+ *  SubjectPublicKeyInfo, 2048 to 4096 bits, exponent 65537 ("RSA": a link names it RS256 or PS256, D-112). `null` for
+ *  anything else, including 65 bytes that are not a point on P-256 (vector l42) and every other RSA encoding. */
+export function presentedKeyAlg(pk: Uint8Array): "Ed25519" | "ES256K" | "ES256" | "RSA" | null {
   if (pk.length === 32) return "Ed25519";
   if (pk.length === 33) return "ES256K";
   if (pk.length === 65 && p256Affine(pk) !== null) return "ES256";
+  if (pk.length > 65 && rsaSpkiModulus(pk) !== null) return "RSA";
   return null;
+}
+
+/** Whether a link whose `subject.alg` is `alg` can be for a key of family `fam` (from {@link presentedKeyAlg}). */
+function algFits(fam: string, alg: string): boolean {
+  return fam === "RSA" ? alg === "RS256" || alg === "PS256" : fam === alg;
+}
+
+/** RFC 7638 thumbprint of an RSA key given as its canonical DER SubjectPublicKeyInfo (D-112): base64url(SHA-256(
+ *  `{"e":"AQAB","kty":"RSA","n":"…"}`)). `null` for anything that is not such a key. */
+export function jwkThumbprintRsa(pk: Uint8Array): string | null {
+  const n = rsaSpkiModulus(pk);
+  if (!n) return null;
+  return b64uEncode(sha256(new TextEncoder().encode(canonicalize({ e: b64uEncode(RSA_EXPONENT), kty: "RSA", n: b64uEncode(n) }))));
 }
 
 /** The RFC 7638 thumbprint of a key a gate has verified, in the algorithm its length names (see
@@ -2030,7 +2050,8 @@ export function presentedKeyThumbprint(pk: Uint8Array): string | null {
 }
 
 function jwkThumbprintOf(pk: Uint8Array): string | null {
-  return pk.length === 32 ? jwkThumbprintEd25519(pk) : pk.length === 33 ? jwkThumbprintEs256k(pk) : pk.length === 65 ? jwkThumbprintEs256(pk) : null;
+  return pk.length === 32 ? jwkThumbprintEd25519(pk) : pk.length === 33 ? jwkThumbprintEs256k(pk) : pk.length === 65 ? jwkThumbprintEs256(pk)
+    : pk.length > 65 ? jwkThumbprintRsa(pk) : null;
 }
 
 /** RFC 7638 thumbprint of an Ed25519 public key: base64url(SHA-256(`{"crv":"Ed25519","kty":"OKP","x":"…"}`)). */
@@ -2094,7 +2115,7 @@ function verifyLinkInner(
   // — same algorithm (by length: 32 bytes Ed25519, 33 a compressed secp256k1 point, D-082; 65 an uncompressed
   // P-256 point, D-108), same thumbprint
   const presentedAlg = presentedKeyAlg(presentedKey);
-  if (presentedAlg === null || presentedAlg !== c.alg || jwkThumbprintOf(presentedKey) !== c.thumbprint) throw new Reject("sig_invalid");
+  if (presentedAlg === null || !algFits(presentedAlg, c.alg) || jwkThumbprintOf(presentedKey) !== c.thumbprint) throw new Reject("sig_invalid");
   // …and it was used as the link says (D-110): a request's key for a `jwk` link; a token's issuer key, under this
   // issuer name, for an `issuer` link. The consent is over exactly that.
   let consent: Uint8Array;
@@ -2103,7 +2124,8 @@ function verifyLinkInner(
   else throw new Reject("sig_invalid");
   const consented = presentedAlg === "Ed25519" ? ed25519Verify(presentedKey, consent, c.pop)
     : presentedAlg === "ES256K" ? es256kVerify(presentedKey, consent, c.pop)
-    : es256Verify(presentedKey, consent, c.pop);
+    : presentedAlg === "ES256" ? es256Verify(presentedKey, consent, c.pop)
+    : rsaVerify(rsaSpkiModulus(presentedKey) ?? new Uint8Array(0), c.alg === "PS256", consent, c.pop);
   if (!consented) throw new Reject("sig_invalid");
   // scope
   if (capability !== undefined && c.scope.length > 0 && !c.scope.includes(capability)) throw new Reject("ceiling_exceeded");

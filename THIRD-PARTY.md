@@ -49,6 +49,8 @@ The pure verify/issue library — the only code a relying party's verifier links
 | `sha2` | SHA-256 (FIPS 180-4) | MIT OR Apache-2.0 |
 | `k256` | secp256k1 ECDSA verification for ES256K link keys (RFC 8812, D-082) — 0.14, the successor of the 0.13 line NCC Group reviewed in 2023; 0.13 carries RUSTSEC-2026-0387 | Apache-2.0 OR MIT |
 | `p256` | NIST P-256 ECDSA verification for ES256 link keys (RFC 7518, D-108) — 0.14, the same maintainers and `ecdsa` line as `k256`; no advisory names it (checked 14 November 2026) | Apache-2.0 OR MIT |
+| `rsa` | RSA verification for RS256 and PS256 link keys (RFC 7518, D-112) — 0.10, the line that fixed RUSTSEC-2023-0071 (a timing leak in private-key operations; Link only verifies); default features off, `pkcs1v15` on | Apache-2.0 OR MIT |
+| `num-bigint` | the vector generator's RS256 and PS256 signing (test material only; never on a verify path, D-112) | MIT OR Apache-2.0 |
 | `base64ct` | constant-time Base64 | Apache-2.0 OR MIT |
 | `flate2` | DEFLATE (status-list codec) | MIT OR Apache-2.0 |
 | `signature` | signature traits | MIT OR Apache-2.0 |

@@ -36,15 +36,17 @@ pub const LINK_REVOCATION_V: &str = "ainra-link-revocation-1";
 pub struct LinkSpec {
     /// The passport the key acts under (its `sub`), issued by this registrar.
     pub passport: String,
-    /// The key's algorithm: `Ed25519` (the default, so every existing caller is unchanged), `ES256K` (D-082) or
-    /// `ES256` (D-108).
+    /// The key's algorithm: `Ed25519` (the default, so every existing caller is unchanged), `ES256K` (D-082),
+    /// `ES256` (D-108), or `RS256` or `PS256` for an RSA key (D-112).
     #[serde(default = "default_alg")]
     pub alg: String,
     /// The public key, base64url: 32 bytes for Ed25519 (the JWK `x` member), the 33-byte compressed SEC1 point for
-    /// ES256K, the 65-byte uncompressed SEC1 point (`0x04 || x || y`) for ES256.
+    /// ES256K, the 65-byte uncompressed SEC1 point (`0x04 || x || y`) for ES256, the DER SubjectPublicKeyInfo of a
+    /// 2048- to 4096-bit key with exponent 65537 for RS256 and PS256 (in its one canonical encoding).
     pub key: String,
-    /// base64url 64-byte signature by that key, in its own algorithm, over [`pop_signing_bytes`], or over
-    /// [`issuer_pop_signing_bytes`] when `issuer` is given. ES256K and ES256 signatures are `r || s`, low-S.
+    /// base64url signature by that key, in `alg`, over [`pop_signing_bytes`], or over [`issuer_pop_signing_bytes`]
+    /// when `issuer` is given. 64 bytes, ES256K and ES256 as `r || s`, low-S; an RSA signature is as long as its
+    /// modulus, and PS256 uses a 32-byte salt.
     pub pop: String,
     /// Absent: the key signs requests (a `jwk` link). Present: the key signs tokens that name other agents, and this
     /// is the one issuer name it signs as (an `issuer` link, D-110): 1 to 255 bytes of visible ASCII.
@@ -131,17 +133,18 @@ impl RegistrarBox {
         let key = b64::decode(&spec.key)
             .ok()
             .and_then(|b| PresentedKey::from_bytes(&b))
-            .filter(|k| k.alg() == spec.alg)
+            .filter(|k| k.fits(&spec.alg))
             .ok_or_else(|| {
                 IssueError::Malformed(
                     "key must be base64url: a 32-byte Ed25519 key with alg Ed25519, a 33-byte compressed \
-                     secp256k1 point with alg ES256K, or a 65-byte uncompressed P-256 point with alg ES256"
+                     secp256k1 point with alg ES256K, a 65-byte uncompressed P-256 point with alg ES256, or the \
+                     DER SubjectPublicKeyInfo of a 2048- to 4096-bit RSA key with exponent 65537 with alg RS256 \
+                     or PS256"
                         .into(),
                 )
             })?;
-        let pop: [u8; 64] = b64::decode_array(&spec.pop).map_err(|_| {
-            IssueError::HolderProof("pop must be a base64url 64-byte signature".into())
-        })?;
+        let pop = b64::decode(&spec.pop)
+            .map_err(|_| IssueError::HolderProof("pop must be a base64url signature".into()))?;
         let thumbprint = key
             .thumbprint()
             .ok_or_else(|| IssueError::Malformed("key is not a point on its curve".into()))?;
@@ -175,7 +178,7 @@ impl RegistrarBox {
         let (msg, subject) = match spec.issuer.as_deref() {
             None => (
                 pop_signing_bytes(&self.id, &spec.passport, &thumbprint, spec.nbf),
-                json!({ "kind": SUBJECT_KIND_JWK, "alg": key.alg(), "thumbprint": thumbprint }),
+                json!({ "kind": SUBJECT_KIND_JWK, "alg": spec.alg, "thumbprint": thumbprint }),
             ),
             Some(iss) => {
                 if !issuer_name_ok(iss) {
@@ -185,11 +188,11 @@ impl RegistrarBox {
                 }
                 (
                     issuer_pop_signing_bytes(&self.id, &spec.passport, &thumbprint, iss, spec.nbf),
-                    json!({ "kind": SUBJECT_KIND_ISSUER, "alg": key.alg(), "thumbprint": thumbprint, "iss": iss }),
+                    json!({ "kind": SUBJECT_KIND_ISSUER, "alg": spec.alg, "thumbprint": thumbprint, "iss": iss }),
                 )
             }
         };
-        if !key.verify(&msg, &pop) {
+        if !key.verify(&spec.alg, &msg, &pop) {
             return Err(IssueError::HolderProof(if spec.issuer.is_some() {
                 "the key did not sign this issuer link (pop must cover the issuer-link purpose, registrar, passport, \
                  thumbprint, iss and nbf; a consent to an ordinary link is not a consent to this)"

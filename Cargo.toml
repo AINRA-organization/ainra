@@ -41,6 +41,11 @@ k256 = { version = "0.14", default-features = false, features = ["ecdsa", "sha25
 # `elliptic-curve` lines as k256 above, so one arithmetic stack serves both curves. No advisory names it (checked
 # 14 November 2026); like k256 it says "use at your own risk". ECDSA verify + SHA-256 only, default features off.
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "sha256"] }
+# RSA for RS256 and PS256 link keys (D-112): RustCrypto rsa 0.10, the line that fixed RUSTSEC-2023-0071 (a timing
+# leak in PRIVATE-key operations; Link only ever verifies). Default features off, so no key encoding and no RNG on the
+# verify path or in wasm32; `pkcs1v15` is the RS256 scheme. Its digest is the sha2 0.11 it re-exports, the line
+# already in the tree through k256 and p256 above.
+rsa = { version = "0.10", default-features = false, features = ["pkcs1v15"] }
 signature = { version = "2", default-features = false }
 rand_core = { version = "0.6", default-features = false }
 # Encoding

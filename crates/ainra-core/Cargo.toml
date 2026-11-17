@@ -25,6 +25,7 @@ ml-dsa = { workspace = true }
 slh-dsa = { workspace = true }
 k256 = { workspace = true }
 p256 = { workspace = true }
+rsa = { workspace = true }
 signature = { workspace = true }
 rand_core = { workspace = true }
 

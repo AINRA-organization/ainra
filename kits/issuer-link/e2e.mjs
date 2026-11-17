@@ -29,7 +29,7 @@
 // attributed), and step 8 needs the SAME token to pass the issuer's check and fail AINRA's. With a registrar built
 // before D-110, step 3 already fails: it answers 400 "unknown field `issuer`".
 import { readFileSync } from "node:fs";
-import { Verifier, issuerLinkPopSigningBytes, jwkThumbprintEs256, linkFromIndex, linkPopSigningBytes } from "../../packages/sdk-ts/dist/index.js";
+import { Verifier, issuerLinkPopSigningBytes, jwkThumbprintEs256, linkFromIndex, linkPopSigningBytes, presentedKeyThumbprint } from "../../packages/sdk-ts/dist/index.js";
 import { b64uEncode } from "../../packages/sdk-ts/dist/crypto.js";
 import { startIssuer } from "./issuer.mjs";
 
@@ -115,26 +115,31 @@ const why = (r) => String(r.body?.error ?? r.body).split("(")[0].trim();
 // (a) The ORDINARY check, as a service does it today: only issuers it has configured, their published keys, the
 //     signature, the audience and the expiry. No AINRA code. Returns the key that verified the token and the issuer
 //     name in it, or null.
-const CONFIGURED = new Set([IDP.issuer, STRANGER.issuer]);
+const RSA_IDP = await startIssuer({ alg: "RS256" });
+const CONFIGURED = new Set([IDP.issuer, STRANGER.issuer, RSA_IDP.issuer]);
 async function verifyTokenTheOrdinaryWay(jwt) {
   const [h, p, s] = jwt.split(".");
   let head, claims;
   try { head = JSON.parse(Buffer.from(h, "base64url")); claims = JSON.parse(Buffer.from(p, "base64url")); } catch { return null; }
-  if (head.alg !== "ES256" || !CONFIGURED.has(claims.iss)) return null;
+  if ((head.alg !== "ES256" && head.alg !== "RS256") || !CONFIGURED.has(claims.iss)) return null;
   const conf = (await j(`${claims.iss}/.well-known/openid-configuration`)).body;
   if (conf.issuer !== claims.iss) return null;
-  const jwk = ((await j(conf.jwks_uri)).body.keys ?? []).find((k) => k.kid === head.kid && k.kty === "EC" && k.crv === "P-256");
+  const rsa = head.alg === "RS256";
+  const jwk = ((await j(conf.jwks_uri)).body.keys ?? []).find((k) => k.kid === head.kid && (rsa ? k.kty === "RSA" : k.kty === "EC" && k.crv === "P-256"));
   if (!jwk) return null;
-  const key = await crypto.subtle.importKey("jwk", { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y }, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
-  const good = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, Buffer.from(s, "base64url"), Buffer.from(`${h}.${p}`));
+  const algo = rsa ? { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" } : { name: "ECDSA", namedCurve: "P-256" };
+  const key = await crypto.subtle.importKey("jwk", rsa ? { kty: "RSA", n: jwk.n, e: jwk.e } : { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y }, algo, true, ["verify"]);
+  const good = await crypto.subtle.verify(rsa ? { name: "RSASSA-PKCS1-v1_5" } : { name: "ECDSA", hash: "SHA-256" }, key, Buffer.from(s, "base64url"), Buffer.from(`${h}.${p}`));
   if (!good || claims.aud !== AUD || !(claims.exp > now())) return null;
-  return { key: Uint8Array.from([4, ...Buffer.from(jwk.x, "base64url"), ...Buffer.from(jwk.y, "base64url")]), issuer: claims.iss, sub: claims.sub };
+  // The key as Link names it: the uncompressed point for ES256, the DER SubjectPublicKeyInfo for RS256 (D-112).
+  const bytes = rsa ? new Uint8Array(await crypto.subtle.exportKey("spki", key)) : Uint8Array.from([4, ...Buffer.from(jwk.x, "base64url"), ...Buffer.from(jwk.y, "base64url")]);
+  return { key: bytes, issuer: claims.iss, sub: claims.sub };
 }
 // (b) The next question, to AINRA: who answers for the issuer whose key verified this token? The link is found by
 //     the KEY the gate verified with, never by the issuer's name; `issuer` is undefined when a key signed a request.
 async function whoAnswersFor(key, issuer) {
   const [index, publication] = await Promise.all([j(`${REG}/links`).then((r) => r.body), j(`${REG}/status-list`).then((r) => r.body)]);
-  const link = linkFromIndex(index, publication, jwkThumbprintEs256(key));
+  const link = linkFromIndex(index, publication, presentedKeyThumbprint(key));
   if (!link) return { verdict: "not_linked" };
   return gate.verifyLink(link, key, now(), "demo:specimen", issuer);
 }
@@ -184,6 +189,22 @@ step("8 · revoke the issuer link");
     : fail(`after revocation: ${JSON.stringify({ verified: !!t, v })}`);
 }
 
-await IDP.close(); await STRANGER.close();
+step("9 · an issuer that signs with RSA (RS256), as the large identity providers do (D-112)");
+{
+  const tp = presentedKeyThumbprint(RSA_IDP.publicKey);
+  tp === RSA_IDP.kid ? ok(`${RSA_IDP.issuer} · RS256 · its key is ${RSA_IDP.publicKey.length} bytes of DER, thumbprint ${tp.slice(0, 12)}… = its kid`) : fail(`RSA key thumbprint ${tp} is not the issuer's kid ${RSA_IDP.kid}`);
+  const pop = await RSA_IDP.sign(issuerLinkPopSigningBytes(passport.registrar, passport.sub, tp, RSA_IDP.issuer, nbf));
+  const r = await write("/link", { passport: passport.sub, alg: "RS256", key: b64uEncode(RSA_IDP.publicKey), pop: b64uEncode(pop), nbf, exp, issuer: RSA_IDP.issuer });
+  r.status === 200 && r.body.thumbprint === tp ? ok(`linked as an RS256 issuer · log leaf ${r.body.leaf_index}`) : fail(`RSA link: ${r.status} ${JSON.stringify(r.body)}`);
+  const t = await verifyTokenTheOrdinaryWay(await RSA_IDP.mint({ sub: "agent-11", aud: AUD }));
+  const v = t ? await whoAnswersFor(t.key, t.issuer) : null;
+  t && v.verdict === "valid" && v.operator === "specimen" && v.issuer === RSA_IDP.issuer
+    ? ok(`an RS256 token verifies the ordinary way · AINRA: issuer answered for by operator ${v.operator}`) : fail(`RS256 token: ${JSON.stringify({ verified: !!t, v })}`);
+  const rv = await write("/link/revoke", { thumbprint: tp, kind: "link" });
+  const after = t ? await whoAnswersFor(t.key, t.issuer) : null;
+  rv.status === 200 && after?.verdict === "invalid" && after.reason === "revoked" ? ok("revoked · the same RS256 token is refused: revoked") : fail(`RSA revoke: ${rv.status} ${JSON.stringify(after)}`);
+}
+
+await IDP.close(); await STRANGER.close(); await RSA_IDP.close();
 console.log(bad ? "\nISSUER LINK E2E FAILED" : "\nISSUER LINK E2E OK: an issuer's key linked once, its tokens attributed to the operator behind it, and all of them refused on one revocation — live");
 process.exit(bad);

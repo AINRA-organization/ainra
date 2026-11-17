@@ -11,7 +11,7 @@ export {
   applyGatePolicy, canonicalize, contentDigest, coveredComponents, createDecisionLog, createDirectoryHolder, DECISION_V, denyMatches,
   decisionRequestDigest, decisionSigningBytes, decodeInstance, HEAD_V, headHash, headSigningBytes,
   INSTANCE_CRED_DEFAULT_SECS, instanceCredDigest, instanceSigningBytes, isPresentationRef, joinPresentation,
-  issuerLinkPopSigningBytes, jwkThumbprintEd25519, jwkThumbprintEs256, jwkThumbprintEs256k, linkFromIndex, linkPopSigningBytes, MAX_AGE_SECS, MAX_CAPABILITIES,
+  issuerLinkPopSigningBytes, jwkThumbprintEd25519, jwkThumbprintEs256, jwkThumbprintEs256k, jwkThumbprintRsa, linkFromIndex, linkPopSigningBytes, MAX_AGE_SECS, MAX_CAPABILITIES,
   MAX_FUTURE_SECS, MAX_IID_LEN, mintInstanceCredential, mintWit, numberFromName, PASSPORT_VALIDITY_DEFAULT_SECS,
   POP_HEADER, POP_MAX_FUTURE_SECS, POP_MAX_SKEW_SECS, popSigningBytes, PRESENTATION_HEADER, presentationRef,
   presentedKeyAlg, presentedKeyThumbprint, PRIME_PATH, proveInstancePossession, RENEWAL_LEAD_SECS, renewalDue, serializeVerdictEvent,

@@ -36,7 +36,7 @@ every token that key signs.
 - `pop` is the linked key's own consent, signed in its own algorithm over the canonical
   `{"nbf", "passport", "purpose": "ainra-link-pop-1", "registrar", "thumbprint"}`. Nobody can link a key they do not
   hold.
-- **Three key types (D-082, D-108).** `Ed25519`: the 32-byte key, thumbprint over `{"crv":"Ed25519","kty":"OKP","x"}`.
+- **Four key types (D-082, D-108, D-112).** `Ed25519`: the 32-byte key, thumbprint over `{"crv":"Ed25519","kty":"OKP","x"}`.
   `ES256K` (RFC 8812), for agents on ledgers: the 33-byte compressed secp256k1 point, thumbprint over
   `{"crv":"secp256k1","kty":"EC","x","y"}`, consent by ECDSA with SHA-256 as 64-byte `r || s`, **low-S only** — the
   high-S twin of a valid signature is refused, so a consent has exactly one valid encoding. secp256k1 comes from
@@ -50,8 +50,16 @@ every token that key signs.
   return either: if yours returns the high one, send `n - s` in its place (the same statement by the same key; our
   own tools do this for you). P-256 comes from RustCrypto `p256` 0.14 (the same maintainers and the same `ecdsa` code
   as `k256`; no advisory names it; it too says "use at your own risk"), `@noble/curves` and Python `cryptography`.
-  A verifier tells the three apart by the key it holds: 32 bytes is Ed25519, 33 is ES256K, 65 is ES256. No length
-  means two things, and 65 bytes that are not a point on P-256 are not a key at all.
+  `RS256` and `PS256` (RFC 7518, D-112), for the keys the large identity providers sign with: an RSA key of 2048 to
+  4096 bits with public exponent 65537, presented as its DER SubjectPublicKeyInfo in its one canonical encoding (what
+  a certificate, `openssl rsa -pubout -outform DER` and WebCrypto's `spki` export carry), thumbprint over
+  `{"e":"AQAB","kty":"RSA","n"}`. The consent is RSASSA-PKCS1-v1_5 (RS256) or RSASSA-PSS with MGF1 and a salt of
+  exactly 32 bytes (PS256), with SHA-256, as long as the modulus. One key is linked under one of the two. RSA comes
+  from RustCrypto `rsa` 0.10 (verify only), Python `cryptography` (OpenSSL), and in the TypeScript SDK from a small
+  verify-only implementation of its own, the one exception to "audited libraries only" there (D-112 says why).
+  A verifier tells them apart by the key it holds: 32 bytes is Ed25519, 33 is ES256K, 65 is ES256, and anything
+  longer must be an RSA key. No length means two things, 65 bytes that are not a point on P-256 are not a key at all,
+  and neither is any other RSA encoding, size or exponent.
 - `scope` empty means "whatever the passport allows"; otherwise the link refuses any capability it does not name.
 - Two bits: the link's own, and the passport's. Revoking the operator refuses every link it has.
 

@@ -1,7 +1,7 @@
 {
-  "accept": 12,
-  "count": 77,
-  "note": "CC0 AINRA Link conformance vectors (D-078, D-082, D-108, D-110): a dual-root-signed directory, one link as a gate receives it (record, registrar signature, inclusion proof, checkpoint, signed status publication), the key the gate already verified a signature with — 32 bytes is Ed25519, 33 a compressed secp256k1 point (ES256K, RFC 8812; l37-l43), 65 an uncompressed P-256 point (ES256, RFC 7518; l44-l53) — and the gate's own clock, freshness class and capability. From l54 a vector may carry `issuer` (D-110): the gate verified a TOKEN with the key, and this is the issuer name in that token; with no `issuer` member the key signed the request itself. A valid answer names the registrar, operator, passport and scope, and for an issuer link the issuer. Real signing throughout; expect computed by ainra-adapter::link_vector_result after accredit, each checked against the case it exists to test. Regenerate with `make vectors`.",
-  "reject": 65,
+  "accept": 16,
+  "count": 92,
+  "note": "CC0 AINRA Link conformance vectors (D-078, D-082, D-108, D-110, D-111, D-112): a dual-root-signed directory, one link as a gate receives it (record, registrar signature, inclusion proof, checkpoint, signed status publication), the key the gate already verified a signature with — 32 bytes is Ed25519, 33 a compressed secp256k1 point (ES256K, RFC 8812; l37-l43), 65 an uncompressed P-256 point (ES256, RFC 7518; l44-l53), and anything longer the canonical DER SubjectPublicKeyInfo of a 2048- to 4096-bit RSA key with exponent 65537 (RS256 or PS256, RFC 7518; l78-l92) — and the gate's own clock, freshness class and capability. From l54 a vector may carry `issuer` (D-110): the gate verified a TOKEN with the key, and this is the issuer name in that token; with no `issuer` member the key signed the request itself. A valid answer names the registrar, operator, passport and scope, and for an issuer link the issuer. Real signing throughout; expect computed by ainra-adapter::link_vector_result after accredit, each checked against the case it exists to test. Regenerate with `make vectors`.",
+  "reject": 76,
   "version": "v1-link"
 }
