@@ -146,7 +146,15 @@ jobs:
           esac
           if [ -n "$NODE_AUTH_TOKEN" ]; then echo "authenticating with NPM_TOKEN (first publish — the package does not exist yet, so OIDC is not available)";
           else echo "no NPM_TOKEN set — authenticating by OIDC trusted publishing"; fi
-          npm publish --access public --provenance
+          # A patch for an older line (0.9.1 after 0.10.1, D-114 supported versions) must not take npm's `latest`:
+          # everyone who installs without a version would be moved back a line. Publish it under its own tag.
+          v="$(node -p "require('./package.json').version")"; name="$(node -p "require('./package.json').name")"
+          latest="$(npm view "$name" dist-tags.latest 2>/dev/null || true)"
+          tag=""
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$v" "$latest" | sort -V | tail -1)" != "$v" ]; then
+            tag="line-${v%.*}"; echo "$name $v is older than latest $latest: published under the tag $tag; latest stays $latest"
+          fi
+          npm publish --access public --provenance ${tag:+--tag "$tag"}
       # The version comes from the manifest that was just published, NEVER from `npm view`. The read side lags the
       # write side: after publishing 0.4.1 the packument still said 0.4.0, so this step confirmed the PREVIOUS
       # release's attestation and went green — a check that passes without looking at what it just shipped. On a

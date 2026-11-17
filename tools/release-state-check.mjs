@@ -78,7 +78,10 @@ for (const [what, caught] of controls) {
 }
 
 // ── the real checks ─────────────────────────────────────────────────────────────────────────────────────────────────
-const tags = execFileSync("git", ["-C", ROOT, "tag", "--list", "v*", "--sort=-v:refname"], { encoding: "utf8" })
+// Only the tags in this commit's own history: a release line answers for its own releases. Listing every tag in the
+// clone made the 0.9.1 board demand rows for v0.10.1, a release of the newer line that 0.9.1 descends from not at all
+// (17 Nov 2026, the first patch for an older line, D-114 supported versions).
+const tags = execFileSync("git", ["-C", ROOT, "tag", "--list", "v*", "--merged", "HEAD", "--sort=-v:refname"], { encoding: "utf8" })
   .split("\n").filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
 const problems = [];
 let atTag = false;
