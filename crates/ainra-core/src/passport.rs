@@ -219,6 +219,14 @@ impl Passport {
     pub fn parse_checked(bytes: &[u8]) -> core::result::Result<Self, Reason> {
         // First pass: a raw Value so we can run the recursive forbidden-key scan even over free-form maps.
         let raw: Value = serde_json::from_slice(bytes).map_err(|_| Reason::SchemaViolation)?;
+        // D-118: the signed bytes must already be canonical, as a link's and a decision record's are (D-029): one
+        // passport, one byte string, everywhere. Parsers disagree on a repeated key (the last copy, the first, or a
+        // refusal), so non-canonical bytes could show two verifiers two passports under one signature. A repeated
+        // key cannot survive this: the canonical form of what was parsed holds each key once.
+        let again = crate::canon::canonicalize(&raw).map_err(|_| Reason::SchemaViolation)?;
+        if again.as_bytes() != bytes {
+            return Err(Reason::SchemaViolation);
+        }
         scan_forbidden(&raw)?;
         // Second pass: strict typed decode (deny_unknown_fields catches stray top-level keys).
         let p: Passport = serde_json::from_slice(bytes).map_err(|_| Reason::SchemaViolation)?;

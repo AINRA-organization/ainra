@@ -16,14 +16,28 @@ A second small computer that never touches a network, holding the seed, is the n
 (directories in and out by USB or QR, the remote-ceremony kit, D-101). The production root is a different thing again:
 born at the recorded genesis ceremony, from keys held by its custodians (D-094).
 
+## Built here, run there: a node light enough for a small board (D-119)
+
+Running the network is light: the registrar door, the witness and the `ainra` tool are static programs of 1 to 3 MB.
+Compiling them is not: whole-program optimisation over post-quantum signature code takes long and more memory than a
+small board has to spare. So the node never compiles. `build-for-node.sh` builds them on the operator's machine for the
+node's 64-bit ARM processor (static: nothing needed from the node's system), runs each once under an emulator if one
+is installed, copies them over, and marks them with their commit; the node's install scripts use them, and compile
+nothing, only when the node's checkout is at that same commit. `move-to-node.sh` does this first.
+
+The watch is light the same way: `ainra monitor` keeps the log's compact range between runs (at most 64 hashes, however
+long the log), and each run reads only the entries added since, a page at a time. On the live test registrar's log of
+304 entries it kept 4 hashes. A node's work grows with what is new, not with everything there has ever been.
+
+On the operator's machine, once: `rustup target add aarch64-unknown-linux-musl`.
+
 ## The node
 
 A small single-board computer with a 64-bit ARM processor and 4 GB of memory or more, a 32 GB+ card or better an SSD,
 a wired network, and a 64-bit Debian-based system with systemd. On it, once:
 
 ```sh
-sudo apt install -y git curl rsync build-essential pkg-config nodejs
-curl https://sh.rustup.rs -sSf | sh -s -- -y        # the Rust toolchain (the first build takes a while on a Pi)
+sudo apt install -y git curl rsync nodejs        # no compiler: the programs are built on the operator's machine
 git clone https://github.com/JacobJandon/ainra.git && cd ainra
 git checkout <the same commit as the operator's machine>
 ```

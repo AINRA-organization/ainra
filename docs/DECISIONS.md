@@ -3897,3 +3897,76 @@ ceremony from its custodians' keys (D-094).
 
 *Status:* ACCEPTED 2026-11-17, on the operator's word ("lets solve this … for now lets focus on ainra first"); no rule
 changes, so no proposal window (D-114). The operator seals the real seed by running `bash tools/root-seal.sh seal`.
+
+## D-118 — A passport's signed bytes are canonical: one passport, one byte string, everywhere
+
+*Problem:* a link's and a decision record's signed bytes must already be canonical (D-029), so each has exactly one
+spelling. A passport's did not: every implementation parsed the claim bytes and checked them field by field. JSON
+parsers disagree on a repeated key: JavaScript's and Python's keep the last copy, others keep the first, the Rust core's
+typed decode refused one in a typed field but kept the last inside a free-form object such as `transfer_history`.
+Measured on 17 November 2026, while checking an outside threat list ("parser differentials"): passports whose signed
+claims repeat `tier`, `authority.class`, or `transfer_history[0].from` were VALID in the TypeScript and Python
+verifiers; the core refused the first two and accepted the third. A registrar, alone able to sign such bytes, could
+show a first-copy verifier one passport and a last-copy verifier another under one signature. The log does not help:
+it commits the canonical body, which is the last-copy reading.
+
+*Decision:* the passport schema gate (step 1, in all three implementations, and for chain parties' passports under
+D-113) requires the signed claim bytes to equal the canonical encoding of what was parsed, else `schema_violation`.
+A repeated key cannot pass, since the canonical form holds each key once; neither can any other second spelling of the
+same passport (whitespace, key order, escapes). Every issuer already signs canonical bytes, so no honest passport is
+affected: all 1184 earlier vectors are byte-identical and keep their verdicts.
+
+*Held to:* three new vectors (`duplicate-key-0000` top level, `-0001` nested typed object, `-0002` free-form object),
+each `schema_violation` in the core, the TypeScript SDK, Python and the browser engine; `make diff` 1187/1187 in all
+three; the vector generator's self-check refused to write the corpus while the core accepted `-0002`. Mutation: with the
+new comparison removed from the TypeScript and Python verifiers, all three vectors return VALID again.
+
+*Limits:* other signed material already had this rule (links, decision records), or is signed over a canonical
+re-encoding of the parsed object (hops, instance credentials, the directory): there only the reading whose canonical
+form is the signed one can pass the signature, so a repeated key can make one verifier refuse but never make two accept
+two different meanings. The integer-spelling divergence of D-054 is in instance credentials and stays open.
+
+*Not changed:* the format of any record; any reason code. A passport an honest registrar issued verifies as before.
+
+*Status:* ACCEPTED 2026-11-17, a security fix bringing three implementations to one answer, on the operator's word
+("please fully continue"). It refuses bytes no conforming issuer produces, so it is a maintenance and security change
+under D-114 rather than a rule change; it ships in the next patch release of each supported line.
+
+## D-119 — A node light enough for a small board: built elsewhere, and a monitor that keeps only the log's edge
+
+*Problem:* the operator's always-on node is a small single-board computer. Two things in the network's tooling did not
+fit one. Compiling the programs (whole-program optimisation over post-quantum signature code) is long and wants more
+memory than such a board has to spare, and every install script compiled on the machine it ran on. And `ainra monitor`
+downloaded and held every entry of a registrar's log on every run (D-116's stated limit): work and memory that grow
+with the log forever, on the machine least able to afford it. The operator's comparison: models too large for a small
+machine are run a layer at a time, from disk; do the same for the network.
+
+*Decision:*
+
+- **Built here, run there.** `deploy/home-node/build-for-node.sh` builds the node's programs (registrar door, witness,
+  `ainra`) on the operator's machine for 64-bit ARM as static programs, starts each once under an emulator when one is
+  installed, copies them to the node and marks them with their commit. `tools/stage-install.sh` and
+  `deploy/home-node/install.sh` compile nothing when the node's checkout is at that commit, and then need no compiler
+  at all. The signing tool is never sent: a node does not sign (D-117). `move-to-node.sh` builds first.
+- **The monitor keeps the log's edge, not the log.** Between runs `ainra monitor` keeps the RFC 6962 compact range of
+  what it has checked: the roots of the perfect subtrees along the tree's right edge, at most 64 hashes for any size.
+  The next run checks the consistency proof as before, then reads only the entries added since, a page at a time,
+  appends them to the kept range, and requires the signed root. A kept range whose shape cannot be a compact range of
+  its size, or whose root is not the root it saw, is not trusted: the run reads everything (`--full` forces that). An
+  unexpected passport now also holds the state back, so a resumed run cannot report it once and then never again.
+
+*Held to:* `the_compact_range_gives_the_full_trees_root_at_every_size` (every size from 0 to 1,100, at most 11 hashes,
+read back from its saved form, and a misshapen one refused); `make monitor-e2e` step 6 against the live registrar: after
+304 checked entries the state holds 4 hashes and the next run reads only the new entries, while steps 1 to 5 (an
+unexpected passport, a hidden entry, a rollback, a fork) are still caught; `make home-watch-drill`. The ARM programs
+were built in 55 seconds here, and under an emulator the `ainra` monitor checked the live test registrar and the
+witness started and answered.
+
+*Limits:* the first run against a log still reads all of it once (a page at a time, so its memory does not grow with
+the log). The registrar itself still holds its log's tree in memory; that matters at production size, not at the test
+network's (PLAN-M53 step 19, tiles). The prebuilt programs were run under emulation, not yet on the node itself.
+
+*Not changed:* any rule a verifier applies; any record; what a monitor checks.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's word ("this raspberry isn't that powerful … we should invent some
+way"); tools only, no rule changes (D-114).

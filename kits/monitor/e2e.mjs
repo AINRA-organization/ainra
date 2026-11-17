@@ -9,6 +9,7 @@
 //   3. a feed that hides one entry: the entries no longer rebuild the signed root, exit 3
 //   4. a log smaller than the monitor saw last: ROLLBACK, exit 3
 //   5. a log whose history differs from what the monitor saw: FORK, exit 3
+//   6. once the operator owns the stray passport, the next run resumes from the kept compact range (D-119)
 //
 // TEST-ROOT, loopback. WITNESS: step 1 is the positive control (exit 0); steps 2 to 5 must each raise their own alarm
 // by name. If any of them passes quietly, this drill fails.
@@ -100,6 +101,15 @@ writeFileSync(join(dir, "state-fork.json"), JSON.stringify({ ...seen, root: Buff
 m = await monitor(REG, "state-fork.json");
 m.code === 3 && /FORK/.test(m.out) ? ok("FORK raised") : fail(`expected FORK: ${m.code}\n${m.out}`);
 
+step("6 · the next run reads only what the log added (D-119)");
+writeFileSync(join(dir, "expect.txt"), `${expected}\n${stray}\n`); // the operator now owns the second passport
+m = await monitor(REG);
+const kept = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
+m.code === 0 && /new entr(y|ies) since size \d+ rebuild the signed root from the \d+ hash\(es\) kept/.test(m.out)
+  && Array.isArray(kept.frontier) && kept.frontier.length <= 64
+  ? ok(`resumed after ${seen.size} checked entries, kept ${kept.frontier.length} hash(es), read only the new ones`)
+  : fail(`expected a resumed run: ${m.code}\n${m.out}`);
+
 rmSync(dir, { recursive: true, force: true });
-console.log(bad ? "\nMONITOR E2E FAILED" : "\nMONITOR E2E OK: an unexpected passport named, a hidden entry, a rollback and a fork each caught — live");
+console.log(bad ? "\nMONITOR E2E FAILED" : "\nMONITOR E2E OK: an unexpected passport named, a hidden entry, a rollback and a fork each caught, and a run resumed from the kept range — live");
 process.exit(bad);

@@ -16,7 +16,7 @@
 # crashed daemon — it does not make it public. A genuinely public endpoint needs a decision the operator has to
 # make (see docs/_archive/plans/PLAN-M27.md § the always-on question); nothing here provisions anything.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
 REPO="$(pwd)"
 UNIT_SRC=deploy/systemd
 UNIT_DST="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -27,6 +27,9 @@ REG2_ADDR=127.0.0.1:4911 ; REG2_ID=registrar-11
 WIT_ADDR=127.0.0.1:4991
 ART_PORT=8091
 
+prebuilt_here(){ # D-119: programs built elsewhere for this very commit (deploy/home-node/build-for-node.sh)
+  [ -s target/release/.prebuilt ] && [ "$(cat target/release/.prebuilt)" = "$(git rev-parse HEAD 2>/dev/null)" ]
+}
 have_systemd() { command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; }
 
 case "${1:-install}" in
@@ -48,7 +51,8 @@ install)
 
   # 1. the binaries the units exec must exist BEFORE the units start, or every unit fast-restarts forever
   echo "== build the daemons =="
-  cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd || { echo "✗ build failed"; exit 1; }
+  if prebuilt_here; then echo "   prebuilt for this commit elsewhere (D-119): nothing compiled here"
+  else cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd || { echo "✗ build failed"; exit 1; }; fi
 
   # 2. per-instance environment. Addresses live here, not baked into units, so a port change is one file edit.
   mkdir -p "$ENVDIR"

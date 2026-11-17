@@ -542,6 +542,27 @@ fn build_with(seed: u64, newer_checkpoint: bool, edit: impl FnOnce(&mut Value)) 
     }
 }
 
+/// D-118: a credential whose SIGNED claim bytes repeat a key. `edit` adds extra claims to the body (as
+/// [`build_with_claims`]); `dup` then rewrites the canonical claim text before the issuer signs it, inserting a second
+/// member with a key that is already there. The logged body is the canonical body WITHOUT the repetition, which is what
+/// a last-value-wins parser rebuilds, so a lax verifier passes every later step and only the repetition can stop it.
+fn build_dup(seed: u64, extra: Value, dup: impl FnOnce(&str) -> String) -> Built {
+    let mut b = build_with_claims(seed, extra);
+    let text = String::from_utf8(b.claims.clone()).expect("claims are UTF-8");
+    let edited = dup(&text);
+    assert_ne!(edited, text, "the duplicate-key edit found nothing to edit");
+    let mut rng = ChaCha20Rng::seed_from_u64(0x4149_4E52_4154_0000 ^ seed);
+    let issuer = crypto::HybridKeypair::generate(&mut rng); // the same issuer build_with made from this seed
+    assert_eq!(
+        issuer.public().ed25519,
+        b.issuer_pub.ed25519,
+        "issuer key re-derivation"
+    );
+    b.claims = edited.into_bytes();
+    b.issuer_sig = issuer.sign(&b.claims).expect("sign");
+    b
+}
+
 /// A validly-signed credential whose `log.leaf` references a REAL in-tree leaf that is NOT its own body. Every check
 /// through step 8 passes and the inclusion proof is genuinely valid — only the body↔leaf binding stops it, so the
 /// expected verdict is NotLogged. Guards the binding across implementations (review finding #4).
@@ -1234,6 +1255,46 @@ fn generate() -> Vec<Vector> {
         ),
         Reason::SchemaViolation,
         "a forbidden key in another case (Wallet) — the denylist match is ASCII case-insensitive",
+    ));
+
+    // ── D-118: a signed passport whose claim bytes repeat a key. JSON parsers disagree on which copy counts (last,
+    //    first, or refuse), so a repeated key is a way to show two verifiers two different passports under one
+    //    signature. Every implementation refuses it, at any depth, typed field or free-form. ──
+    out.push(invalid(
+        wire_valid("duplicate-key-0000", "", &build_dup(3_140, json!({}), |t| t.replacen("{", "{\"tier\":\"L3\",", 1))),
+        Reason::SchemaViolation,
+        "the signed claims say tier twice (L3, then L1): a last-wins parser sees L1, a first-wins parser L3 — refused",
+    ));
+    out.push(invalid(
+        wire_valid(
+            "duplicate-key-0001",
+            "",
+            &build_dup(3_141, json!({}), |t| {
+                t.replacen("\"authority\":{", "\"authority\":{\"class\":\"A1\",", 1)
+            }),
+        ),
+        Reason::SchemaViolation,
+        "authority.class twice (A1, then A2) inside a nested object — refused",
+    ));
+    let moved = json!({ "transfer_history": [ {
+        "from": "ainra:registrar-07:acme:billing@1.0.0", "log_origin": "ainra-log/registrar-07",
+        "leaf_index": 41, "checkpoint_size": 44, "checkpoint_root": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "transfer": "00112233445566778899aabbccddeeff", "at": 1_776_384_000u64,
+    } ] });
+    out.push(invalid(
+        wire_valid(
+            "duplicate-key-0002",
+            "",
+            &build_dup(3_142, moved, |t| {
+                t.replacen(
+                    "\"from\":",
+                    "\"from\":\"ainra:registrar-11:other:billing@1.0.0\",\"from\":",
+                    1,
+                )
+            }),
+        ),
+        Reason::SchemaViolation,
+        "transfer_history[0].from twice inside a free-form object — refused there too",
     ));
 
     // ── D-104: the 2026-11-07 independent review. Each vector holds all three implementations to one answer on a

@@ -354,7 +354,7 @@ $ pip install ainra       <span class="c"># PEP 740 attestations, published toke
 v = Verifier.from_directory(dir, root_ed, root_slh)
 verdict = v.verify(bundle, now)
 <span class="c"># → verdict.valid is True — or verdict.reason</span></pre></div></div>
-    <div class="note">Four independently written implementations exist — Rust core, TypeScript SDK, Python and the reference CLI. Three of them agree on <b>1184/1184</b> conformance vectors, on verdict <i>and</i> reason (<code>make diff</code>); the CLI agrees on canonical encoding. A disagreement would be a finding.</div>
+    <div class="note">Four independently written implementations exist — Rust core, TypeScript SDK, Python and the reference CLI. Three of them agree on <b>1187/1187</b> conformance vectors, on verdict <i>and</i> reason (<code>make diff</code>); the CLI agrees on canonical encoding. A disagreement would be a finding.</div>
     </div>
   </section>
 

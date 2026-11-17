@@ -127,9 +127,13 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
         return invalid(R.SCHEMA_VIOLATION)
     if not isinstance(claims, dict):
         return invalid(R.SCHEMA_VIOLATION)
-    # Canonical-divergence guard (D-010): floats / non-ASCII keys / >2^53 ints.
+    # Canonical-divergence guard (D-010): floats / non-ASCII keys / >2^53 ints. And D-118: the signed bytes must
+    # already be canonical (as a link's and a decision record's are, D-029): json.loads keeps the LAST copy of a
+    # repeated key and other parsers the first, so non-canonical bytes could show two verifiers two passports under
+    # one signature. The canonical form of what was parsed holds each key once, so a repeated key cannot pass.
     try:
-        canonicalize(claims)
+        if canonicalize(claims).encode("utf-8") != claims_raw:
+            return invalid(R.SCHEMA_VIOLATION)
     except CanonError:
         return invalid(R.SCHEMA_VIOLATION)
     if _forbidden_present(claims):
@@ -528,7 +532,8 @@ def _party_claims(raw):
 
     try:
         c = json.loads(raw.decode("utf-8"))
-        canonicalize(c)
+        if canonicalize(c).encode("utf-8") != raw:  # D-118: canonical bytes only, so no repeated key
+            return None
     except Exception:
         return None
     if not isinstance(c, dict) or c.get("vct") != VCT or _forbidden_present(c):

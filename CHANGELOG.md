@@ -10,6 +10,19 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Security — a passport's signed bytes must be canonical (D-118)
+
+- A passport whose signed claims repeated a key was accepted by the TypeScript and Python verifiers (the last copy
+  counted), and inside a free-form object by the core too. All three now require the signed bytes to equal the
+  canonical encoding, as links and decision records already did. Honest passports are unaffected.
+- `vectors/v1` 1184 → 1187 (`duplicate-key-0000..0002`); every earlier vector is byte-identical and keeps its verdict.
+
+### Added — a node light enough for a small board (D-119)
+
+- `deploy/home-node/build-for-node.sh` builds the node's programs on the operator's machine for 64-bit ARM (static) and
+  copies them over; the node's install scripts then compile nothing. `ainra monitor` keeps the log's compact range
+  (at most 64 hashes) between runs and reads only new entries, a page at a time; `--full` reads everything.
+
 ### Added — the root seed sealed, and a home node for the test network (D-117)
 
 - `tools/root-seal.sh` keeps the test root's seed encrypted at rest under the operator's passphrase; `tools/stage.sh`

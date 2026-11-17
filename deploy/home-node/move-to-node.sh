@@ -26,20 +26,24 @@ ssh -o BatchMode=yes "$NODE" "test ! -e $DIR/stage/public/roots.json" || { echo 
 want="$(sha256sum stage/public/roots.json | cut -c1-64)"
 echo "   ok: same commit ${here:0:12}; the node holds no state; the record's roots are ${want:0:16}…"
 
-echo "== 1 · stop the network here (nothing runs twice)"
+echo "== 1 · build the node's programs here, so the node compiles nothing (D-119)"
+if [ $DRY = 1 ]; then echo "+ bash deploy/home-node/build-for-node.sh $NODE $DIR"
+else bash deploy/home-node/build-for-node.sh "$NODE" "$DIR" || { echo "✗ nothing was stopped"; exit 1; }; fi
+
+echo "== 2 · stop the network here (nothing runs twice)"
 run systemctl --user stop ainra-stage-watchdog.timer ainra-stage.target ainra-registrar@registrar-07.service \
   ainra-registrar@registrar-11.service ainra-witnessd.service ainra-artifacts.service
 
-echo "== 2 · copy its state — never the root seed"
+echo "== 3 · copy its state — never the root seed"
 run rsync -a --exclude 'genesis/root.seed' --exclude 'genesis/root.seed.gpg' --exclude 'MOVED-TO-NODE' stage/ "$NODE:$DIR/stage/"
 
-echo "== 3 · start it on the node"
+echo "== 4 · start it on the node"
 if ! rsh bash deploy/home-node/install.sh install; then
   echo "✗ the node did not come up — starting the network here again, as it was"
   run bash tools/stage-install.sh install >/dev/null; exit 1
 fi
 
-echo "== 4 · the node serves the same record"
+echo "== 5 · the node serves the same record"
 if [ $DRY = 0 ]; then
   got="$(ssh -o BatchMode=yes "$NODE" "curl -s -m 5 http://127.0.0.1:8091/roots.json | sha256sum | cut -c1-64")"
   if [ "$got" != "$want" ]; then
@@ -50,7 +54,7 @@ if [ $DRY = 0 ]; then
   echo "   ok: the same roots, served by the node"
 fi
 
-echo "== 5 · this copy is now a backup"
+echo "== 6 · this copy is now a backup"
 if [ $DRY = 0 ]; then printf '%s:%s\n%s\n' "$NODE" "$DIR" "$(date -u +%F)" > stage/MOVED-TO-NODE; fi
 run bash tools/stage-install.sh uninstall
 echo "moved. The network runs on $NODE; this machine keeps the sealed root seed and signs through sign-for-node.sh."

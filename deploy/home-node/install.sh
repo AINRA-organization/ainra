@@ -25,7 +25,9 @@ case "$cmd" in
 install)
   command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1 \
     || { echo "✗ no systemd user session here (this kit needs one: any systemd Linux)"; exit 1; }
-  for t in cargo node curl; do command -v "$t" >/dev/null || { echo "✗ $t is missing (see README § the node)"; exit 1; }; done
+  prebuilt(){ [ -s target/release/.prebuilt ] && [ "$(cat target/release/.prebuilt)" = "$(git rev-parse HEAD 2>/dev/null)" ]; }
+  need=(node curl git); prebuilt || need+=(cargo)   # D-119: with programs built elsewhere for this commit, no compiler
+  for t in "${need[@]}"; do command -v "$t" >/dev/null || { echo "✗ $t is missing (see README § the node)"; exit 1; }; done
   if [ "$watch_only" = 0 ]; then
     if [ ! -s stage/public/roots.json ] && [ "$fresh" = 0 ]; then
       echo "✗ no network state here. Move it from the machine that runs it now: deploy/home-node/move-to-node.sh"
@@ -36,7 +38,8 @@ install)
     bash tools/stage-install.sh install || exit 1
   fi
   echo "== the home watch =="
-  cargo build --release -q -p ainra-cli-rs --bin ainra || { echo "✗ build failed"; exit 1; }
+  if prebuilt; then echo "   the ainra tool is prebuilt for this commit: nothing compiled here"
+  else cargo build --release -q -p ainra-cli-rs --bin ainra || { echo "✗ build failed"; exit 1; }; fi
   mkdir -p "$CONF"; chmod 700 "$CONF"
   if [ ! -s "$CONF/pinned-roots.json" ]; then
     src="${AINRA_HOME_PIN_FROM:-stage/public/roots.json}"

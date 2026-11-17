@@ -1,5 +1,6 @@
 # --- build outputs (regenerated; never committed) ---
 /target
+/target-node
 **/target
 **/node_modules
 packages/sdk-ts/dist

@@ -10,8 +10,10 @@
 //! 2. takes the registrar's current checkpoint (`/witness-feed`) and checks its signature under that key;
 //! 3. if it has watched this log before, checks the consistency proof from the size it saw last: the log only grew,
 //!    and nothing it saw was rewritten;
-//! 4. downloads every entry (`/log/entries`) and rebuilds the tree: the root must be the signed root, so no entry is
-//!    hidden behind the checkpoint, and none is shown that the log does not hold;
+//! 4. downloads the entries (`/log/entries`) a page at a time and rebuilds the tree: the root must be the signed root,
+//!    so no entry is hidden behind the checkpoint, and none is shown that the log does not hold. It keeps only the
+//!    log's compact range (at most 64 hashes, D-119) between runs, so a later run reads only what the log added, in
+//!    memory that does not grow with the log; `--full` reads it all again;
 //! 5. reads every passport in the log and names each one, under a watched operator, that is not on the operator's
 //!    own list.
 //!
@@ -31,11 +33,67 @@ use crate::{opt, opt_multi};
 
 const PAGE: u64 = 256;
 
+/// The RFC 6962 compact range of a log's first `size` entries: the roots of the perfect subtrees along its right edge,
+/// largest first, at most 64 hashes for any size. It is enough to append entries and compute the root without holding
+/// a single entry (D-119): the monitor keeps it between runs and reads only what the log added since.
+#[derive(Clone, Default)]
+struct Frontier {
+    size: u64,
+    nodes: Vec<(u32, [u8; 32])>,
+}
+
+impl Frontier {
+    fn push(&mut self, entry: &[u8]) {
+        let mut cur = (0u32, merkle::hash_leaf(entry));
+        while let Some(&(h, left)) = self.nodes.last() {
+            if h != cur.0 {
+                break;
+            }
+            self.nodes.pop();
+            cur = (h + 1, merkle::hash_node(&left, &cur.1));
+        }
+        self.nodes.push(cur);
+        self.size += 1;
+    }
+
+    fn root(&self) -> [u8; 32] {
+        let mut it = self.nodes.iter().rev();
+        match it.next() {
+            None => merkle::TestLog::new().root(),
+            Some(&(_, last)) => it.fold(last, |acc, &(_, left)| merkle::hash_node(&left, &acc)),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        Value::Array(
+            self.nodes
+                .iter()
+                .map(|(h, x)| json!([h, b64::encode(x)]))
+                .collect(),
+        )
+    }
+
+    /// Read a kept range back, refusing one whose shape cannot be a compact range of `size` entries.
+    fn from_json(size: u64, v: &Value) -> Option<Self> {
+        let mut nodes = Vec::new();
+        for n in v.as_array()? {
+            let h = u32::try_from(n.get(0)?.as_u64()?)
+                .ok()
+                .filter(|h| *h < 64)?;
+            let x = b64::decode_array::<32>(n.get(1)?.as_str()?).ok()?;
+            nodes.push((h, x));
+        }
+        let decreasing = nodes.windows(2).all(|w| w[0].0 > w[1].0);
+        let total: u64 = nodes.iter().map(|(h, _)| 1u64 << h).sum();
+        (decreasing && total == size).then_some(Frontier { size, nodes })
+    }
+}
+
 pub fn cmd_monitor(a: &[String]) -> i32 {
     let (Some(reg), Some(net)) = (opt(a, "registrar"), opt(a, "net")) else {
         eprintln!(
             "usage: ainra monitor --registrar <url> --net <url|dir> [--roots <pinned roots.json>] [--watch <operator>]… \
-             [--expect <file of passport names>] [--state <file>] [--now <unix s>] [--json]"
+             [--expect <file of passport names>] [--state <file>] [--full] [--now <unix s>] [--json]"
         );
         return 2;
     };
@@ -75,7 +133,20 @@ fn print_report(r: &Value) {
     }
     if let Some(kinds) = r["entries_by_kind"].as_object() {
         let parts: Vec<String> = kinds.iter().map(|(k, v)| format!("{v} {k}")).collect();
-        println!("        entries: {}", parts.join(" · "));
+        let from = r["resumed_from"].as_u64().unwrap_or(0);
+        let read = if from > 0 {
+            format!("read this run, after the {from} already checked")
+        } else {
+            "read".into()
+        };
+        println!(
+            "        entries {read}: {}",
+            if parts.is_empty() {
+                "none new".into()
+            } else {
+                parts.join(" · ")
+            }
+        );
     }
     for a in r["alarms"].as_array().into_iter().flatten() {
         println!("  ALARM {}", a.as_str().unwrap_or(""));
@@ -219,11 +290,43 @@ fn run(a: &[String], reg: &str, net: &str) -> Result<Value, String> {
         }
     }
 
-    // 4. every entry, rebuilt into the signed root.
-    let mut tree = ainra_services::tree::IncrementalTree::new();
-    let mut entries: Vec<Vec<u8>> = Vec::new();
-    while (entries.len() as u64) < cp.tree_size {
-        let start = entries.len() as u64;
+    // 4. every entry, rebuilt into the signed root — streamed a page at a time, and from where the last run stopped
+    //    when it can: the kept compact range is the log's first `n` entries, already checked (D-119).
+    let watch = opt_multi(a, "watch");
+    let mut watch_key: Vec<String> = watch.iter().map(|w| w.to_string()).collect();
+    watch_key.sort();
+    let resume = match (&last, last_size) {
+        (Some(prev), Some(n))
+            if alarms.is_empty()
+                && !a.iter().any(|x| x == "--full")
+                && prev["watch"] == json!(watch_key) =>
+        {
+            Frontier::from_json(n, &prev["frontier"]).filter(|f| {
+                b64::decode_array::<32>(prev["root"].as_str().unwrap_or("")).ok() == Some(f.root())
+            })
+        }
+        _ => None,
+    };
+    let mut seen: std::collections::BTreeMap<String, u64> = match (&resume, &last) {
+        (Some(_), Some(prev)) => serde_json::from_value(prev["seen"].clone()).unwrap_or_default(),
+        _ => Default::default(),
+    };
+    let mut tree = resume.clone().unwrap_or_default();
+    let from = tree.size;
+    let expected: Vec<String> = match opt(a, "expect") {
+        Some(p) => std::fs::read_to_string(p)
+            .map_err(|e| format!("{p}: {e}"))?
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut kinds: std::collections::BTreeMap<&str, u64> = Default::default();
+    let mut mine_new: std::collections::BTreeMap<String, u64> = Default::default();
+    let mut unexpected: Vec<(String, String)> = Vec::new();
+    while tree.size < cp.tree_size {
+        let start = tree.size;
         let page = fetch_json(
             reg,
             &format!(
@@ -240,18 +343,48 @@ fn run(a: &[String], reg: &str, net: &str) -> Result<Value, String> {
         if got.is_empty() {
             break;
         }
-        entries.extend(got);
+        for e in got.iter().take((cp.tree_size - tree.size) as usize) {
+            tree.push(e);
+            // 5. every passport, held to each watched operator's own list, as it streams past.
+            let kind = match serde_json::from_slice::<Value>(e) {
+                Ok(v) if v.get("vct").is_some() && v.get("sub").is_some() => {
+                    let sub = v["sub"].as_str().unwrap_or("").to_string();
+                    for op in &watch {
+                        if sub.split(':').nth(2) == Some(op.as_str()) {
+                            *mine_new.entry(op.to_string()).or_default() += 1;
+                            if !expected.contains(&sub) {
+                                unexpected.push((op.to_string(), sub.clone()));
+                            }
+                        }
+                    }
+                    "passports"
+                }
+                Ok(v)
+                    if v.get("from").is_some()
+                        && v.get("to").is_some()
+                        && v.get("granted").is_some() =>
+                {
+                    "delegation hops"
+                }
+                Ok(_) => "other records",
+                Err(_) => "non-JSON entries",
+            };
+            *kinds.entry(kind).or_default() += 1;
+        }
     }
-    entries.truncate(cp.tree_size as usize);
-    for e in &entries {
-        tree.append(e);
-    }
-    if entries.len() as u64 != cp.tree_size || tree.root() != cp.root {
+    let read = tree.size - from;
+    if tree.size != cp.tree_size || tree.root() != cp.root {
         alarms.push(format!(
             "the {} entries the registrar serves do not rebuild the signed root at size {}: an entry is hidden, \
              altered or extra",
-            entries.len(),
+            tree.size,
             cp.tree_size
+        ));
+    } else if resume.is_some() {
+        checks.push(format!(
+            "the {read} new entr{} since size {from} rebuild the signed root from the {} hash(es) kept: nothing is hidden",
+            if read == 1 { "y" } else { "ies" },
+            resume.as_ref().map(|f| f.nodes.len()).unwrap_or(0)
         ));
     } else {
         checks.push(format!(
@@ -259,67 +392,33 @@ fn run(a: &[String], reg: &str, net: &str) -> Result<Value, String> {
             cp.tree_size
         ));
     }
-
-    // 5. every passport in the log, held to each watched operator's own list.
-    let watch = opt_multi(a, "watch");
-    let expected: Vec<String> = match opt(a, "expect") {
-        Some(p) => std::fs::read_to_string(p)
-            .map_err(|e| format!("{p}: {e}"))?
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect(),
-        None => Vec::new(),
-    };
-    let mut kinds: std::collections::BTreeMap<&str, u64> = Default::default();
-    let mut passports = Vec::new();
-    for e in &entries {
-        let kind = match serde_json::from_slice::<Value>(e) {
-            Ok(v) if v.get("vct").is_some() && v.get("sub").is_some() => {
-                passports.push(v["sub"].as_str().unwrap_or("").to_string());
-                "passports"
-            }
-            Ok(v)
-                if v.get("from").is_some()
-                    && v.get("to").is_some()
-                    && v.get("granted").is_some() =>
-            {
-                "delegation hops"
-            }
-            Ok(_) => "other records",
-            Err(_) => "non-JSON entries",
-        };
-        *kinds.entry(kind).or_default() += 1;
-    }
     for op in &watch {
-        let mine: Vec<&String> = passports
-            .iter()
-            .filter(|s| s.split(':').nth(2) == Some(op.as_str()))
-            .collect();
-        let unexpected: Vec<&&String> = mine
-            .iter()
-            .filter(|s| !expected.iter().any(|x| x == **s))
-            .collect();
-        if unexpected.is_empty() {
+        let total = seen.get(op.as_str()).copied().unwrap_or(0)
+            + mine_new.get(op.as_str()).copied().unwrap_or(0);
+        if !unexpected.iter().any(|(o, _)| o == op) {
             checks.push(format!(
-                "{} passport(s) under operator {op}, every one on its list",
-                mine.len()
+                "{total} passport(s) under operator {op}, every one on its list"
             ));
         }
-        for s in unexpected {
-            alarms.push(format!(
-                "UNEXPECTED ISSUANCE: {s} is in {id}'s log and not on {op}'s list"
-            ));
-        }
+        seen.insert(op.to_string(), total);
+    }
+    for (op, sub) in &unexpected {
+        alarms.push(format!(
+            "UNEXPECTED ISSUANCE: {sub} is in {id}'s log and not on {op}'s list"
+        ));
     }
 
     // Remember what was seen, but never past an alarm: a monitor that accepted a fork would stop seeing it.
     if let Some(p) = state_path {
-        if alarms
-            .iter()
-            .all(|a| !a.starts_with("FORK") && !a.starts_with("ROLLBACK") && !a.contains("rebuild"))
-        {
-            let st = json!({ "registrar": id, "origin": cp.origin, "size": cp.tree_size, "root": b64::encode(&cp.root), "at": now });
+        // An unexpected passport holds the state back too: resuming past it would report it once and then never again.
+        if alarms.iter().all(|a| {
+            !a.starts_with("FORK")
+                && !a.starts_with("ROLLBACK")
+                && !a.contains("rebuild")
+                && !a.starts_with("UNEXPECTED")
+        }) {
+            let st = json!({ "registrar": id, "origin": cp.origin, "size": cp.tree_size, "root": b64::encode(&cp.root),
+                "at": now, "frontier": tree.to_json(), "watch": watch_key, "seen": seen });
             std::fs::write(
                 Path::new(p),
                 serde_json::to_string_pretty(&st).unwrap_or_default(),
@@ -329,6 +428,33 @@ fn run(a: &[String], reg: &str, net: &str) -> Result<Value, String> {
     }
     Ok(json!({
         "registrar": id, "origin": cp.origin, "size": cp.tree_size,
-        "checks": checks, "alarms": alarms, "entries_by_kind": kinds,
+        "checks": checks, "alarms": alarms, "entries_by_kind": kinds, "entries_read": read, "resumed_from": from,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The compact range gives the RFC 6962 root at every size, and survives being kept and read back (D-119).
+    #[test]
+    fn the_compact_range_gives_the_full_trees_root_at_every_size() {
+        let mut full = merkle::TestLog::new();
+        let mut f = Frontier::default();
+        assert_eq!(f.root(), full.root());
+        for i in 0..1100u32 {
+            let e = i.to_be_bytes();
+            full.append(&e);
+            f.push(&e);
+            assert_eq!(f.root(), full.root(), "size {}", i + 1);
+            assert!(f.nodes.len() <= 11, "at most log2(n)+1 hashes");
+            let back = Frontier::from_json(f.size, &f.to_json()).expect("reads back");
+            assert_eq!(back.root(), f.root());
+        }
+        // A kept range whose shape cannot be a compact range of its size is refused, not trusted.
+        assert!(Frontier::from_json(f.size + 1, &f.to_json()).is_none());
+        let mut bad = f.to_json();
+        bad.as_array_mut().unwrap().reverse();
+        assert!(Frontier::from_json(f.size, &bad).is_none());
+    }
 }
