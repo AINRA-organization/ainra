@@ -10,6 +10,12 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — a kit for agents named by a certificate (PLAN-M55 step 4)
+
+- `kits/cert-link`: bring the certificate an agent already has; the kit reads its key (P-256, secp256k1, Ed25519, or
+  RSA as RS256 or PS256), has the agent's private key sign the consent locally, and links it. It reads certificates
+  and issues none. `make cert-link-e2e` runs it against certificates made by openssl, in `make live-drills`.
+
 ## [0.10.0] — 2026-11-17
 
 The release commit; its board is `docs/releases/v0.10.0-board.md`. Published to npm and PyPI from the tag, by the

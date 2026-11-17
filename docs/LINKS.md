@@ -178,7 +178,7 @@ withdrawn. Revoking the link refuses every such token at every gate.
 - It does not make a token genuine, fresh or meant for you. That is your ordinary check.
 
 **Limits today.** No outside system has linked a key. One name per key, so a key shared by several issuer names can
-be linked for one of them. Each new signing key needs its own consent. RSA keys cannot be linked yet. A gate's
+be linked for one of them. Each new signing key needs its own consent. An RSA key can be linked since D-112, with SHA-256 only. A gate's
 decision record names the issuer's key, not the agent.
 
 `make issuer-link-e2e` ([`kits/issuer-link`](../kits/issuer-link)) runs it against a live registrar with a token
@@ -227,3 +227,10 @@ AINRA Link from the downloaded index and signed status list.
 The signature-agent reader accepts throughout because its profile has no revocation: its remedy is removing the key
 from the directory, which reaches a verifier at its next cache refresh. That is the gap Link fills.
 
+## A key in a certificate
+
+An agent named by a certificate already has a key, and the certificate already says which. `kits/cert-link` reads
+that key, has the agent's private key sign the consent on the operator's machine, and links it like any other: the
+certificate and its issuer stay as they are, and a gate that has checked a signature by the key can ask who answers
+for it. The kit reads certificates and issues none. `make cert-link-e2e` runs it against certificates made by openssl
+for every key type Link takes (PLAN-M55 step 4).

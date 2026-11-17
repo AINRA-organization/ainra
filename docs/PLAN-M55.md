@@ -42,9 +42,12 @@ l78 to l92, agreed by the three implementations and the three gates; a 1024-bit 
 a 20-byte PSS salt are each refused; `make issuer-link-e2e` links an RS256 issuer whose key and tokens come from the
 platform's own WebCrypto.
 
-**4. A kit for agents named by a certificate.** Bring the certificate an agent already has; the kit reads its key,
-makes the consent, and shows the agent attributed and then switched off. It reads certificates; it issues none.
-WITNESS: the kit run end to end in `make live-drills` against a certificate made by a standard tool.
+**4. A kit for agents named by a certificate.** **Done 17 November 2026.** Bring the certificate an agent already has;
+the kit reads its key, makes the consent, and shows the agent attributed and then switched off. It reads certificates;
+it issues none. `kits/cert-link`. WITNESS: `make cert-link-e2e`, in `make live-drills`: certificates made by
+openssl with P-256, secp256k1, Ed25519 and RSA keys (RS256 and PS256), each linked, attributed and revoked; a
+certificate nobody linked is "not linked"; a P-384 key, a 1024-bit RSA key and a private key that is not the
+certificate's are refused by the kit before anything is sent.
 
 **5. The root itself.** Everything above runs under a TEST root. Since D-109 the published one is no longer the
 seed written in the source, so strangers cannot sign under it, but one machine still holds the whole of it. Nobody
