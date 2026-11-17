@@ -12,6 +12,14 @@ AINRA is security-critical infrastructure: it is a **root of trust**. We treat i
   recorded in `docs/DECISIONS.md` (e.g. the M5 status-list revocation-bypass, the M6 threshold-downgrade, the M7
   reproducibility orphan-laundering, the M8 identical-registrar-keys). If you can defeat an invariant, we want it.
 
+## Supported versions
+
+The two newest minor lines receive security fixes, as patch releases of each: today **0.10.x** and **0.9.x**. Older
+lines get none, and a fix that cannot be made without a rule change ships in the newest line only. A security fix is
+released together with its post-mortem below and its entry in the [incident log](site/incidents.json), never ahead of
+a fixed release. Every release, and how a change becomes one, is described in
+[docs/CHANGE-PROPOSALS.md](docs/CHANGE-PROPOSALS.md) (D-114).
+
 ## What is in scope (high value)
 - Making a **revoked** or **forged** passport verify `VALID` (a revocation bypass).
 - Defeating **both-signatures-or-invalid** (an algorithm downgrade that verifies).

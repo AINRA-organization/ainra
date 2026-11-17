@@ -3750,3 +3750,38 @@ was given up in D-090; this follows from it.
 *Not changed:* the Standard, the passport format, the hop's signed bytes (D-012), every earlier vector and verdict.
 
 *Status:* ACCEPTED 2026-11-17, on the operator's word of 17 November ("do all"). Plan: PLAN-M53 R2.
+
+## D-114 — How AINRA changes: proposals anyone writes, three kinds of change, supported versions
+
+*Problem:* every rule change so far began as the operator's word and was written up afterwards (D-001 to D-113). Nobody
+outside could see a change coming, object in time, or tell which kind of change it was. The owner asked on 17 November
+2026 for an update system like the ones open networks use (improvement proposals, soft and hard changes, maintenance
+and security releases), in AINRA's own way. Research: how those networks and others change their rules, and how
+token-voted organisations have failed (the private strategy note of 17 November).
+
+*Decision:*
+
+- **AINRA Change Proposals** ([CHANGE-PROPOSALS.md](CHANGE-PROPOSALS.md), [proposals/](proposals/)). Anyone writes one;
+  the register's keepers number it and check its form, never its merit (`make proposals-check`). A rule change is open
+  for at least 14 days and is decided only when every substantiated objection has a written answer in the proposal. A
+  decision record still records the decision; the proposal is its front door. ACP-0001 is this process.
+- **Three kinds of change.** A *soft change* is a rule a directory entry turns on from a log position, which old
+  software and every earlier record survive (D-044, D-111, D-113 are all of this kind). A *hard change* is a new
+  edition of the Standard with its own corpus, two editions supported at once, the old one ended at a log position.
+  A *maintenance or security release* changes no rule.
+- **Verifiers first.** The release that checks a new rule is published before any directory turns it on (the lesson
+  D-111 and D-113 wrote down).
+- **Supported versions** ([SECURITY.md](../SECURITY.md#supported-versions)): the two newest minor lines get security
+  fixes.
+
+*Rejected:* a token vote (bought weight; see ACP-0002, a draft for the charter); a calendar date as the switch (a date
+can be argued with, a log position cannot be backdated); a single "upgrade day" for everyone (verifiers are sovereign
+and upgrade when they choose).
+
+*Not built yet:* readiness signals in accreditations and time-boxed activation; editions (none needed so far); the
+chambers that will decide after genesis.
+
+*Not changed:* the Standard, the charter, any verdict.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's word ("and any of that too", answering the research). Proposal:
+ACP-0001.
