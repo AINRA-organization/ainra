@@ -11,6 +11,7 @@
 //!   GET  /verify?sub=…&now=T            → the live verdict (reflects revocations)
 //!   POST /revoke          {sub, now}    → the emitted signed status delta
 //!   POST /bind-chains     {}            → D-113: bind delegation chains from the end of the log on (idempotent)
+//!   GET  /log/entries?start=N&end=M     → the log's entries, base64url, at most 256 per page (PLAN-M53 step 11)
 //!   GET  /status-list?now=T             → the full signed Token Status List
 //!   GET  /fresh-head?now=T              → the 30-second delegate-signed fresh head
 //!   GET  /deltas?since=S                → the signed deltas a client at head S still needs
@@ -1028,6 +1029,21 @@ fn main() {
             // The whole link index (D-079: whole-list download, no lookup by key). Read-only, open, cacheable.
             // PLAN-M51 witness work — what an independent witness polls: the current signed checkpoint and, given the
             // size it last cosigned (`?from=N`), the consistency proof to here. Public read, like /present.
+            // PLAN-M53 step 11: every log entry, a page at a time, so a monitor can rebuild the tree, prove the
+            // checkpoint hides nothing, and see every passport this registrar logged.
+            ("GET", "/log/entries") => {
+                let start = qparam(&req.path, "start")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0);
+                let end = qparam(&req.path, "end")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(u64::MAX);
+                match st.rb.log_entries(start, end) {
+                    Ok(page) => (200, page.to_string()),
+                    Err(e) => (500, json!({ "error": e }).to_string()),
+                }
+            }
+
             ("GET", "/witness-feed") => {
                 let from = qparam(&req.path, "from").and_then(|s| s.parse::<u64>().ok());
                 match st.rb.witness_feed(from) {

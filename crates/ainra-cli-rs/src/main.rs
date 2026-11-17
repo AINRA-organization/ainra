@@ -8,6 +8,7 @@
 
 mod ctl;
 mod epochlog;
+mod monitor;
 mod seed;
 mod workbench;
 
@@ -45,6 +46,7 @@ fn main() {
         "verify-request" => cmd_verify_request(rest),
         "verify-decisions" => cmd_verify_decisions(rest),
         "chain-specs" => cmd_chain_specs(rest),
+        "monitor" => monitor::cmd_monitor(rest),
         "link" => cmd_link(rest),
         "link-revoke" => cmd_link_revoke(rest),
         "links" => cmd_links(rest),
@@ -996,6 +998,10 @@ GATE (D-062 / D-068)
         why did a gate refuse this request? The same check @ainra/edge makes: the directory must verify
         against both roots; the credential under the GATE's policy; then the RFC 9421 request signature.
         Q is {{method, authority, path, headers: [[name, value], …], body_b64u}}. Prints ALLOW or the reason.
+  monitor --registrar URL --net URL|DIR [--roots PINNED] [--watch OPERATOR]… [--expect FILE] [--state FILE] [--json]
+        PLAN-M53 step 11: watch a registrar's log. Checks the checkpoint under the directory's log key, that the log only
+        grew since last seen, that every entry rebuilds the signed root (nothing hidden), and names every passport
+        under a watched operator that is not on its list. Exit 0 nothing found, 3 an alarm, 2 could not check.
   chain-specs --registrar ID --operator OP --exp T --party LINEAGE@VER… --grant CAPS… --subject LINEAGE@VER --out DIR
         D-113: the issue requests for a BOUND delegation chain, for a registrar reached over HTTP: each party gets a key
         of its own and a passport request with proof of possession; the subject's request carries every hop signed by

@@ -3821,3 +3821,34 @@ that decide adoption).
 
 *Status:* ACCEPTED 2026-11-17, on the operator's word ("lets become … the godfathers of web4 so ainra is also a web4
 organization"). The commitments themselves wait for ACP-0003.
+
+## D-116 — Anyone can watch a registrar's log: every entry served, and a monitor that names the unexpected
+
+*Problem:* the Standard says anyone may monitor a registrar, and the accreditation prerequisites name a "funded
+competitor monitor", yet a registrar served only its checkpoint and the records it chose to list. A registrar could log
+a passport in an operator's name and leave it out of its export, and nobody outside could tell. PLAN-M53 step 11.
+
+*Decision:*
+
+- **`GET /log/entries?start&end`** on the registrar: the log's entries exactly as appended, base64url, at most 256 per
+  page. The log holds no personal data (charter 4), so every entry is public, as certificate-transparency logs are.
+- **`ainra monitor`**: authenticates the directory against pinned roots and takes the registrar's log key from it;
+  checks the current checkpoint's signature under that key; checks the consistency proof from the size it saw last
+  (`FORK`, `ROLLBACK`); downloads every entry and rebuilds the tree, which must give the signed root (nothing hidden,
+  nothing added); and names every passport under a watched operator that is not on that operator's own list
+  (`UNEXPECTED ISSUANCE`). It holds no key. Its state never advances past a fork, a rollback or a hidden entry.
+- `kits/monitor` documents it; `make monitor-e2e` is in `make live-drills`.
+
+*Held to:* `make monitor-e2e` against the live registrar: an expected passport passes (exit 0); an unexpected one is
+named; a feed that hides one entry is refused because the entries no longer rebuild the signed root; a state larger
+than the log raises ROLLBACK; a state with another history raises FORK. The registrar test
+`the_log_serves_every_entry_a_page_at_a_time` rebuilds the log's own root from the served entries.
+
+*Limits:* a monitor downloads the whole log on each run (fine at the test network's size; tiles or a stored tree come
+with the production log, PLAN-M53 step 19). It sees what is logged, not what a registrar might sign and never log; that
+is what logged-before-valid already refuses at every verifier. Status-list changes are not watched yet.
+
+*Not changed:* any rule a verifier applies; the format of any entry.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's word ("do fully continue"); no rule changes, so no proposal window
+(D-114).

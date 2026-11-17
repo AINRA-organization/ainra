@@ -115,8 +115,10 @@ approver set, or by the online key alone, is refused.
 **10. Separate the log root from the delegate in the reference registrar.** Today the registrar certifies its own
 delegates in-process. D-093's 92-day bound holds only when the two keys are apart.
 
-**11. A log monitor.** It watches registrar logs for issuance a registrar did not expect, as the Standard says anyone
-may. It is the tool behind the "funded competitor monitor" term.
+**11. A log monitor** (D-116). **Done 17 November 2026.** It watches registrar logs for issuance a registrar did not
+expect, as the Standard says anyone may. It is the tool behind the "funded competitor monitor" term. `ainra monitor`
+and `GET /log/entries`; WITNESS: `make monitor-e2e` names an unexpected passport and catches a hidden entry, a
+rollback and a fork.
 
 **12. Publish what compliance and the workbench produce:** probe reports, fact notices and proposal outcomes, under
 the read contract (`/net/compliance/`, `/net/proposals/`).

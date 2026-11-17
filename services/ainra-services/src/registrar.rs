@@ -47,6 +47,9 @@ const CERT_VALIDITY: u64 = 90 * 24 * 60 * 60;
 const _: () = assert!(CERT_VALIDITY <= ainra_core::consts::DELEGATE_CERT_MAX_SECS);
 /// Re-certify a delegate when fewer than this many seconds remain (M35). Two weeks: long enough that a registrar
 /// which is only occasionally restarted still renews well before its checkpoints stop verifying.
+/// The most log entries one `/log/entries` answer carries.
+pub const LOG_PAGE: u64 = 256;
+
 pub const DELEGATE_RENEW_LEAD: u64 = 14 * 24 * 60 * 60;
 const _: () = assert!(DELEGATE_RENEW_LEAD < CERT_VALIDITY);
 
@@ -1657,6 +1660,20 @@ impl RegistrarBox {
         Some(bundle)
     }
 
+    /// PLAN-M53 step 11: the log's entries at `start..end`, base64url, at most [`LOG_PAGE`] per call, with the log's
+    /// size and origin. Everything the log holds is public by design (no personal data reaches it, charter 4).
+    pub fn log_entries(&self, start: u64, end: u64) -> Result<serde_json::Value, String> {
+        let size = self.log.size();
+        let end = end.min(size).min(start.saturating_add(LOG_PAGE));
+        let entries = self.log.entries(start, end).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "origin": self.log_origin(),
+            "size": size,
+            "start": start,
+            "entries": entries.iter().map(|e| b64::encode(e)).collect::<Vec<_>>(),
+        }))
+    }
+
     /// The witness feed: the log's current checkpoint, signed by the current delegate exactly as `/present` proves
     /// against it, and — for a witness that last cosigned at size `from` — the RFC 6962 consistency proof from there
     /// to here. Without the proof a witness can cosign a log only on first sight; with it, every append. `from`
@@ -2513,6 +2530,39 @@ mod tests {
         let back = RegistrarBox::load(&tmp).unwrap();
         assert_eq!(back.chains_bound_from_leaf(), Some(from));
         assert_eq!(back.verify_record(&rec.sub, VERIFY_NOW), Verdict::Valid);
+    }
+
+    #[test]
+    fn the_log_serves_every_entry_a_page_at_a_time() {
+        let tmp = std::env::temp_dir().join("ainra-rb-log-entries");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let mut rb = engine(&tmp);
+        let mut rng = ChaCha20Rng::seed_from_u64(1160);
+        for l in ["a", "b", "c"] {
+            rb.issue(&spec("acme", l, "1.0.0"), &[], &mut rng).unwrap();
+        }
+        let all = rb.log_entries(0, u64::MAX).unwrap();
+        let entries = all["entries"].as_array().unwrap();
+        assert_eq!(all["size"].as_u64(), Some(rb.log.size()));
+        assert_eq!(entries.len() as u64, rb.log.size());
+        // The entries rebuild exactly the log's own root: nothing hidden, nothing added.
+        let mut t = crate::tree::IncrementalTree::new();
+        for e in entries {
+            t.append(&b64::decode(e.as_str().unwrap()).unwrap());
+        }
+        assert_eq!(t.root(), rb.log.signed_checkpoint().root);
+        // A page past the end is empty; a page in the middle starts where it says.
+        assert!(rb.log_entries(99, 120).unwrap()["entries"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            rb.log_entries(1, 2).unwrap()["entries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

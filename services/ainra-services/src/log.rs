@@ -102,6 +102,34 @@ impl Logd {
         Ok(self.tree.append(entry))
     }
 
+    /// The entries at leaf indices `start..end` (clamped to the log's size), exactly as appended. PLAN-M53 step 11:
+    /// with every entry, anyone can rebuild the tree, prove nothing is hidden behind a checkpoint, and see each
+    /// passport a registrar logged, not only the ones it lists.
+    pub fn entries(&self, start: u64, end: u64) -> std::io::Result<Vec<Vec<u8>>> {
+        let end = end.min(self.size());
+        if start >= end {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::with_capacity((end - start) as usize);
+        let mut i = 0u64;
+        for line in BufReader::new(File::open(&self.path)?).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if i >= start {
+                out.push(b64::decode(line.trim()).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "corrupt log line")
+                })?);
+            }
+            i += 1;
+            if i >= end {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// The window the checkpoint delegate is certified for.
     pub fn cert_window(&self) -> (u64, u64) {
         (self.cert.nbf, self.cert.exp)

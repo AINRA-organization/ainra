@@ -10,6 +10,17 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — anyone can watch a registrar's log (D-116, PLAN-M53 step 11)
+
+- `GET /log/entries` serves every log entry, a page at a time. `ainra monitor` checks the checkpoint under the
+  directory's log key, that the log only grew, that every entry rebuilds the signed root, and names every passport
+  under a watched operator that is not on its list. `kits/monitor`; `make monitor-e2e` in the live drills.
+
+### Added — Web4, change proposals (D-114, D-115)
+
+- `docs/CHANGE-PROPOSALS.md` and `docs/proposals/` (ACP-0001 active; ACP-0002 and ACP-0003 open); `docs/WEB4.md`;
+  supported versions in SECURITY.md; a map of every document in `docs/README.md`.
+
 ### Added — a kit for agents named by a certificate (PLAN-M55 step 4)
 
 - `kits/cert-link`: bring the certificate an agent already has; the kit reads its key (P-256, secp256k1, Ed25519, or

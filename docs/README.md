@@ -54,6 +54,7 @@ Every document in this folder, grouped by what you would open it for. Where two 
 | [POLICY-PARITY.md](POLICY-PARITY.md) | Who decides, and what a default trusts |
 | [CLAIMS.md](CLAIMS.md) | Every public claim and what proves it (generated) |
 | [PROBES.md](PROBES.md) | Compliance measured adversarially |
+| [../kits/monitor/](../kits/monitor/README.md) | Watch a registrar's log for passports nobody expected (D-116) |
 | [drills/](drills/) | The drills: root dark, registrar dark, succession, staleness, crossed withdrawal, fuzz, negative controls |
 
 ## Governance and the root
