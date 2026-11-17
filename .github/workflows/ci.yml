@@ -128,6 +128,12 @@ jobs:
       - run: make published-root-check
       # Two issuers, one verifier cut off from both: issuer A's withdrawal refuses its agent and leaves issuer B's
       # allowed. Where the runner forbids unprivileged network namespaces the run says so and uses its weaker cut.
+      # The drill cuts its verifier off the network in a user namespace (`unshare -rn`). GitHub's Ubuntu runners
+      # forbid unprivileged user namespaces by AppArmor policy, so the drill failed here on "write failed
+      # /proc/self/uid_map" from the day it joined (16 November 2026) while it passed on every board. Allowed for this
+      # job only.
+      - name: unprivileged user namespaces, for the drill's network-less verifier
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make crossed-withdrawal
       - run: make skills-replay
       - run: make personhood-test

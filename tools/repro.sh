@@ -63,5 +63,13 @@ fi
 [ "$fail" = 0 ] || { echo "repro FAILED"; exit 1; }
 
 printf '%s\n' "$C" > MANIFEST.sha256
+# The committed manifest must be the one just written. On 17 November 2026 a commit added 15 vectors without it, every
+# board stayed green (this script only rewrote the file), and `make release` refused at the v0.10.0 tag.
+if git ls-files --error-unmatch MANIFEST.sha256 >/dev/null 2>&1 && ! git diff --quiet -- MANIFEST.sha256; then
+  echo "!! STALE MANIFEST: the committed MANIFEST.sha256 is not what these artifacts give. The right one is now"
+  echo "   written; commit it."
+  git diff --stat -- MANIFEST.sha256 | tail -1
+  exit 1
+fi
 echo "== repro OK: committed == clean-rebuild ×2, byte-identical ($A_n files); wrote MANIFEST.sha256 =="
 echo "   manifest digest: $(sha256sum MANIFEST.sha256 | cut -c1-16)…"

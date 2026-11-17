@@ -62,9 +62,11 @@ run "wimse workload"        make -s wimse-e2e
 run "link (signature agent)" make -s link-e2e
 run "link (P-256 key)"     make -s link-p256-e2e
 run "link (token issuer)"  make -s issuer-link-e2e
-run "link (certificate)"   make -s cert-link-e2e
 run "pilot (link mode)"   make -s pilot-e2e
+# Last: it writes ten times in a few seconds, and the registrar allows 30 writes a minute. Placed before the pilot it
+# left the pilot "rate limited" in CI on 17 November 2026.
 run "gate parity"           make -s gate-parity
+run "link (certificate)"   make -s cert-link-e2e
 echo "────────────────────────────────────────────────────────────────"
 if [ "$FAIL" = 0 ]; then echo "  LIVE DRILLS GREEN — ${#NAMES[@]} drills against a running network."; else echo "  LIVE DRILLS RED"; fi
 exit "$FAIL"
