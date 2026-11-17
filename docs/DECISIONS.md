@@ -731,7 +731,7 @@ carries — was declared in `consts.rs` and read by nothing. What a running copy
 long-lived hybrid private key, written to disk at **mode 644**, beside a passport valid for 366 days; and what it
 presented was a **bearer token**, because no verify step ever asked the presenter to prove it held anything. The
 `cnf` claim existed, was scanned for PII, and was otherwise unread. Full evidence with file:line in
-[`PLAN-M28.md`](PLAN-M28.md).
+[`PLAN-M28.md`](_archive/plans/PLAN-M28.md).
 
 *Forbidden fix, and why it was forbidden:* shortening the passport. ADR-017 chose a long credential **because**
 revocation fails closed in under 60 seconds — the deliberate inverse of Web PKI's shrinking-certificate answer to
@@ -1054,7 +1054,7 @@ flagged two honest claims ("measured under 60 seconds in a local drill", a paste
 provenance was too narrow — a check that punishes honest sourcing teaches writers to drop the word "measured",
 which is the opposite of the goal.
 
-*Status:* NEW. `make doctrine` + `make doctrine-negative`, in preflight. Census table in `docs/PLAN-M32.md`.
+*Status:* NEW. `make doctrine` + `make doctrine-negative`, in preflight. Census table in `docs/_archive/plans/PLAN-M32.md`.
 
 ## D-058 — The published record states its own decay
 
@@ -1214,7 +1214,7 @@ stays bounded in time, narrow in scope, and killable from outside.
 binds a presentation to one method, host and path inside a five-minute window, and it gives a caller the material
 to close that window entirely. That is a bound, not a cure, and it is written that way.
 
-*Status:* NEW. Amends the Standard §5 (see `docs/AMENDMENTS.md`); implementation tracked in `docs/PLAN-M34.md`.
+*Status:* NEW. Amends the Standard §5 (see `docs/AMENDMENTS.md`); implementation tracked in `docs/_archive/plans/PLAN-M34.md`.
 
 ## D-063 — A passport is bound to a key its agent actually holds
 

@@ -32,12 +32,12 @@ touched. The public diff is the commit itself; the entry names it once it exists
 - **Era:** operator-run
 - **Approved by:** the operator, with this public record
 - **Files touched:** `docs/AINRA_I_The_Standard.md` §5 (one sentence). Decision record: `D-062` in
-  `docs/DECISIONS.md`. Plan: `docs/PLAN-M34.md`.
+  `docs/DECISIONS.md`. Plan: `docs/_archive/plans/PLAN-M34.md`.
 - **Rationale:** the sentence said "the request signature names the passport key". ADR-019 (D-047) says the
   passport's control key never enters the container. A running copy cannot sign with a key it is forbidden to
   hold, so the two normative texts could not both be honoured for the case that matters — an agent making a
   request in production. Neither was implemented, which is why the conflict survived unnoticed until the
-  presentation layer was actually built (`docs/PLAN-M34.md`, Task 0: a captured presentation replayed three times
+  presentation layer was actually built (`docs/_archive/plans/PLAN-M34.md`, Task 0: a captured presentation replayed three times
   out of three against the shipped middleware).
 
   The amended sentence says the **instance key** signs and its `keyid` names the instance credential, which names

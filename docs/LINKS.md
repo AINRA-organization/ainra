@@ -4,7 +4,7 @@
 An agent usually already signs its requests with a key: a signature-agent key, a workload key. That key can be revoked
 only inside the system that issued it, and it says nothing about who is accountable for it. A **link** is a
 registrar's signed, logged statement that one such key acts for one AINRA passport, with a bit in the registrar's
-status list that anyone can check offline. Decision: [D-078](DECISIONS.md). Plan: [PLAN-M47](PLAN-M47.md).
+status list that anyone can check offline. Decision: [D-078](DECISIONS.md). Plan: [PLAN-M47](_archive/plans/PLAN-M47.md).
 
 **What a link does not do.** It does not make a request genuine. Your gate verifies the request's signature first,
 with whatever protocol it already speaks; a link answers the next question: *who stands behind this key, and is that

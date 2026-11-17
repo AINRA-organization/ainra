@@ -96,7 +96,7 @@ const CLAIMS = [
             // M30: the parity harness and its doc both cite the corpus size when explaining what the differential
             // does and does not cover. Registered rather than exempted — if the corpus grows, that explanation
             // has to grow with it, and this is what will say so.
-            "tools/policy-parity.mjs", "docs/POLICY-PARITY.md", "CONTRIBUTING.md", "docs/PLAN-M30.md",
+            "tools/policy-parity.mjs", "docs/POLICY-PARITY.md", "CONTRIBUTING.md", "docs/_archive/plans/PLAN-M30.md",
             // M38: the edge gate's header states what the WASM build is held to — `make wasm-diff` runs the whole
             // passport corpus through it. Registered so the sentence moves when the corpus does.
             "packages/edge/src/index.mjs"],
@@ -127,7 +127,7 @@ const CLAIMS = [
             "site/_includes/footer.html", "site/index.html", "site/docs.html", "site/foundation.html",
             "site/get.html", "site/verify.html", "site/plan.html", "site/standard.html", "site/demo.html",
             "site/scan.html", "site/status.html", "site/404.html", "site/foundations.html", "site/landscape.html", "site/control.html", "site/request-demo.html", "site/news.html",
-            "ROADMAP.md", "docs/PLAN-M28.md", "docs/genesis-day/GO-NO-GO.md", "tools/campaign.mjs",
+            "ROADMAP.md", "docs/_archive/plans/PLAN-M28.md", "docs/genesis-day/GO-NO-GO.md", "tools/campaign.mjs",
             // The live gate matches on this claim's exact wording, so it IS an assertion of it. Registering rather
             // than exempting is deliberate: when the witness count moves, the live matcher must move with it, and
             // this is what will say so. It surfaced only once the file was committed — `git ls-files` cannot see

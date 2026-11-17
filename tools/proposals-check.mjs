@@ -11,6 +11,10 @@
 //
 //   node tools/proposals-check.mjs             check the register
 //   node tools/proposals-check.mjs --negative  plant each fault in a copy and show it is refused by name
+//
+// WITNESS: --negative plants, one at a time, a number that does not match its file, an unknown status, an Active
+// proposal with no decision record, a gap in the numbering and a proposal the README does not list; each must be
+// refused by name, and the real register must pass. If any planted fault passes, this gate goes red.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

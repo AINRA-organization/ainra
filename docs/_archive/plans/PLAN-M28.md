@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
 # M28 — the fourth rung: instance credentials
 
-**R1 from [`SETTLERS.md`](SETTLERS.md), taken as a milestone rather than an amendment.** ADR-017 names a five-rung
+**R1 from [`SETTLERS.md`](../../SETTLERS.md), taken as a milestone rather than an amendment.** ADR-017 names a five-rung
 validity ladder. Four rungs are built. The fourth — the credential a *running copy* carries — is declared and
 unbuilt, and this milestone builds it.
 
@@ -14,8 +14,8 @@ unbuilt, and this milestone builds it.
 | Rung | Lifetime | Built? |
 |---|---|---|
 | lineage + AINRA Number | ∞ | ✅ |
-| passport | 366 d | ✅ [`consts.rs:16`](../crates/ainra-core/src/consts.rs) |
-| delegate certificates | ≤ 92 d | ✅ [`consts.rs:23`](../crates/ainra-core/src/consts.rs), enforced at build *and* verify |
+| passport | 366 d | ✅ [`consts.rs:16`](../../../crates/ainra-core/src/consts.rs) |
+| delegate certificates | ≤ 92 d | ✅ [`consts.rs:23`](../../../crates/ainra-core/src/consts.rs), enforced at build *and* verify |
 | **instance credentials** | **minutes–hours** | ❌ **declared only** |
 | status freshness | seconds (F1/F2/F3) | ✅ |
 
@@ -60,7 +60,7 @@ on the host), for **366 days**.
 
 ### What the verifier checks about the presenter — nothing
 
-The nine steps ([`verify.rs:118-183`](../crates/ainra-core/src/verify.rs)) are: schema · registrar accredited ·
+The nine steps ([`verify.rs:118-183`](../../../crates/ainra-core/src/verify.rs)) are: schema · registrar accredited ·
 validity window · issuer signature · scope ceiling · delegation chain · status freshness + revocation · mandate
 subtree · logged-before-valid. **None of them asks the presenter to prove it holds anything.**
 
@@ -73,7 +73,7 @@ pub cnf: Value,
 ```
 
 `grep -n "cnf\|jkt" crates/ainra-core/src/verify.rs` returns only test fixtures — the field is scanned for PII and
-never otherwise consulted. The gate confirms the shape: [`middleware/src/index.ts:32-57`](../packages/middleware/src/index.ts)
+never otherwise consulted. The gate confirms the shape: [`middleware/src/index.ts:32-57`](../../../packages/middleware/src/index.ts)
 takes a bundle out of a header, verifies it, and allows the request. There is no caller signature, nonce, or
 audience anywhere in that path.
 
@@ -105,7 +105,7 @@ blast radius is the *instance* rung's job. Build the rung.
 
 ## Task 1 · ADR-019 — the instance rung, decided in the open
 
-Recorded as **D-047** in [`DECISIONS.md`](DECISIONS.md). The MTS is frozen; this milestone does not open it, so
+Recorded as **D-047** in [`DECISIONS.md`](../../DECISIONS.md). The MTS is frozen; this milestone does not open it, so
 ADR-019 lives here and in the decision record, exactly as ADR-017 was implemented through D-027.
 
 ### The shape
@@ -373,7 +373,7 @@ the quorum cannot certify an honest head and refuse an injected fork, the script
 With **zero witness operators**, the split-view guarantee is **not in force**. Witness cosignatures are what would
 stop the root showing one history to one party and a different one to another; a quorum of zero certifies nothing.
 Until someone runs one, you are trusting us not to equivocate rather than being able to check — and the
-witness-anchored half of [D-045](DECISIONS.md) has nothing anchoring it.
+witness-anchored half of [D-045](../../DECISIONS.md) has nothing anchoring it.
 
 That is now said where the claims are made, not in a footnote:
 

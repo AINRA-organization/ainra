@@ -99,7 +99,7 @@ record independently verifies as `revoked`.
 
 So M30's note was accurate. What it did not say is that a verifier **structurally cannot** close this: `prev_leaf`
 is a leaf hash, not an index, so nothing in a presented passport names the previous generation's status bit.
-[D-055](DECISIONS.md) therefore states it as a registrar conformance requirement instead of leaving it as an
+[D-055](../../DECISIONS.md) therefore states it as a registrar conformance requirement instead of leaving it as an
 assumption — and records the part that is still missing: the adversarial probe kit has no renewal journey, so a
 third party can fail this requirement today without the probe noticing.
 

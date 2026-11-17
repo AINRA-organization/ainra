@@ -74,7 +74,7 @@ ok(`one-way mark        the root displays no third party's mark`);
 // The allowed homes are the disclosure passages themselves, listed explicitly so adding a new one is a decision.
 const MERIDIAN_ALLOWED = new Set([
   "docs/AINRA_I_The_Standard.md", "site/AINRA_I_The_Standard.md", "site/standard.md",
-  "site/docs.html", "site/standard.html", "site/index.html", "docs/PLAN-M32.md",   // standard.html: the site's copy of the Standard moved to its own page (2026-11-11); the same disclosure passage, not a new home
+  "site/docs.html", "site/standard.html", "site/index.html", "docs/_archive/plans/PLAN-M32.md",   // standard.html: the site's copy of the Standard moved to its own page (2026-11-11); the same disclosure passage, not a new home
 ]);
 for (const f of tracked()) {
   if (MERIDIAN_ALLOWED.has(f)) continue;
@@ -264,7 +264,7 @@ if (witnesses === 0) {
 
 if (bad) {
   console.error(`\nDOCTRINE-CHECK FAILED — ${bad} rule(s) that were previously held only by memory.`);
-  console.error(`Each of these passed the entire board when violated, before this gate existed. See docs/PLAN-M32.md.`);
+  console.error(`Each of these passed the entire board when violated, before this gate existed. See docs/_archive/plans/PLAN-M32.md.`);
   process.exit(1);
 }
 console.log(`DOCTRINE-CHECK OK: the census's ungated rules are gated — specimen labelling, the one-way mark, Meridian scope,`);

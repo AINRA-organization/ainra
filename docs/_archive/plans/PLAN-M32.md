@@ -94,7 +94,7 @@ Only the UNGATED and PARTIAL rows become Task 1 work.
 
 ## Task 1 — Gate the joins and the omissions
 
-`make doctrine` + `make doctrine-negative` ([D-057](DECISIONS.md)). The census table, after:
+`make doctrine` + `make doctrine-negative` ([D-057](../../DECISIONS.md)). The census table, after:
 
 | # | Rule | Before | After | Gate |
 |---|---|---|---|---|
@@ -123,8 +123,8 @@ no check.
 
 ## Task 3 — The amendment path
 
-[GOVERNANCE-AMENDMENT.md](../GOVERNANCE-AMENDMENT.md) + [docs/AMENDMENTS.md](AMENDMENTS.md) + `make
-amendment-check` ([D-056](DECISIONS.md)). Six unamendable prohibitions enumerated; charter / normative /
+[GOVERNANCE-AMENDMENT.md](../../../GOVERNANCE-AMENDMENT.md) + [docs/AMENDMENTS.md](../../AMENDMENTS.md) + `make
+amendment-check` ([D-056](../../DECISIONS.md)). Six unamendable prohibitions enumerated; charter / normative /
 operational change separated; approver named per era (operator today, custodians at genesis, four constituencies
 after); public diff + rationale + dated record required in the same commit.
 
@@ -134,8 +134,8 @@ deletes a constitutional line — they reword it.
 
 ## Task 2 — Succession, drilled
 
-[docs/SUCCESSION.md](SUCCESSION.md) · [docs/STALENESS.md](STALENESS.md) · `make succession-drill` ·
-`make staleness-drill` ([D-058](DECISIONS.md), [D-059](DECISIONS.md)).
+[docs/SUCCESSION.md](../../SUCCESSION.md) · [docs/STALENESS.md](../../STALENESS.md) · `make succession-drill` ·
+`make staleness-drill` ([D-058](../../DECISIONS.md), [D-059](../../DECISIONS.md)).
 
 **The drill is the result, not the document.** It clones into a scratch directory and runs the documented
 first-week sequence with no local state and no operator knowledge. Across three runs it found five real
@@ -150,7 +150,7 @@ inheritance gaps, none of which was visible from the working tree:
 | `SUCCESSION.md` step 2 | said `make repro && make verify-mirror`; `verify-mirror` has nothing to verify without `make mirror`. The drill failed on the exact instruction it was told to follow. |
 
 **Final run: all five steps green, 1384s total** — cold board 863s, artifacts rebuild + byte-verify 517s, network
-up 4s. Report: [docs/drills/SUCCESSION-DRILL.md](drills/SUCCESSION-DRILL.md).
+up 4s. Report: [docs/drills/SUCCESSION-DRILL.md](../../drills/SUCCESSION-DRILL.md).
 
 The drill clones **committed** state, so an uncommitted fix is invisible to it. That is correct — a successor
 inherits what was pushed, not what was in progress — and it means each fix had to be committed before the drill
@@ -162,10 +162,10 @@ All four now exist, each with a report in `docs/drills/`. Two of them found real
 
 | Drill | Verdict |
 |---|---|
-| **Root-dark** ([report](drills/ROOT-DARK.md)) | An issued credential verifies from **33.0 MB** of mirror bytes with no service reachable, and a revoked one is refused as the control. |
-| **Mirror sufficiency** ([report](drills/MIRROR-SUFFICIENCY.md)) | Static 33.0 MB once; recurring **26.8 MB/day per verifier at F1**, 2.7 MB at F2, 9.5 KB at F3. Method shown, `[extrapolated]` where it multiplies out. |
-| **Format legibility** ([report](drills/FORMAT-LEGIBILITY.md)) | 80 corpus vectors parsed from the primer alone, importing no AINRA code. |
-| **Crypto succession** ([CRYPTO-AGILITY.md](CRYPTO-AGILITY.md)) | The general retirement procedure, with SUITE-MIGRATION-01 as the worked precedent. §5 states the *removal* direction is unproven. |
+| **Root-dark** ([report](../../drills/ROOT-DARK.md)) | An issued credential verifies from **33.0 MB** of mirror bytes with no service reachable, and a revoked one is refused as the control. |
+| **Mirror sufficiency** ([report](../../drills/MIRROR-SUFFICIENCY.md)) | Static 33.0 MB once; recurring **26.8 MB/day per verifier at F1**, 2.7 MB at F2, 9.5 KB at F3. Method shown, `[extrapolated]` where it multiplies out. |
+| **Format legibility** ([report](../../drills/FORMAT-LEGIBILITY.md)) | 80 corpus vectors parsed from the primer alone, importing no AINRA code. |
+| **Crypto succession** ([CRYPTO-AGILITY.md](../../CRYPTO-AGILITY.md)) | The general retirement procedure, with SUITE-MIGRATION-01 as the worked precedent. §5 states the *removal* direction is unproven. |
 
 ### What the drills found — which is why they are drills
 
