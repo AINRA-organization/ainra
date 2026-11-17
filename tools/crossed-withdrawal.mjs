@@ -209,7 +209,10 @@ function courier(out) {
 // ── the verifier, in a process with no network ───────────────────────────────────────────────────────────────────
 const OPEN = argv.includes("--witness-open");
 // AINRA_CROSSED_NO_NAMESPACE=1 forces the fallback, so that path can be exercised on a machine that has namespaces.
-const nsWorks = !OPEN && process.env.AINRA_CROSSED_NO_NAMESPACE !== "1" && spawnSync("unshare", ["--user", "--net", "true"], { stdio: "ignore" }).status === 0;
+const nsWorks = !OPEN && process.env.AINRA_CROSSED_NO_NAMESPACE !== "1" && spawnSync("unshare", ["--user", "--net", "--map-root-user", "true"], { stdio: "ignore" }).status === 0;
+// The probe uses the flags the verifier runs with. It probed without --map-root-user until 17 November 2026, and a
+// runner that allows the namespace but not the uid map (GitHub's, by AppArmor policy) passed the probe and failed the
+// drill instead of taking the labelled fallback.
 function verify(round, extra = []) {
   const args = [SELF, "--verifier", dir, "--round", round, ...(nsWorks || OPEN ? ["--probe"] : []), ...extra];
   const r = nsWorks ? spawnSync("unshare", ["--user", "--net", "--map-root-user", "node", ...args], { encoding: "utf8" }) : spawnSync("node", args, { encoding: "utf8" });
