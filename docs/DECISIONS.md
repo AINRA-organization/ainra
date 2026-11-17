@@ -3742,6 +3742,10 @@ was given up in D-090; this follows from it.
 - Every party must be at the subject's registrar. A chain across registrars is refused while the rule applies.
 - The fixture registry in `site/data` keeps its unbound specimen chain: its directory does not bind chains, so it
   verifies as before, and says nothing about the test network.
+- Verifiers released before D-113 read a directory that binds chains in two ways, as with D-111's pinned head: the
+  Rust ones (edge, CLI) refuse the whole directory (`deny_unknown_fields`), which stops rather than accepts; the
+  TypeScript and Python ones ignore the field and check chains the old way, which stays open. So the release carrying
+  D-113 (0.10.0) is published before any directory that binds chains, and the test network's is signed after it.
 
 *Not changed:* the Standard, the passport format, the hop's signed bytes (D-012), every earlier vector and verdict.
 
