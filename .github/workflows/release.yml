@@ -56,6 +56,11 @@ jobs:
       # passed here. The release page for v0.8.1 was built from that fresh-clone board's signed artifacts.
       - name: cargo-audit for the board's advisories row (mirrors security.yml)
         run: cargo install cargo-audit --locked
+      # The last step drafts the release with the GitHub command line, which the rust:1.96 container does not have.
+      # v0.9.0's run built and checked every artifact and then stopped there on "gh: not found"; earlier runs never
+      # reached it, because a board row went red first each time (see the two steps above). Debian ships it.
+      - name: the GitHub command line, for the draft step
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends gh >/dev/null && gh --version | head -1
       - name: derive version from the tag
         id: v
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"

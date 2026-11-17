@@ -10,6 +10,18 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-17
+
+The release commit; its board is `docs/releases/v0.10.0-board.md`. Published to npm and PyPI from the tag, by the
+release workflow, on the operator's instruction. One change, from the first independent review (D-104):
+- **a delegation chain names parties that hold passports** (D-113, PLAN-M53 R2): where the directory says a
+  registrar binds its chains, every delegator presents its own passport and the keys that signed the hops must be
+  theirs (`chain_party_unbound`, the 22nd reason). Every earlier vector keeps its verdict.
+- The 0.9.0 version change also renamed a test dependency's version in `@ainra/edge`'s lock file (0.8.1 written as
+  0.9.0, beside its 0.8.1 tarball). Lock files are not published; corrected here.
+
+Versions 0.9.0 → 0.10.0 in the five packages.
+
 ### Security — a delegation chain names parties that hold passports (D-113, PLAN-M53 R2)
 
 - A delegation hop's two signatures were checked under keys the presentation supplied, so a chain proved no more than
@@ -1395,7 +1407,8 @@ A recorded 5-of-9 ceremony · ≥3 independent external verifiers · a 14-day/3-
 witnesses on separate infra. The machinery for all four is built and smoke-proven; `make genesis-status` shows the
 honest count (**7/11** today). See `GENESIS-CHECKLIST.md` and `outreach/`.
 
-[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/JacobJandon/ainra/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/JacobJandon/ainra/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/JacobJandon/ainra/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/JacobJandon/ainra/compare/v0.7.0...v0.8.0
