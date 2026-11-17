@@ -87,6 +87,20 @@ Versions 0.9.0 → 0.10.0 in the five packages.
   never dropped or moved.
 - `vectors/v1` 1169 → 1184; every earlier vector is byte-identical and keeps its verdict.
 
+## [0.9.1] — 2026-11-17
+
+The release commit; its board is `docs/releases/v0.9.1-board.md`. A security release for the 0.9 line (incident
+INC-2026-014, HIGH), beside 0.10.1, published to npm (under the tag `line-0.9`, so `latest` stays on 0.10) and PyPI
+from the tag on the operator's instruction. One change:
+- **a passport whose signed claims repeat a key is refused** (D-118): the TypeScript and Python verifiers accepted
+  one, keeping the last copy, and the core accepted one inside a free-form object. All three now require the signed
+  bytes to be canonical. `vectors/v1` 1169 → 1172 (`duplicate-key-0000..0002`); every earlier vector keeps its
+  verdict. The post-mortem is in `SECURITY.md`.
+- `publish.yml` publishes a version older than npm's `latest` under its own line's tag.
+
+Versions 0.9.0 → 0.9.1 in the five packages; `@ainra/edge`'s lock gets back the 0.8.1 version of a test dependency
+the 0.9.0 bump had renamed.
+
 ## [0.9.0] — 2026-11-17
 
 The release commit; its board is `docs/releases/v0.9.0-board.md`. Published to npm and PyPI from the tag, by the
@@ -1463,6 +1477,7 @@ honest count (**7/11** today). See `GENESIS-CHECKLIST.md` and `outreach/`.
 [Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.10.1...HEAD
 [0.10.1]: https://github.com/JacobJandon/ainra/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/JacobJandon/ainra/compare/v0.9.0...v0.10.0
+[0.9.1]: https://github.com/JacobJandon/ainra/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/JacobJandon/ainra/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/JacobJandon/ainra/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/JacobJandon/ainra/compare/v0.7.0...v0.8.0
