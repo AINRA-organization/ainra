@@ -10,3 +10,4 @@ To propose a change, copy the header of any proposal below into `ACP-NNNN-short-
 |---|---|---|---|
 | [ACP-0001](ACP-0001-change-proposals.md) | Change proposals | process | Active |
 | [ACP-0002](ACP-0002-no-governance-token.md) | No governance token, ever | process | Draft |
+| [ACP-0003](ACP-0003-neutrality-commitments.md) | Neutrality commitments of a shared root | process | Open |

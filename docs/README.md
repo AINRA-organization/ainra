@@ -9,6 +9,7 @@ Every document in this folder, grouped by what you would open it for. Where two 
 | Document | What it is |
 |---|---|
 | [../README.md](../README.md) | The project in one page |
+| [WEB4.md](WEB4.md) | What we mean by Web4, where the word stops, the three Web4-ready tests, and why one root is not a monopoly |
 | [IDENTITY.md](IDENTITY.md) | Agent identity, in five parts |
 | [WIRE-FORMAT-PRIMER.md](WIRE-FORMAT-PRIMER.md) | The wire format, from first principles |
 | [STATUS.md](STATUS.md) | What exists today, with counts held to the code |

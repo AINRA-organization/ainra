@@ -3785,3 +3785,39 @@ chambers that will decide after genesis.
 
 *Status:* ACCEPTED 2026-11-17, on the operator's word ("and any of that too", answering the research). Proposal:
 ACP-0001.
+
+## D-115 — AINRA is the shared identity root of Web4, and says what that does not mean
+
+*Problem:* the owner's direction of 17 November 2026: AINRA is to be "the godfathers of Web4", a Web4 organization,
+the one root of its field. Two research passes the same day: how shared roots and standards became universal (the
+DNS root and its registrars since 1999, a free certificate authority that came to issue most of the web's
+certificates, member-owned payment networks and their antitrust history, a member cooperative for interbank
+messaging, barcode and connectivity standards bodies, the IETF); and what "Web4" means today (the European
+Commission's "Web 4.0" policy track, which names AI agents among the non-human entities identity systems must handle;
+a 2026 wave of crypto projects using "Web4" for agents with wallets; no use by the large platforms, the IETF, W3C or the
+US and UK regulators).
+
+*Decision:*
+
+- **AINRA presents itself as the identity layer of the internet for AI agents: a global network for Web4, the web in
+  which software acts on people's behalf.** The order of the existing wording rule is kept: what it is, how it works,
+  its form last.
+- **"Web4" is a defined era word, never a brand**: one definition and where it stops in [WEB4.md](WEB4.md); always beside
+  "no token, no coin"; "Web 4.0" in European settings; not used in standards or regulatory filings, whose own
+  vocabulary (agent identity, authentication, delegation, revocation, oversight) is used there; never in the name,
+  domain, logo or protocol identifiers; never claimed as a trade mark.
+- **The category is owned by defining the bar**: three testable Web4-ready criteria (identification before admission, a
+  revocation refused within a stated freshness class, a decision record), checked with the open tools and certified by
+  no one for a fee.
+- **One root, not a monopolist**: the neutrality commitments are proposed as [ACP-0003](proposals/ACP-0003-neutrality-commitments.md),
+  open until 1 December 2026, under the process of D-114.
+
+*Rejected:* calling AINRA a monopoly in public (it invites exactly the resistance that keeps a root from being
+adopted, and the charter forbids the conduct that would make it one); a "Web4" trade mark (descriptive, contested, and
+the opposite of a neutrality signal); "Web4" as the first word anyone reads (it signals a crypto pivot to the audiences
+that decide adoption).
+
+*Not changed:* the charter, the Standard, any rule a verifier applies.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's word ("lets become … the godfathers of web4 so ainra is also a web4
+organization"). The commitments themselves wait for ACP-0003.

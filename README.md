@@ -7,6 +7,9 @@
 
 **Live site:** https://ainra.org/ · **Source & releases:** https://github.com/JacobJandon/ainra · **[Roadmap](ROADMAP.md)** · **[Governance](GOVERNANCE.md)**
 
+AINRA is a global network for **Web4**, the web in which software acts on people's behalf: one shared root, many
+registrars that issue, anyone who checks. No token, no coin. [What we mean by Web4, and where the word stops](docs/WEB4.md).
+
 **Prove your agent. Check theirs.** Both halves run locally — an agent presents signed facts, whoever receives them
 verifies on their own machine, and nothing reaches us in either direction.
 
