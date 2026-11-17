@@ -215,6 +215,17 @@ function parseChecked(claims: Uint8Array): Passport {
   } catch {
     throw new Reject("schema_violation");
   }
+  // D-118: the signed bytes must already be canonical, as a link's and a decision record's are (D-029): one passport,
+  // one byte string, everywhere. JSON.parse keeps the LAST copy of a repeated key and other parsers the first, so
+  // non-canonical bytes could show two verifiers two passports under one signature; the canonical form of what was
+  // parsed holds each key once, so a repeated key cannot pass.
+  let again: string;
+  try {
+    again = canonicalize(raw);
+  } catch {
+    throw new Reject("schema_violation");
+  }
+  if (!Buffer.from(again, "utf8").equals(Buffer.from(claims))) throw new Reject("schema_violation");
   scanForbidden(raw);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Reject("schema_violation");
   const o = raw as Record<string, unknown>;

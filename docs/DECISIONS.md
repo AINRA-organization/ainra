@@ -3684,3 +3684,35 @@ passes a key.
 
 *Status:* ACCEPTED 2026-11-17, on the operator's 15 November answer ("RSA next"). Plan: PLAN-M55 step 3.
 
+## D-118 — (on the 0.9 line; D-113 to D-117 are decisions of the 0.10 line) A passport's signed bytes are canonical: one passport, one byte string, everywhere
+
+*Problem:* a link's and a decision record's signed bytes must already be canonical (D-029), so each has exactly one
+spelling. A passport's did not: every implementation parsed the claim bytes and checked them field by field. JSON
+parsers disagree on a repeated key: JavaScript's and Python's keep the last copy, others keep the first, the Rust core's
+typed decode refused one in a typed field but kept the last inside a free-form object such as `transfer_history`.
+Measured on 17 November 2026, while checking an outside threat list ("parser differentials"): passports whose signed
+claims repeat `tier`, `authority.class`, or `transfer_history[0].from` were VALID in the TypeScript and Python
+verifiers; the core refused the first two and accepted the third. A registrar, alone able to sign such bytes, could
+show a first-copy verifier one passport and a last-copy verifier another under one signature. The log does not help:
+it commits the canonical body, which is the last-copy reading.
+
+*Decision:* the passport schema gate (step 1, in all three implementations) requires the signed claim bytes to equal the canonical encoding of what was parsed, else `schema_violation`.
+A repeated key cannot pass, since the canonical form holds each key once; neither can any other second spelling of the
+same passport (whitespace, key order, escapes). Every issuer already signs canonical bytes, so no honest passport is
+affected: all earlier vectors are byte-identical and keep their verdicts.
+
+*Held to:* three new vectors (`duplicate-key-0000` top level, `-0001` nested typed object, `-0002` free-form object),
+each `schema_violation` in the core, the TypeScript SDK, Python and the browser engine; `make diff` agreeing in all
+three; the vector generator's self-check refused to write the corpus while the core accepted `-0002`. Mutation: with the
+new comparison removed from the TypeScript and Python verifiers, all three vectors return VALID again.
+
+*Limits:* other signed material already had this rule (links, decision records), or is signed over a canonical
+re-encoding of the parsed object (hops, instance credentials, the directory): there only the reading whose canonical
+form is the signed one can pass the signature, so a repeated key can make one verifier refuse but never make two accept
+two different meanings. The integer-spelling divergence of D-054 is in instance credentials and stays open.
+
+*Not changed:* the format of any record; any reason code. A passport an honest registrar issued verifies as before.
+
+*Status:* ACCEPTED 2026-11-17, a security fix bringing three implementations to one answer, on the operator's word
+("please fully continue"). It refuses bytes no conforming issuer produces, so it is a maintenance and security change
+under D-114 rather than a rule change; it ships in the next patch release of each supported line.

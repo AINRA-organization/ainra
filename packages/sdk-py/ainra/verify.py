@@ -127,9 +127,13 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
         return invalid(R.SCHEMA_VIOLATION)
     if not isinstance(claims, dict):
         return invalid(R.SCHEMA_VIOLATION)
-    # Canonical-divergence guard (D-010): floats / non-ASCII keys / >2^53 ints.
+    # Canonical-divergence guard (D-010): floats / non-ASCII keys / >2^53 ints. And D-118: the signed bytes must
+    # already be canonical (as a link's and a decision record's are, D-029): json.loads keeps the LAST copy of a
+    # repeated key and other parsers the first, so non-canonical bytes could show two verifiers two passports under
+    # one signature. The canonical form of what was parsed holds each key once, so a repeated key cannot pass.
     try:
-        canonicalize(claims)
+        if canonicalize(claims).encode("utf-8") != claims_raw:
+            return invalid(R.SCHEMA_VIOLATION)
     except CanonError:
         return invalid(R.SCHEMA_VIOLATION)
     if _forbidden_present(claims):
@@ -142,7 +146,7 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
     # `act_chain` is NOT required. ainra-core declares it `#[serde(default)]` (passport.rs:141) — a root-issued
     # passport with no delegation may omit it entirely, and Rust and the TS SDK both accept that. This SDK
     # required it, so it rejected, with `schema_violation`, the very bundle shipped in the external verifier kit
-    # (kits/verifier/sample-artifacts/bundle-valid.json, which has no act_chain). The 1169-vector corpus cannot
+    # (kits/verifier/sample-artifacts/bundle-valid.json, which has no act_chain). The passport corpus cannot
     # catch it: the generator always emits the field, even when empty, so the omitted case is never on the wire.
     # Found by the M30 policy-parity harness — see docs/POLICY-PARITY.md.
     required = (
@@ -293,7 +297,7 @@ def _verify(anchors: dict, presentation: dict, now: int) -> Verdict:
     # credential claiming authority past the grant's end. Python accepted that; Rust and TS refuse it.
     #
     # No vector could see the split, and it is worth naming why: the generator sets every hop's ``exp`` equal to
-    # the passport's, and at equality both rules agree. A four-way differential over 1169 vectors proved agreement
+    # the passport's, and at equality both rules agree. A four-way differential over the whole passport corpus proved agreement
     # on every byte it was given and had nothing to say about the case nobody generated.
     if act_chain:
         eff_exp = act_chain[0].get("exp")
