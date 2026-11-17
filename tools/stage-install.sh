@@ -32,6 +32,12 @@ have_systemd() { command -v systemctl >/dev/null 2>&1 && systemctl --user show-e
 case "${1:-install}" in
 
 install)
+  # D-117: a checkout whose network moved to a home node must not start a second copy of it (a fork, one key).
+  if [ -f stage/MOVED-TO-NODE ] && [ "${AINRA_STAGE_TAKE_BACK:-0}" != 1 ]; then
+    echo "✗ this network now runs on $(head -1 stage/MOVED-TO-NODE). Installing it here too would fork its logs."
+    echo "  To bring it back: deploy/home-node/README.md § taking it back."
+    exit 1
+  fi
   if ! have_systemd; then
     echo "✗ no usable systemd --user session here."
     echo "  The units are still committed under $UNIT_SRC/ and work on any machine with a systemd user session."

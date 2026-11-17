@@ -1,0 +1,20 @@
+[Unit]
+# D-117. Installed by deploy/home-node/install.sh, which writes the checkout's path in place of @REPO@.
+Description=AINRA home watch: the published record and every registrar's log, checked (reads only)
+Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+After=network-online.target ainra-stage.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=%h/.config/ainra-home/home.env
+ExecStart=/usr/bin/env bash tools/home-watch.sh
+# An alarm (exit 3) leaves the unit failed on purpose: `systemctl --user --failed` then shows it to anyone who looks.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ainra-home-watch
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes

@@ -2,7 +2,7 @@
 # and everything is green in under 10 minutes on a laptop.
 
 .PHONY: pilot-hostile link-parity link-e2e link-p256-e2e issuer-link-e2e tsl-check online-verifier-check pilot-e2e watch
-.PHONY: monitor-e2e proposals-check cert-link-e2e crossed-withdrawal published-root-check record-agrees record-agrees-drill remote-ceremony-drill desk desk-drill epoch-log-drill probe-ladder incident-check monthly-report monthly-report-check outage-drill sign-epoch-rehearsal accreditation-checks leak-ledger control-page-drill ctl-drill negative-controls replay-imports witness-feed-drill release-state-check wimse-check wimse-e2e live-drills gate-parity py-test sign-diff python-agent-e2e signature-agent-check signature-agent-e2e edge-build edge-test edge-e2e edge-runtimes personhood-test personhood-live live-up live-down live-status identity-e2e root-dark-drill mirror-sufficiency legibility-drill cli-deps succession-drill staleness-drill amendment-check amendment-check-negative doctrine doctrine-negative number-syntax engine-parity one-decode-path bench-gate all test vectors vectors-check diff cli-check suite-migration-drill ceremony-rehearsal-multi witness-check push-advisory-check changelog-board-check fmt clippy fuzz-smoke bench sdk-build sdk-test ci clean status console samples drill explorer demo scale ceremony testbed wedge-build wedge-test repro mirror verify-mirror check-freeze freeze genesis-local verifier-kit-smoke ceremony-dry-run soak-smoke drill-networked preflight s7 license gitleaks audit verify-as-external verifier-triple-drill soak-verify genesis-status verify-transcript genesis-board-demo release doctor verifier-operator-drill site site-up site-down site-check stage-all stage-all-down explorer-up explorer-down ainrascan stage-up stage-down stage-status stage-smoke demo-walkthrough three-clients genesis-verify config-diff declaration genesis-rehearsal site-demo verify issue-first registrar-console mcp-test skills-replay presentation-diff conformance campaign-status campaign-init campaign-gates campaign-check publish-preflight stage-install stage-uninstall stage-health stranger probe-drill miri reasons-check corpus-check instance-gate claims-check claims claims-live policy-parity deploy-current site-net site-net-check lockfile-sync soak-ingest outreach-check names-check interop interop-negative
+.PHONY: root-seal-drill home-watch-drill monitor-e2e proposals-check cert-link-e2e crossed-withdrawal published-root-check record-agrees record-agrees-drill remote-ceremony-drill desk desk-drill epoch-log-drill probe-ladder incident-check monthly-report monthly-report-check outage-drill sign-epoch-rehearsal accreditation-checks leak-ledger control-page-drill ctl-drill negative-controls replay-imports witness-feed-drill release-state-check wimse-check wimse-e2e live-drills gate-parity py-test sign-diff python-agent-e2e signature-agent-check signature-agent-e2e edge-build edge-test edge-e2e edge-runtimes personhood-test personhood-live live-up live-down live-status identity-e2e root-dark-drill mirror-sufficiency legibility-drill cli-deps succession-drill staleness-drill amendment-check amendment-check-negative doctrine doctrine-negative number-syntax engine-parity one-decode-path bench-gate all test vectors vectors-check diff cli-check suite-migration-drill ceremony-rehearsal-multi witness-check push-advisory-check changelog-board-check fmt clippy fuzz-smoke bench sdk-build sdk-test ci clean status console samples drill explorer demo scale ceremony testbed wedge-build wedge-test repro mirror verify-mirror check-freeze freeze genesis-local verifier-kit-smoke ceremony-dry-run soak-smoke drill-networked preflight s7 license gitleaks audit verify-as-external verifier-triple-drill soak-verify genesis-status verify-transcript genesis-board-demo release doctor verifier-operator-drill site site-up site-down site-check stage-all stage-all-down explorer-up explorer-down ainrascan stage-up stage-down stage-status stage-smoke demo-walkthrough three-clients genesis-verify config-diff declaration genesis-rehearsal site-demo verify issue-first registrar-console mcp-test skills-replay presentation-diff conformance campaign-status campaign-init campaign-gates campaign-check publish-preflight stage-install stage-uninstall stage-health stranger probe-drill miri reasons-check corpus-check instance-gate claims-check claims claims-live policy-parity deploy-current site-net site-net-check lockfile-sync soak-ingest outreach-check names-check interop interop-negative
 
 all: fmt clippy test vectors diff
 
@@ -134,7 +134,7 @@ sdk-test: sdk-build
 	cd packages/sdk-ts && npm test
 
 # The full local gate mirror of .github/workflows/ci.yml.
-ci: fmt clippy lockfile-sync soak-ingest proposals-check reasons-check corpus-check instance-gate claims-check release-state-check replay-imports negative-controls leak-ledger outage-drill policy-parity test vectors diff conformance cli-check suite-migration-drill ceremony-rehearsal-multi sign-epoch-rehearsal accreditation-checks witness-check push-advisory-check changelog-board-check sdk-test site site-check
+ci: fmt clippy lockfile-sync soak-ingest proposals-check root-seal-drill reasons-check corpus-check instance-gate claims-check release-state-check replay-imports negative-controls leak-ledger outage-drill policy-parity test vectors diff conformance cli-check suite-migration-drill ceremony-rehearsal-multi sign-epoch-rehearsal accreditation-checks witness-check push-advisory-check changelog-board-check sdk-test site site-check
 	node tools/s7-lint.mjs
 	node tools/license-check.mjs
 	./tools/fuzz-smoke.sh
@@ -749,6 +749,15 @@ crossed-withdrawal: sdk-build  ## issuer A withdraws; a verifier with no network
 	@cargo build --release -q -p ainra-services --bin registrar-box -p ainra-ceremony --bin accredit
 	@node tools/crossed-withdrawal.mjs --witness-open
 	@node tools/crossed-withdrawal.mjs
+
+# D-117: the test root's seed sealed at rest, opened only in memory with the passphrase. Hermetic, a throwaway seed.
+root-seal-drill:  ## the root seed sealed: opens in memory only, refuses a wrong passphrase, an overwrite, tampering, a disk
+	@bash tools/root-seal-drill.sh
+
+# D-117: the home node's watcher (ctl status + a monitor per registrar), against the running test network.
+home-watch-drill:  ## the home watcher: a planted fork alarms once, is not repeated, and its clearing is reported
+	@cargo build --release -q -p ainra-cli-rs --bin ainra
+	@bash tools/home-watch-drill.sh
 
 published-root-check: sdk-build  ## the public fixed seed cannot sign for the network this site publishes (D-109); with its witness
 	@cargo build --release -q -p ainra-ceremony --bin accredit

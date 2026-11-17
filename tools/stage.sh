@@ -161,10 +161,32 @@ accredit_net(){ # ask each running registrar for its accreditation and sign the 
   # could sign a directory that verified under the roots this network publishes. Losing the file means a new root
   # (see the runbook); it is never printed. AINRA_STAGE_ROOT_SEED names another place for it.
   local seedfile="${AINRA_STAGE_ROOT_SEED:-$STAGE/genesis/root.seed}"
+  # D-117: sealed at rest. When only SEED.gpg is there, the seed is opened into memory for this signing (the operator
+  # types the passphrase), and shredded the moment the directory is signed, whatever the outcome.
+  if [ ! -s "$seedfile" ] && [ -s "$seedfile.gpg" ]; then
+    echo "stage: the root seed is sealed (D-117) — type its passphrase to sign this directory"
+    local opened rc
+    opened="$(bash tools/root-seal.sh open "$seedfile.gpg")" || { echo "stage: the root seed did not open — nothing accredited, nothing published"; return 1; }
+    AINRA_STAGE_ROOT_SEED="$opened" accredit_sign; rc=$?
+    shred -u "$opened" 2>/dev/null || rm -f "$opened"
+    return $rc
+  fi
+  # A network that has published a root is signed by that root or not at all. Making a fresh seed here would only meet
+  # the change-of-root refusal below, and would leave a stray secret behind on a machine that should hold none (a home
+  # node the network was moved to, D-117). Sign on the machine that holds the seed: deploy/home-node/sign-for-node.sh.
+  if [ ! -s "$seedfile" ] && [ -f "$PUB/roots.json" ] && [ "${AINRA_STAGE_NEW_ROOT:-0}" != 1 ]; then
+    echo "stage: this network's root seed is not on this machine ($seedfile, sealed or plain) — nothing accredited, nothing published."
+    echo "stage: sign where the seed is kept (deploy/home-node/sign-for-node.sh), or set AINRA_STAGE_NEW_ROOT=1 for a deliberate new root."
+    return 1
+  fi
   if [ ! -s "$seedfile" ]; then
     ( umask 077; head -c 32 /dev/urandom > "$seedfile" ) || { echo "stage: cannot write the root seed at $seedfile"; return 1; }
     echo "stage: made a new root seed at $seedfile (0600). Back it up: without it this network needs a new root."
   fi
+  accredit_sign
+}
+accredit_sign(){ # sign the directory with the seed at AINRA_STAGE_ROOT_SEED (or the default place); sets STAGE_EPOCH
+  local seedfile="${AINRA_STAGE_ROOT_SEED:-$STAGE/genesis/root.seed}"
   # A directory's epochs belong to one root. If the root about to sign is not the root this network has published,
   # that is a change of root, and it happens only when someone says so (AINRA_STAGE_NEW_ROOT=1): the history under
   # the old root is kept beside the new one, under its fingerprint, and a new history starts at epoch 1.
@@ -204,8 +226,20 @@ accredit_net(){ # ask each running registrar for its accreditation and sign the 
   STAGE_EPOCH="$epoch"
 }
 
+# D-117: once the network has moved to a home node, this checkout's copy of its state is a backup, not a network.
+# Two registrars running from one key and one log would each grow their own history: a fork, signed by one key.
+moved_guard(){
+  if [ -f "$STAGE/MOVED-TO-NODE" ] && [ "${AINRA_STAGE_TAKE_BACK:-0}" != 1 ]; then
+    echo "stage: this network now runs on $(head -1 "$STAGE/MOVED-TO-NODE") (moved $(sed -n 2p "$STAGE/MOVED-TO-NODE"))."
+    echo "stage: starting it here too would fork its logs. To bring it back, stop it there first, copy its state back,"
+    echo "stage: then set AINRA_STAGE_TAKE_BACK=1 once (deploy/home-node/README.md § taking it back)."
+    exit 1
+  fi
+}
+
 case "${1:-up}" in
 up)
+  moved_guard
   mkdir -p "$STAGE" "$PUB"
   [ -f "$TOKEN_FILE" ] || openssl rand -hex 16 > "$TOKEN_FILE" 2>/dev/null || head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE"
   export AINRA_STAGE_ISSUE_TOKEN="$(cat "$TOKEN_FILE")"

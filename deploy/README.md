@@ -28,6 +28,12 @@ Services: `registrar-07` (:4907), `registrar-11` (:4911, a distinct key class), 
 (:8091, the public read surface). Images are minimal, non-root (uid 10001/10002), read-only rootfs, health-checked.
 Pin image digests in production (`docker inspect --format '{{index .RepoDigests 0}}'`).
 
+## A home node (one always-on small computer; the root seed stays with the operator)
+
+`deploy/home-node/README.md` (D-117): move the running test network to an always-on node in one command, watch it from
+there every five minutes, and sign its directory from the operator's machine, where the root seed is kept sealed
+(`tools/root-seal.sh`).
+
 ## Three-host regional layout (you supply hosts + domains)
 
 The read surface scales by CDN, not by more registrars; the split is about **failure independence** and putting
@@ -41,8 +47,9 @@ witnesses on separate operators/infra.
   → cdn.staging.example       → behind the same CDN       → a third mirror
 ```
 
-1. Run `ainra/services:staging` on host-A (`registrar-07`) and host-B (`registrar-11`) — distinct keys already
-   (the daemon derives them from the id).
+1. Run `ainra/services:staging` on host-A (`registrar-07`) and host-B (`registrar-11`), each with
+   `AINRA_FRESH_KEYS=1`: each makes its own keys from the OS's randomness in its data volume on first start (D-107).
+   Keep that volume; it is the registrar's identity.
 2. Run `ainra/artifacts:staging` on all three, each serving a mirror of the public tree (docs/ARTIFACTS.md § mirroring); front
    them with one CDN hostname (e.g. `cdn.staging.<your-domain>`) with the two cache rules from
    docs/ARTIFACTS.md § the contract. **You supply the hosts + domain; everything else is here.**

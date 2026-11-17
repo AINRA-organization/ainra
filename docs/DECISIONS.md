@@ -3852,3 +3852,48 @@ is what logged-before-valid already refuses at every verifier. Status-list chang
 
 *Status:* ACCEPTED 2026-11-17, on the operator's word ("do fully continue"); no rule changes, so no proposal window
 (D-114).
+
+## D-117 — The test root's seed is sealed at rest, and the test network can live on a node of its own
+
+*Problem:* one laptop was the whole test network: both registrars, the witness, the published record, and the test
+root's 32-byte seed (D-109) in plain bytes. When the laptop slept, the network stopped answering. And the seed that
+signs every directory of the network sat, readable by anything running as the operator, on a machine used every day,
+which a root should never do. The operator asked for both to be solved before any hardware arrives.
+
+*Decision:*
+
+- **Sealed at rest.** `tools/root-seal.sh seal` encrypts the seed (and its backup copy) under a passphrase only the
+  operator knows (GnuPG symmetric, AES-256, iterated and salted SHA-512 key derivation at the largest count), proves the
+  sealed copy opens to the same 32 bytes, and only then shreds the plain one. `tools/stage.sh` opens a sealed seed into a
+  RAM file system (the per-user runtime directory, else `/dev/shm`; never a disk) for one signing, the operator typing
+  the passphrase, and shreds it the moment the directory is signed, whatever the outcome; a guard shreds it after ten
+  minutes in any case. The seed is never printed and never on a command line.
+- **No stray roots.** `tools/stage.sh` no longer makes a fresh seed for a network that has already published a root
+  (it could only meet the change-of-root refusal, and would leave a secret behind); without the seed it refuses and
+  names the machine that should sign.
+- **A home node.** `deploy/home-node/` moves the running network to an always-on node (`move-to-node.sh`: stop here,
+  copy the state without the seed, start there, check the node serves the same roots, then mark this copy moved),
+  installs a watch there (`tools/home-watch.sh` every five minutes: `ainra ctl status` against pinned roots and
+  `ainra monitor` against each registrar; one alert per distinct alarm and one when it clears), and signs from the
+  operator's machine through an ssh tunnel (`sign-for-node.sh`): the seed never reaches the node.
+- **One network runs once.** After a move, `tools/stage.sh up` and `make stage-install` refuse to start the copy left
+  behind: two registrars with one key and one log would fork it. `AINRA_STAGE_TAKE_BACK=1` brings it back on purpose.
+
+*Held to:* `make root-seal-drill` (in `make ci`, hermetic, a throwaway seed): the sealed copy opens in memory, 0600, to
+the same bytes; a wrong passphrase, a second seal over the first, a tampered sealed file and a runtime directory on a
+disk are each refused. Against the running test network, a sealed throwaway root was opened, used by `accredit`, refused
+as not this network's root, and shredded; the published record was unchanged. `make home-watch-drill`: a planted fork
+alarms once, is not alerted again, and its clearing is reported. `install.sh install --watch-only` was installed,
+ran its first round clean over both registrars and the record, and was removed.
+
+*Limits:* sealing protects the seed at rest, not while it is open: anything running as the operator during the minute
+of a signing could read it. A machine that never touches a network (directories in and out by USB or QR, D-101) is the
+next step, when the hardware is there. The move and the tunnel signing were checked only as far as one machine allows
+(a dry run, the guards, shellcheck); their first real run is on the node. The node still binds loopback, so the network
+is no more reachable by a stranger than before. None of this is about the production root, which is born at the genesis
+ceremony from its custodians' keys (D-094).
+
+*Not changed:* any rule a verifier applies; the format of any record; the test network's root.
+
+*Status:* ACCEPTED 2026-11-17, on the operator's word ("lets solve this … for now lets focus on ainra first"); no rule
+changes, so no proposal window (D-114). The operator seals the real seed by running `bash tools/root-seal.sh seal`.

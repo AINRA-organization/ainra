@@ -1,0 +1,11 @@
+[Unit]
+Description=AINRA home watch, every five minutes
+Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -10,6 +10,16 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — the root seed sealed, and a home node for the test network (D-117)
+
+- `tools/root-seal.sh` keeps the test root's seed encrypted at rest under the operator's passphrase; `tools/stage.sh`
+  opens it in memory for a signing and shreds it after. `make root-seal-drill` (in `make ci`).
+- `deploy/home-node/`: move the test network to an always-on node (`move-to-node.sh`), watch it every five minutes
+  (`tools/home-watch.sh`, `ainra-home-watch.timer`, alerts once per alarm), and sign its directory from the machine
+  that keeps the seed (`sign-for-node.sh`). `make home-watch-drill`.
+- `tools/stage.sh` no longer makes a fresh root seed for a network that has published a root, and neither it nor
+  `make stage-install` starts a second copy of a network that has moved to a node.
+
 ### Added — anyone can watch a registrar's log (D-116, PLAN-M53 step 11)
 
 - `GET /log/entries` serves every log entry, a page at a time. `ainra monitor` checks the checkpoint under the

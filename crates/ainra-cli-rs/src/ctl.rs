@@ -315,7 +315,7 @@ pub fn cmd_ctl(args: &[String]) -> i32 {
             }
         }
         _ => {
-            eprintln!("usage: ainra ctl status --net <url|dir> [--roots <pinned roots.json>] [--mirror <url|dir>]… [--state <file>] [--max-age <secs>] [--fresh-max <secs>]\n       ainra ctl diff <N> <M> --net <url|dir>\n       ainra ctl watch --net <url|dir> [--interval <secs>] (and the status options)");
+            eprintln!("usage: ainra ctl status --net <url|dir> [--roots <pinned roots.json>] [--mirror <url|dir>]… [--state <file>] [--max-age <secs>] [--fresh-max <secs>] [--now <unix s>]\n       ainra ctl diff <N> <M> --net <url|dir>\n       ainra ctl watch --net <url|dir> [--interval <secs>] (and the status options)");
             2
         }
     }

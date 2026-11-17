@@ -16,7 +16,10 @@
   network's published history, and the earlier epochs stay in it). Afterwards: `make site-net`, `make site`,
   `make site-net-check`, and deploy. `make record-agrees` is red until the site carries the new record.
 - **The staging network's root seed:** `stage/genesis/root.seed`, 32 bytes, mode 0600, made by `tools/stage.sh` the
-  first time it accredits (D-109). **Keep a copy somewhere else.** If it is lost the network needs a new root:
+  first time it accredits (D-109). Since D-117 it is kept **sealed**: `bash tools/root-seal.sh seal` encrypts it (and
+  the backup copy) under a passphrase only the operator knows and shreds the plain bytes; `tools/stage.sh` then opens it
+  in memory for each signing and shreds it after. `bash tools/root-seal.sh status` says which it is. Lose the passphrase
+  and the seed is lost. **Keep a copy somewhere else.** If it is lost the network needs a new root:
   `AINRA_STAGE_NEW_ROOT=1 bash tools/stage.sh accredit`, then `AINRA_SITE_NEW_ROOT=1 make site-net`, `make site`,
   `make site-net-check`, deploy, and a news entry, because everyone who saved the old roots must fetch the new ones.
   Without the flags both scripts stop at a root they did not expect and change nothing.
