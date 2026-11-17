@@ -53,7 +53,9 @@ bash deploy/home-node/move-to-node.sh pi@ainra-node.local
 
 In this order, so that at no moment two copies run: stop the network here; copy its state (never the root seed);
 install it on the node (`install.sh`: the network's units and the home watch); check that the node serves the same
-roots; only then mark this copy as moved (`stage/MOVED-TO-NODE`) and remove its units. If any step fails, the network is
+roots; only then mark this copy as moved (`stage/MOVED-TO-NODE`) and remove its units; last, a standing ssh tunnel
+(`ainra-node-tunnel.service`, here) keeps the node's network at its usual ports on this machine, so every local tool,
+drill and page works unchanged. If any step fails, the network is
 started here again as it was. Afterwards `tools/stage.sh up` and `make stage-install` refuse to start a second copy
 here: two registrars with one key and one log would fork it.
 
@@ -87,7 +89,8 @@ friend's machine: watchers are worth most where the network is not).
 
 ## Taking it back
 
-Stop it on the node (`make stage-uninstall` there), copy its `stage/` back (`rsync -a pi@ainra-node.local:ainra/stage/ stage/`,
+Stop the tunnel here (`systemctl --user disable --now ainra-node-tunnel`), stop the network on the node
+(`make stage-uninstall` there), copy its `stage/` back (`rsync -a pi@ainra-node.local:ainra/stage/ stage/`,
 keeping this machine's root seed), remove `stage/MOVED-TO-NODE`, and run `AINRA_STAGE_TAKE_BACK=1 make stage-install`.
 
 ## What is honest to say

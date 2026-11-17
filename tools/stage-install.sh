@@ -69,9 +69,12 @@ install)
 
   # 3. the units themselves
   mkdir -p "$UNIT_DST"
-  cp "$UNIT_SRC"/ainra-registrar@.service "$UNIT_SRC"/ainra-witnessd.service \
-     "$UNIT_SRC"/ainra-artifacts.service  "$UNIT_SRC"/ainra-stage.target \
-     "$UNIT_SRC"/ainra-stage-watchdog.service "$UNIT_SRC"/ainra-stage-watchdog.timer "$UNIT_DST/"
+  # The committed units name the operator's checkout (%h/Desktop/Solvatron/ainra); a node's checkout is elsewhere
+  # (D-117), so each unit is written with the path of the checkout installing it.
+  for u in ainra-registrar@.service ainra-witnessd.service ainra-artifacts.service ainra-stage.target \
+           ainra-stage-watchdog.service ainra-stage-watchdog.timer; do
+    sed "s|%h/Desktop/Solvatron/ainra|$REPO|g" "$UNIT_SRC/$u" > "$UNIT_DST/$u"
+  done
   systemctl --user daemon-reload
 
   # 4. survive logout and reboot. Without linger, user units stop the moment the session ends — which would leave

@@ -57,4 +57,16 @@ fi
 echo "== 6 · this copy is now a backup"
 if [ $DRY = 0 ]; then printf '%s:%s\n%s\n' "$NODE" "$DIR" "$(date -u +%F)" > stage/MOVED-TO-NODE; fi
 run bash tools/stage-install.sh uninstall
+
+echo "== 7 · the node, reachable here on the usual ports (so every local tool works unchanged)"
+UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+if [ $DRY = 1 ]; then echo "+ install ainra-node-tunnel.service for $NODE"
+else
+  sed "s|@NODE@|$NODE|g" deploy/home-node/ainra-node-tunnel.service > "$UD/ainra-node-tunnel.service"
+  systemctl --user daemon-reload; systemctl --user enable --now ainra-node-tunnel.service >/dev/null 2>&1
+  sleep 3
+  got="$(curl -s -m 5 http://127.0.0.1:8091/roots.json | sha256sum | cut -c1-64)"
+  [ "$got" = "$want" ] && echo "   ok: http://127.0.0.1:8091 here serves the node's record" \
+    || echo "!! the tunnel is not answering yet: journalctl --user -u ainra-node-tunnel"
+fi
 echo "moved. The network runs on $NODE; this machine keeps the sealed root seed and signs through sign-for-node.sh."
