@@ -62,16 +62,22 @@ AINRA_HOME_EXPECT=
 AINRA_HOME_STATE=$HOME/.local/state/ainra-home
 # A command run on a new alarm and on its clearing, the report on its standard input. Empty: the journal only.
 AINRA_HOME_ALERT=
+# D-121: outside witnesses that agreed to cosign, one per line "<submission URL> <cosigning vkey>". Empty: idle.
+AINRA_HOME_WITNESSES=
 ENV
     chmod 600 "$CONF/home.env"
   fi
   mkdir -p "$UNIT_DST"
   sed "s|@REPO@|$REPO|" deploy/home-node/ainra-home-watch.service > "$UNIT_DST/ainra-home-watch.service"
   cp deploy/home-node/ainra-home-watch.timer "$UNIT_DST/"
+  # D-121: the witness round, idle until AINRA_HOME_WITNESSES names a witness that agreed to cosign.
+  sed "s|@REPO@|$REPO|" deploy/home-node/ainra-home-witness.service > "$UNIT_DST/ainra-home-witness.service"
+  cp deploy/home-node/ainra-home-witness.timer "$UNIT_DST/"
   systemctl --user daemon-reload
   loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q Linger=yes || loginctl enable-linger "$USER" 2>/dev/null \
     || echo "!! linger is off: the watch stops at logout. Run: sudo loginctl enable-linger $USER"
   systemctl --user enable --now ainra-home-watch.timer >/dev/null
+  systemctl --user enable --now ainra-home-witness.timer >/dev/null
   echo "== the first round =="
   systemctl --user start ainra-home-watch.service; c=$?
   journalctl --user -u ainra-home-watch -n 4 --no-pager -o cat
@@ -85,8 +91,9 @@ status)
   [ -s "$st/alarm.txt" ] && { echo "-- STANDING ALARM:"; cat "$st/alarm.txt"; } || echo "no standing alarm"
   ;;
 uninstall)
-  systemctl --user disable --now ainra-home-watch.timer >/dev/null 2>&1 || true
-  rm -f "$UNIT_DST/ainra-home-watch.service" "$UNIT_DST/ainra-home-watch.timer"
+  systemctl --user disable --now ainra-home-watch.timer ainra-home-witness.timer >/dev/null 2>&1 || true
+  rm -f "$UNIT_DST/ainra-home-watch.service" "$UNIT_DST/ainra-home-watch.timer" \
+        "$UNIT_DST/ainra-home-witness.service" "$UNIT_DST/ainra-home-witness.timer"
   systemctl --user daemon-reload
   echo "home watch removed (its configuration in $CONF and its memory are kept). The network: make stage-uninstall."
   ;;

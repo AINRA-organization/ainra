@@ -1,0 +1,20 @@
+[Unit]
+# D-117. Installed by deploy/home-node/install.sh, which writes the checkout's path in place of @REPO@.
+Description=AINRA witness round: outside witnesses cosign each registrar log (D-121; idle until configured)
+Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+After=network-online.target ainra-stage.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=%h/.config/ainra-home/home.env
+ExecStart=/usr/bin/env bash tools/witness-round.sh
+# A refusal (exit 3: an untrusted key or an inconsistent log) leaves the unit failed on purpose, for anyone to see.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ainra-home-witness
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes

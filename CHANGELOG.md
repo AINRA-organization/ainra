@@ -15,7 +15,9 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 - A registrar keeps a permanent Ed25519 note key and serves its checkpoint as a C2SP signed note (`GET /checkpoint`,
   `GET /note-key`); `ainra witness-submit` takes it to any c2sp.org/tlog-witness witness and checks the cosignature.
   `make witness-c2sp-drill` runs it against `litewitness`, an independent witness: cosigned, refused a bad proof and an
-  untrusted key. ACP-0005 (Draft) proposes the note key in the directory and an optional witness policy for verifiers.
+  untrusted key. A scheduled round for home nodes (`tools/witness-round.sh`, `ainra-home-witness.timer`) submits
+  only a grown log, or once a day, and idles until a witness is configured. ACP-0005 (Draft) proposes the note key in
+  the directory and an optional witness policy for verifiers.
 
 ### Added — a registrar the network does not run (D-120)
 

@@ -87,6 +87,14 @@ make home-watch-drill                            # a planted fork alarms once, i
 `install.sh install --watch-only` installs the watch alone, to watch a network that runs elsewhere (a second home, a
 friend's machine: watchers are worth most where the network is not).
 
+## Outside witnesses (D-121)
+
+`ainra-home-witness.timer` runs `tools/witness-round.sh` every hour: for each registrar and each witness listed in
+`AINRA_HOME_WITNESSES` (in `~/.config/ainra-home/home.env`, one per line, `<submission URL> <cosigning vkey>`), it has
+the witness cosign the log with `ainra witness-submit`, but only when the log has grown, or once a day otherwise. It
+does nothing until a witness that agreed to cosign is listed. A refusal (an untrusted key, an inconsistent log) leaves
+the unit failed, for anyone to see. `make witness-c2sp-drill` runs the same round against an independent witness.
+
 ## Taking it back
 
 Stop the tunnel here (`systemctl --user disable --now ainra-node-tunnel`), stop the network on the node

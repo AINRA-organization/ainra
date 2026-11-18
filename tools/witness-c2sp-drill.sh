@@ -12,6 +12,7 @@
 #   4. the submitter forgets what it last sent: the witness answers 409 with its size, and the submitter recovers
 #   5. a corrupted consistency proof: refused 422 by the witness
 #   6. the witness trusts another key for this origin: refused 403
+#   7. the scheduled round (tools/witness-round.sh): cosigns a grown log, skips an unchanged one, idle unconfigured
 #
 # WITNESS: steps 2 to 4 are the positive controls (an independent witness accepts our notes, proofs and recovery);
 # steps 5 and 6 are negative ones (the same witness refuses a bad proof and an untrusted key). If 5 or 6 is accepted,
@@ -103,6 +104,19 @@ EOF
 submit; c=$?
 [ $c = 3 ] && grep -q "REFUSED 403" "$T/out" && ok "refused 403: the witness does not trust a note signed by our key for this origin" \
   || { fail "expected 403 (exit 3), got exit $c:"; cat "$T/out"; }
+
+echo "6 · the scheduled round (tools/witness-round.sh): the key trusted again, the log grown, then unchanged"
+"$WC" del-key -db "$T/w.db" -origin "$ORIGIN" -key "$FAKE" >/dev/null 2>&1
+"$WC" add-key -db "$T/w.db" -origin "$ORIGIN" -key "$LVKEY" >/dev/null 2>&1
+issue sixth
+export AINRA_HOME_REGISTRARS="http://$REG" AINRA_HOME_STATE="$T/round" AINRA_HOME_WITNESSES="http://$WIT $WVKEY"
+if bash tools/witness-round.sh > "$T/round1" 2>&1 && grep -q "^COSIGNED" "$T/round1"; then ok "round 1 cosigned: $(grep COSIGNED "$T/round1")"
+else fail "the round did not cosign:"; cat "$T/round1"; fi
+if bash tools/witness-round.sh > "$T/round2" 2>&1 && grep -q "skipped" "$T/round2" && ! grep -q "^COSIGNED" "$T/round2"; then
+  ok "round 2, nothing new: skipped, no request sent"
+else fail "round 2 should have skipped:"; cat "$T/round2"; fi
+if AINRA_HOME_WITNESSES="" bash tools/witness-round.sh 2>&1 | grep -q "no witnesses configured"; then ok "no witnesses configured: it does nothing"
+else fail "with no witnesses it should do nothing"; fi
 
 [ $bad = 0 ] && echo "WITNESS C2SP DRILL OK: an independent witness cosigned our log twice and through a 409, and refused a bad proof and an untrusted key" \
              || echo "WITNESS C2SP DRILL FAILED"

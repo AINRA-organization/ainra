@@ -4034,13 +4034,17 @@ Found by the phase-0 research of 18 November 2026, confirmed in the code.
   cosigned, 3 refused for a reason that may be an alarm (403 untrusted key, 422 inconsistent log).
 - `ainra_services::note` formats and verifies signed notes, key ids and verifier keys, log signatures (type 0x01) and
   Ed25519 cosignatures (type 0x04); ML-DSA-44 cosignatures (0x06) are recognised and reported, not verified yet.
+- **A scheduled round** (`tools/witness-round.sh`, `ainra-home-witness.timer` on a home node, hourly) submits each
+  registrar's log to each configured witness, only when the log has grown or once a day, the rate a log promises a
+  witness network; it does nothing until a witness that agreed to cosign is configured.
 - How a log's note key is published by the root, and what verifiers may require, is a rule: ACP-0005 (Draft).
 
 *Held to:* `make witness-c2sp-drill` against `litewitness`, an independent implementation of the witness protocol
 (filippo.io/torchwood): told the origin and the note key as a witness operator would be, it cosigned the first
 checkpoint (cosignature verified under its key), cosigned again after the log grew (our consistency proof accepted),
 answered a stale submission 409 with its size and cosigned after the submitter's recovery, refused a corrupted proof
-422, and refused 403 once it trusted another key for the origin. Unit tests: a note verifies under its key and no
+422, and refused 403 once it trusted another key for the origin; the scheduled round cosigned a grown log, sent nothing
+for an unchanged one, and stayed idle with no witness configured. Unit tests: a note verifies under its key and no
 other and not after its size changes; a verifier key whose id does not match is refused; a cosignature verifies only
 over its own `cosignature/v1` message.
 
