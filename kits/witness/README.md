@@ -126,3 +126,17 @@ fix — see D-021 — preserved across the network transport. The regression liv
   full clone→running-witness path (well under the 10-minute onboarding bar the kit promises).
 - **Out of scope (deployment):** TLS/auth/rate-limiting on the transport, witness discovery, and hardware witnesses —
   standard operational concerns layered on top; the security-relevant logic is all in `ainra-services::witness`.
+
+## Already running a public witness? (C2SP, D-121)
+
+A registrar's log also speaks c2sp.org/tlog-witness, so a witness you already run for other logs can cosign an AINRA
+log with no AINRA code:
+
+- the log's origin and note key: `GET <registrar>/note-key` prints the verifier key (`<origin>+<id>+<key>`); add it
+  to your witness for that origin (for `litewitness`: `witnessctl add-log -origin <origin>` and
+  `witnessctl add-key -origin <origin> -key <vkey>`);
+- the registrar's operator then runs `ainra witness-submit --registrar <url> --witness <your witness> --state <file>
+  --witness-vkey <your cosigning vkey>` on a schedule.
+
+Take the note key from the root-signed directory once ACP-0005 is decided; until then compare it with the registrar's
+operator by a second channel. `make witness-c2sp-drill` shows the whole exchange against `litewitness` on one machine.

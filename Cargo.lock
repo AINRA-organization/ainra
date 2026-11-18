@@ -40,6 +40,7 @@ dependencies = [
  "ainra-adapter",
  "ainra-core",
  "ainra-services",
+ "base64ct",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
@@ -76,6 +77,8 @@ version = "0.3.0"
 dependencies = [
  "ainra-adapter",
  "ainra-core",
+ "base64ct",
+ "ed25519-dalek",
  "k256",
  "p256",
  "rand_chacha 0.3.1",

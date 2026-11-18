@@ -182,6 +182,11 @@ where
     } else if json.starts_with("eyJ") && json.matches('.').count() == 2 {
         // A compact JWS (the Token Status List mirror): base64url of '{"…', never JSON, never HTML.
         "application/statuslist+jwt"
+    } else if json.contains("\n\n\u{2014} ")
+        || (json.ends_with('\n') && !json.contains('{') && json.matches('+').count() >= 2)
+    {
+        // D-121: a C2SP signed note (text, a blank line, `— ` signature lines) or a note verifier key line.
+        "text/plain; charset=utf-8"
     } else {
         "application/json"
     };

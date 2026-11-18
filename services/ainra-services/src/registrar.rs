@@ -1678,6 +1678,13 @@ impl RegistrarBox {
     /// against it, and — for a witness that last cosigned at size `from` — the RFC 6962 consistency proof from there
     /// to here. Without the proof a witness can cosign a log only on first sight; with it, every append. `from`
     /// above the current size is a regression a witness must refuse, so it is refused here too.
+    /// D-121: the log's origin, size and root now — the head a C2SP checkpoint note carries. The same head
+    /// [`Self::witness_feed`] signs with the log's own keys.
+    pub fn tree_head(&self) -> (String, u64, [u8; 32]) {
+        let cp = self.log.signed_checkpoint();
+        (cp.origin.clone(), cp.tree_size, cp.root)
+    }
+
     pub fn witness_feed(&self, from: Option<u64>) -> Result<serde_json::Value, String> {
         let cp = self.log.signed_checkpoint();
         let signed = self.log.sign_checkpoint(&cp);

@@ -10,6 +10,7 @@ mod ctl;
 mod epochlog;
 mod monitor;
 mod seed;
+mod witness_submit;
 mod workbench;
 
 use std::path::Path;
@@ -47,6 +48,7 @@ fn main() {
         "verify-decisions" => cmd_verify_decisions(rest),
         "chain-specs" => cmd_chain_specs(rest),
         "monitor" => monitor::cmd_monitor(rest),
+        "witness-submit" => witness_submit::cmd_witness_submit(rest),
         "link" => cmd_link(rest),
         "link-revoke" => cmd_link_revoke(rest),
         "links" => cmd_links(rest),
@@ -1002,6 +1004,11 @@ GATE (D-062 / D-068)
         PLAN-M53 step 11: watch a registrar's log. Checks the checkpoint under the directory's log key, that the log only
         grew since last seen, that every entry rebuilds the signed root (nothing hidden), and names every passport
         under a watched operator that is not on its list. Exit 0 nothing found, 3 an alarm, 2 could not check.
+  witness-submit --registrar URL --witness URL --state FILE [--witness-vkey VKEY] [--log-vkey VKEY]
+        have a public witness cosign a registrar's log (c2sp.org/tlog-witness, D-121): the registrar's checkpoint as a
+        signed note, the consistency proof from the size the witness last cosigned, POST add-checkpoint; checks the
+        cosignature under the witness's key and records it. Exit 0 cosigned, 3 refused (403 untrusted key, 422
+        inconsistent log), 2 could not run.
   chain-specs --registrar ID --operator OP --exp T --party LINEAGE@VER… --grant CAPS… --subject LINEAGE@VER --out DIR
         D-113: the issue requests for a BOUND delegation chain, for a registrar reached over HTTP: each party gets a key
         of its own and a passport request with proof of possession; the subject's request carries every hop signed by

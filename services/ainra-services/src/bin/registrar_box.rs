@@ -163,6 +163,9 @@ struct State {
     head_writes: VecDeque<Instant>,
     /// D-102: the transfer doors' own bucket.
     transfer_writes: VecDeque<Instant>,
+    /// D-121: the log's permanent C2SP note key (Ed25519, named by the log origin), kept in `note.secret`. A witness
+    /// trusts one key per log and never re-keys, so this key never rotates with the checkpoint delegates.
+    note: ainra_services::note::NoteKey,
     /// D-102: the roots a caller-supplied directory must verify under (`AINRA_ROOTS_FILE`), and the newest directory
     /// epoch seen, kept in `directory.epoch` so an older directory (before a distrust cutoff) is refused after a
     /// restart too.
@@ -287,6 +290,68 @@ fn persist(rb: &RegistrarBox, id: &str) {
     if let Err(e) = rb.save() {
         eprintln!("registrar-box '{id}': WARNING — state not persisted: {e:?}");
     }
+}
+
+/// D-121: the log's note key, from `note.secret` (32 bytes from the OS, 0600) in the data directory, made on first
+/// start. Refused when the file is readable by others or not 32 bytes: a witness never re-keys a log, so this key is
+/// as permanent as the log itself.
+fn load_note_key(
+    data_dir: &std::path::Path,
+    origin: &str,
+    id: &str,
+) -> ainra_services::note::NoteKey {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let path = data_dir.join("note.secret");
+    let mut seed = [0u8; 32];
+    if path.exists() {
+        let meta = std::fs::metadata(&path).unwrap_or_else(|e| {
+            eprintln!("registrar-box '{id}': cannot read {}: {e}", path.display());
+            std::process::exit(2);
+        });
+        if meta.permissions().mode() & 0o077 != 0 {
+            eprintln!(
+                "registrar-box '{id}': {} is readable by others — refusing to start",
+                path.display()
+            );
+            std::process::exit(2);
+        }
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        if bytes.len() != 32 {
+            eprintln!(
+                "registrar-box '{id}': {} is not 32 bytes — refusing to start",
+                path.display()
+            );
+            std::process::exit(2);
+        }
+        seed.copy_from_slice(&bytes);
+    } else {
+        if let Err(e) =
+            std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut seed))
+        {
+            eprintln!(
+                "registrar-box '{id}': no OS entropy for the note key ({e}) — refusing to start"
+            );
+            std::process::exit(2);
+        }
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut f| f.write_all(&seed));
+        if let Err(e) = written {
+            eprintln!(
+                "registrar-box '{id}': cannot keep the note key in {}: {e}",
+                path.display()
+            );
+            std::process::exit(2);
+        }
+    }
+    ainra_services::note::NoteKey::from_seed(origin, &seed).unwrap_or_else(|e| {
+        eprintln!("registrar-box '{id}': {e}");
+        std::process::exit(2);
+    })
 }
 
 fn main() {
@@ -433,7 +498,9 @@ fn main() {
         ainra_services::registrar::sabotage::set_revoke_one_generation();
         eprintln!("registrar-box '{id}': DRILL SABOTAGE — revocation flips only the generation named (D-055 broken)");
     }
+    let note = load_note_key(data_dir, &rb.tree_head().0, &id);
     let state = Mutex::new(State {
+        note,
         rb,
         rng,
         issue_token: issue_token.clone(),
@@ -1043,6 +1110,14 @@ fn main() {
                     Err(e) => (500, json!({ "error": e }).to_string()),
                 }
             }
+
+            // D-121: the current checkpoint as a C2SP signed note under the log's note key, and that key's verifier
+            // string — what a public witness is configured with and what `ainra witness-submit` sends it.
+            ("GET", "/checkpoint") => {
+                let (_, size, root) = st.rb.tree_head();
+                (200, st.note.sign_checkpoint(size, &root))
+            }
+            ("GET", "/note-key") => (200, format!("{}\n", st.note.vkey())),
 
             ("GET", "/witness-feed") => {
                 let from = qparam(&req.path, "from").and_then(|s| s.parse::<u64>().ok());

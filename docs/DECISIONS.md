@@ -4012,3 +4012,43 @@ verifier sees is each registrar's own.
 
 *Status:* ACCEPTED 2026-11-18, on the operator's word ("now please fully continue", plan phase 0 step 3); tools
 only, no rule change (D-114).
+
+## D-121 — A registrar's log speaks the public witness protocol: a permanent note key, signed-note checkpoints, `ainra witness-submit`
+
+*Problem:* the plan's phase 0 needs three independent witnesses. The witnesses the transparency ecosystem runs speak
+one protocol, c2sp.org/tlog-witness: a log submits its checkpoint as a C2SP signed note with a consistency proof, and
+the witness returns a timestamped cosignature. AINRA's logs could not: their checkpoints are signed by the SLH-DSA log
+root or by short-lived Ed25519 delegates (ADR-002), in AINRA's own JSON form, and a witness trusts one fixed key per log
+and never re-keys. ADR-005 planned "C2SP checkpoint format, join the operating witness ecosystem"; it was not built.
+Found by the phase-0 research of 18 November 2026, confirmed in the code.
+
+*Decision:*
+
+- **A permanent note key per log.** The registrar keeps an Ed25519 key in `note.secret` (32 bytes from the OS, 0600,
+  made on first start, refused if readable by others), named by the log's origin. It never rotates with the delegates.
+- **`GET /checkpoint`** serves the current head (the one `/witness-feed` signs with the log's own keys) as a C2SP signed
+  note under that key; **`GET /note-key`** serves its verifier key. Both are read-only.
+- **`ainra witness-submit`** takes the note to a witness: the consistency proof from the size the witness last
+  cosigned, in standard base64, `POST /add-checkpoint`; a 409 is followed once from the size the witness names; the
+  returned cosignature is checked under the witness's key (Ed25519 `cosignature/v1`) before it is recorded. Exit 0
+  cosigned, 3 refused for a reason that may be an alarm (403 untrusted key, 422 inconsistent log).
+- `ainra_services::note` formats and verifies signed notes, key ids and verifier keys, log signatures (type 0x01) and
+  Ed25519 cosignatures (type 0x04); ML-DSA-44 cosignatures (0x06) are recognised and reported, not verified yet.
+- How a log's note key is published by the root, and what verifiers may require, is a rule: ACP-0005 (Draft).
+
+*Held to:* `make witness-c2sp-drill` against `litewitness`, an independent implementation of the witness protocol
+(filippo.io/torchwood): told the origin and the note key as a witness operator would be, it cosigned the first
+checkpoint (cosignature verified under its key), cosigned again after the log grew (our consistency proof accepted),
+answered a stale submission 409 with its size and cosigned after the submitter's recovery, refused a corrupted proof
+422, and refused 403 once it trusted another key for the origin. Unit tests: a note verifies under its key and no
+other and not after its size changes; a verifier key whose id does not match is refused; a cosignature verifies only
+over its own `cosignature/v1` message.
+
+*Limits:* the test network's origins (`ainra-log/<registrar>`) are not the schema-less URLs C2SP recommends; ACP-0005
+proposes permanent URL origins for production logs. Nothing yet carries cosignatures to verifiers, and no verifier
+requires them. No outside witness cosigns yet: the request to the public witness network is the operator's own.
+
+*Not changed:* any verifier rule; the directory; the checkpoint signatures verifiers check today.
+
+*Status:* ACCEPTED 2026-11-18, on the operator's word ("yes yes": run an independent witness locally; draft the
+change proposal); tools only (D-114). The directory part is ACP-0005.

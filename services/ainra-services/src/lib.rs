@@ -7,6 +7,7 @@
 
 pub mod http;
 pub mod log;
+pub mod note;
 pub mod registrar;
 pub mod status;
 pub mod tree;

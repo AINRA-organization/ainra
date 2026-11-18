@@ -12,3 +12,4 @@ To propose a change, copy the header of any proposal below into `ACP-NNNN-short-
 | [ACP-0002](ACP-0002-no-governance-token.md) | No governance token, ever | process | Draft |
 | [ACP-0003](ACP-0003-neutrality-commitments.md) | Neutrality commitments of a shared root | process | Open |
 | [ACP-0004](ACP-0004-proof-of-service.md) | Proof of service: how the network rewards the people who run it | process | Draft |
+| [ACP-0005](ACP-0005-witnessed-logs.md) | Logs any public witness can cosign, with their keys in the directory | soft | Draft |

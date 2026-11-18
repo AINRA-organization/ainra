@@ -19,6 +19,9 @@ serde_json = { workspace = true, features = ["std"] }
 rand_chacha = { version = "0.3", default-features = false }
 rand_core = { workspace = true }
 sha2 = { workspace = true }
+# D-121: C2SP signed notes — the log's permanent Ed25519 note key and standard base64 (both already in the workspace).
+ed25519-dalek = { workspace = true }
+base64ct = { workspace = true }
 
 [[bin]]
 name = "logd"

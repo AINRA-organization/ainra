@@ -10,6 +10,13 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — logs any public witness can cosign (D-121, ACP-0005 draft)
+
+- A registrar keeps a permanent Ed25519 note key and serves its checkpoint as a C2SP signed note (`GET /checkpoint`,
+  `GET /note-key`); `ainra witness-submit` takes it to any c2sp.org/tlog-witness witness and checks the cosignature.
+  `make witness-c2sp-drill` runs it against `litewitness`, an independent witness: cosigned, refused a bad proof and an
+  untrusted key. ACP-0005 (Draft) proposes the note key in the directory and an optional witness policy for verifiers.
+
 ### Added — a registrar the network does not run (D-120)
 
 - `kits/registrar`: how an organisation runs a registrar and joins the test network, and how the root's holder signs it
