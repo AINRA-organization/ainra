@@ -3970,3 +3970,45 @@ network's (PLAN-M53 step 19, tiles). The prebuilt programs were run under emulat
 
 *Status:* ACCEPTED 2026-11-17, on the operator's word ("this raspberry isn't that powerful … we should invent some
 way"); tools only, no rule changes (D-114).
+
+## D-120 — A registrar the network does not run can join the test network, on a fingerprint given by a second channel
+
+*Problem:* the plan's phase 0 needs one registrar that is not us (ainra-private plan, 17 November 2026). The test
+network could not take one. `tools/stage.sh` signed and published exactly its own two registrars, at fixed local
+addresses; the old onboarding script ran a third one on the same machine and, from before directories were signed by
+the root (D-109), wrote an unsigned directory into the published record. And nothing tied a new registrar's keys to
+the organisation joining: whoever controlled what an address served could have had their own keys signed in.
+
+*Decision:*
+
+- **Outside registrars are listed** by the root's holder in `stage/genesis/outside-registrars.json`: an id, an http(s)
+  address, and a fingerprint. The list sits beside the signed directory, so it travels to a home node with it (D-117).
+- **The fingerprint arrives by a second channel.** `tools/registrar-fingerprint.mjs` computes it, on both sides, as the
+  SHA-256 of the canonical JSON of the accreditation's identity fields (registrar, issuer, log and status keys, log
+  origin, status-list address). Signing fetches each listed registrar's accreditation and refuses, with nothing signed,
+  unless it has the listed fingerprint. A key rotation changes the fingerprint, as it must.
+- **Publishing survives an outside registrar's outage:** its last published copy is kept (its signed status then
+  ages, and verifiers refuse it once stale), and one never published is left out until it answers. Our own registrars
+  not answering still stops publishing, as before.
+- **The formal path is the production one:** the registrar also files `ainra directory request ACCREDIT`, signed by
+  each of its keys and naming the Standard §3 prerequisites, checked with `ainra directory check-request`
+  (docs/ACCREDITATION-CHECKS.md). `kits/registrar` describes both for the joining organisation and for the root's holder.
+- `tools/onboard-registrar.sh` is retired. The network script's folder and addresses can be moved by environment
+  variables, for drills; unset, they are what they were.
+
+*Held to:* `make registrar-join-drill`, on a whole throwaway network (spare ports, its own root): an outside registrar
+issues with keys of its own; its formal request passes `check-request`; listed with a wrong fingerprint it is refused
+by name with the signed directory unchanged; with its own fingerprint it is signed in at the next epoch, `ainra ctl`
+reads three registrars under the root, and `ainra monitor` checks its log under the key the root's directory gives it;
+stopped, publishing goes on with its last copy. Mutation: with the fingerprint comparison removed, the drill fails at
+the wrong fingerprint. The real network was checked unchanged after each run.
+
+*Limits:* the fingerprint binds keys to whatever the second channel vouches for; it is as good as that channel. The
+test network signs whatever its holder lists; the production root adds the custodians' review of the formal request.
+An outside registrar on the wall clock and our pinned-clock test registrars sit in one record; the status freshness a
+verifier sees is each registrar's own.
+
+*Not changed:* any rule a verifier applies; the directory format; the accredit tool.
+
+*Status:* ACCEPTED 2026-11-18, on the operator's word ("now please fully continue", plan phase 0 step 3); tools
+only, no rule change (D-114).

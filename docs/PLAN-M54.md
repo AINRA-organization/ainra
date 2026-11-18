@@ -44,7 +44,7 @@ The operator sends every one of these requests; AINRA never initiates contact by
 - It is never sold.
 
 **G6. A registrar per continent.**
-- The onboarding kit (`tools/onboard-registrar.sh`) and the accreditation checks, published in a form a registrar
+- The onboarding kit ([`kits/registrar`](../kits/registrar/README.md), D-120) and the accreditation checks, published in a form a registrar
   in any country can follow.
 - A regulation map per region, each line with a source.
 - A dispute and liability rule for registrars, in the rulebook.

@@ -10,6 +10,18 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — a registrar the network does not run (D-120)
+
+- `kits/registrar`: how an organisation runs a registrar and joins the test network, and how the root's holder signs it
+  in. `tools/registrar-fingerprint.mjs`; outside registrars listed with a fingerprint given by a second channel, refused
+  on a mismatch with nothing signed; publishing keeps an unreachable outside registrar's last copy.
+  `make registrar-join-drill`. `tools/onboard-registrar.sh` retired.
+
+### Changed — the agent-key-status Internet-Draft brought up to date
+
+- `docs/ietf`: RSA keys, issuer links, keys in certificates, canonical bytes, actions in flight, the Web Bot Auth drafts;
+  converted and checked with kramdown-rfc and xml2rfc, ready for its author to submit.
+
 ## [0.10.1] — 2026-11-17
 
 The release commit; its board is `docs/releases/v0.10.1-board.md`. A security release (incident INC-2026-014, HIGH),

@@ -17,17 +17,19 @@ set -uo pipefail
 # M35: this drill runs at the fixed genesis instant on purpose — it is HERMETIC, and a reproducible clock is
 # what makes it reproducible. The daemon now defaults to the wall clock, so pinning is stated, not assumed.
 export AINRA_CLOCK=pinned
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
 
-STAGE=stage
+# The folder and the addresses can be moved for a drill that runs a whole throwaway network beside the real one
+# (tools/registrar-join-drill.sh, D-120). Unset, they are what they have always been.
+STAGE="${AINRA_STAGE_DIR:-stage}"
 PUB="$STAGE/public"
-REG1_ADDR=127.0.0.1:4907 ; REG1_ID=registrar-07
-REG2_ADDR=127.0.0.1:4911 ; REG2_ID=registrar-11
+REG1_ADDR="${AINRA_STAGE_REG1:-127.0.0.1:4907}" ; REG1_ID=registrar-07
+REG2_ADDR="${AINRA_STAGE_REG2:-127.0.0.1:4911}" ; REG2_ID=registrar-11
 # 4991, NOT 4891: `make drill-networked` uses 4891–4895 for its witness-quorum test, and that test fails closed on
 # a leftover process on its port. Keeping the staging witness off that range lets the staging network and the test
 # suite run at the same time.
-WIT_ADDR=127.0.0.1:4991
-ART_PORT=8091
+WIT_ADDR="${AINRA_STAGE_WIT:-127.0.0.1:4991}"
+ART_PORT="${AINRA_STAGE_ART:-8091}"
 NBF=1775865600 ; RENEW_AT=$((NBF + 5*24*3600)) ; NOW=$((NBF + 10*24*3600)) ; AUDIT_EXP=1900000000
 export AINRA_STAGE=1
 # PLAN-M53 step R3 (D-107): a staging registrar's keys come from the OS. The pinned clock above used to decide that
@@ -45,6 +47,31 @@ get(){ curl -s -m 10 "http://$1"; }
 # server served them as the public record for days, and nothing complained.
 fetch(){ curl -fsS -m 10 "http://$1" -o "$2" 2>/dev/null && [ -s "$2" ] \
   && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$2" 2>/dev/null; }
+
+# fetchu <full-url> <file> — as fetch, for a registrar the network does not run (any http or https address).
+fetchu(){ curl -fsS -m 10 "$1" -o "$2" 2>/dev/null && [ -s "$2" ] \
+  && node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$2" 2>/dev/null; }
+
+# D-120: registrars the network does not run. The root's holder lists each in $STAGE/genesis/outside-registrars.json:
+#   [{"id": "registrar-22", "url": "https://registrar.example.org", "fingerprint": "sha256:<hex>"}]
+# The fingerprint arrives by a different channel from the address (tools/registrar-fingerprint.mjs, kits/registrar),
+# and a registrar is signed into the directory only when what its address serves has that fingerprint. The list lives
+# beside the root's signed directory, so it travels to a home node with it (sign-for-node.sh).
+OUTSIDE="$STAGE/genesis/outside-registrars.json"
+outside_list(){ # prints "id url fingerprint" per line; refuses a malformed list
+  [ -f "$OUTSIDE" ] || return 0
+  node -e '
+    const l=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+    if(!Array.isArray(l)) throw new Error("not a list");
+    const seen=new Set();
+    for(const r of l){
+      if(!/^registrar-[a-z0-9-]{1,40}$/.test(r.id||"")) throw new Error("bad id "+r.id);
+      if(!/^https?:\/\/[^\s]+$/.test(r.url||"")) throw new Error("bad url for "+r.id);
+      if(!/^sha256:[0-9a-f]{64}$/.test(r.fingerprint||"")) throw new Error("bad fingerprint for "+r.id);
+      if(seen.has(r.id)) throw new Error("listed twice: "+r.id); seen.add(r.id);
+      console.log(r.id, r.url.replace(/\/+$/,""), r.fingerprint);
+    }' "$OUTSIDE"
+}
 
 issue(){ # addr operator lineage version tier auth 'cap,cap' 'ceil,ceil' [audit] [hops-json]
   local caps ceil audit hops
@@ -100,6 +127,28 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
       || { echo "publish: ${pair##*:} at $addr did not answer every artifact — the published record is left as it was"; rm -rf "$NEW"; return 1; }
     node -e 'const fs=require("fs");const e=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const r=(e.records||[])[0]?.record;if(r){fs.writeFileSync(process.argv[2]+"/checkpoints/"+r.checkpoint_size+".json",JSON.stringify({origin:r.log_origin,size:r.checkpoint_size,root:r.checkpoint_root}))}' "$d/export.json" "$d"
   done
+  # D-120: the registrars the network does not run. One that does not answer does not stop the record: its last
+  # published copy is kept as it was (its signed status then ages, and verifiers refuse it once it is stale, which is
+  # the honest outcome), and one never published before is left out until it answers.
+  local olist oid ourl ofp
+  olist="$(outside_list)" || { echo "publish: $OUTSIDE is malformed — the published record is left as it was"; rm -rf "$NEW"; return 1; }
+  while read -r oid ourl ofp; do
+    [ -n "$oid" ] || continue
+    local d="$NEW/$oid"; mkdir -p "$d/status" "$d/checkpoints"
+    if fetchu "$ourl/accreditation"        "$d/accreditation.json" \
+      && fetchu "$ourl/export?now=$NOW"      "$d/export.json" \
+      && fetchu "$ourl/status-list?now=$NOW" "$d/status/current.json" \
+      && fetchu "$ourl/fresh-head?now=$NOW"  "$d/fresh-head.json" \
+      && fetchu "$ourl/deltas?since=0"       "$d/status/deltas.json"; then
+      node -e 'const fs=require("fs");const e=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const r=(e.records||[])[0]?.record;if(r){fs.writeFileSync(process.argv[2]+"/checkpoints/"+r.checkpoint_size+".json",JSON.stringify({origin:r.log_origin,size:r.checkpoint_size,root:r.checkpoint_root}))}' "$d/export.json" "$d"
+    elif [ -d "$PUB/registrars/$oid" ]; then
+      rm -rf "$d"; cp -r "$PUB/registrars/$oid" "$d"
+      echo "publish: outside registrar $oid at $ourl did not answer — its last published copy is kept as it was"
+    else
+      rm -rf "$d"
+      echo "publish: outside registrar $oid at $ourl did not answer and was never published — left out until it answers"
+    fi
+  done <<< "$olist"
   rm -rf "$PUB/registrars"; mv "$NEW" "$PUB/registrars"
   # build the combined artifacts from the per-registrar exports (one pass, robust)
   NBF="$NBF" WEXP="$((NBF+366*24*3600))" NOW="$NOW" node -e '
@@ -156,6 +205,24 @@ accredit_net(){ # ask each running registrar for its accreditation and sign the 
   fetch "$REG1_ADDR/accreditation" "$STAGE/genesis/acc-$REG1_ID.json" \
     && fetch "$REG2_ADDR/accreditation" "$STAGE/genesis/acc-$REG2_ID.json" \
     || { echo "stage: a registrar did not give its accreditation — nothing accredited, nothing published"; return 1; }
+  ACCS=("$STAGE/genesis/acc-$REG1_ID.json" "$STAGE/genesis/acc-$REG2_ID.json")
+  # D-120: each outside registrar's accreditation, held to the fingerprint its operator gave by another channel.
+  local olist oid ourl ofp got
+  olist="$(outside_list)" || { echo "stage: $OUTSIDE is malformed — nothing accredited, nothing published"; return 1; }
+  while read -r oid ourl ofp; do
+    [ -n "$oid" ] || continue
+    fetchu "$ourl/accreditation" "$STAGE/genesis/acc-$oid.json" \
+      || { echo "stage: outside registrar $oid at $ourl did not give its accreditation — nothing accredited, nothing published"; return 1; }
+    got="$(node tools/registrar-fingerprint.mjs "$STAGE/genesis/acc-$oid.json" 2>/dev/null)"
+    if [ "$got" != "$oid $ofp" ]; then
+      echo "stage: $ourl serves an accreditation that is not the one $oid's operator fingerprinted"
+      echo "stage:   expected $oid $ofp"
+      echo "stage:   served   ${got:-(unreadable)}"
+      echo "stage: nothing accredited, nothing published"
+      return 1
+    fi
+    ACCS+=("$STAGE/genesis/acc-$oid.json")
+  done <<< "$olist"
   # D-109: this network's root comes from 32 bytes of the OS's own randomness, made once and kept beside the
   # network's state, readable by its owner only. Until 15 November 2026 it came from a public fixed seed, so anyone
   # could sign a directory that verified under the roots this network publishes. Losing the file means a new root
@@ -192,7 +259,7 @@ accredit_sign(){ # sign the directory with the seed at AINRA_STAGE_ROOT_SEED (or
   # the old root is kept beside the new one, under its fingerprint, and a new history starts at epoch 1.
   if [ -f "$PUB/roots.json" ] && [ -f "$PUB/epochs.json" ]; then
     rm -rf "$STAGE/genesis/.probe"; mkdir -p "$STAGE/genesis/.probe"
-    AINRA_ROOT_SEED_FILE="$seedfile" ./target/release/accredit "$STAGE/genesis/.probe" "$STAGE/genesis/acc-$REG1_ID.json" "$STAGE/genesis/acc-$REG2_ID.json" >/dev/null 2>&1 \
+    AINRA_ROOT_SEED_FILE="$seedfile" ./target/release/accredit "$STAGE/genesis/.probe" "${ACCS[@]}" >/dev/null 2>&1 \
       || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; rm -rf "$STAGE/genesis/.probe"; return 1; }
     if ! node -e 'const fs=require("fs"),j=(p)=>JSON.stringify(JSON.parse(fs.readFileSync(p,"utf8")));process.exit(j(process.argv[1])===j(process.argv[2])?0:1)' "$STAGE/genesis/.probe/roots.json" "$PUB/roots.json"; then
       local oldfp; oldfp=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).root_ed25519.slice(0,16))' "$PUB/roots.json")
@@ -214,7 +281,7 @@ accredit_sign(){ # sign the directory with the seed at AINRA_STAGE_ROOT_SEED (or
   last=$(node -e 'try{const e=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).epochs||[];console.log(Math.max(0,...e.map(x=>x.epoch)))}catch{console.log(0)}' "$PUB/epochs.json")
   epoch=$(( last >= 1 ? last : 1 ))
   sign_at(){ rm -f "$STAGE/genesis/directory.json"
-    AINRA_ROOT_SEED_FILE="$seedfile" AINRA_DIRECTORY_EPOCH="$1" ./target/release/accredit "$STAGE/genesis" "$STAGE/genesis/acc-$REG1_ID.json" "$STAGE/genesis/acc-$REG2_ID.json" >/dev/null \
+    AINRA_ROOT_SEED_FILE="$seedfile" AINRA_DIRECTORY_EPOCH="$1" ./target/release/accredit "$STAGE/genesis" "${ACCS[@]}" >/dev/null \
       && [ -s "$STAGE/genesis/directory.json" ]; }
   same_as_archived(){ node -e 'const fs=require("fs"),j=(p)=>JSON.stringify(JSON.parse(fs.readFileSync(p,"utf8")));process.exit(j(process.argv[1])===j(process.argv[2])?0:1)' "$STAGE/genesis/directory.json" "$PUB/epochs/$1.json" 2>/dev/null; }
   sign_at "$epoch" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }
@@ -242,7 +309,7 @@ up)
   moved_guard
   mkdir -p "$STAGE" "$PUB"
   [ -f "$TOKEN_FILE" ] || openssl rand -hex 16 > "$TOKEN_FILE" 2>/dev/null || head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN_FILE"
-  export AINRA_STAGE_ISSUE_TOKEN="$(cat "$TOKEN_FILE")"
+  AINRA_STAGE_ISSUE_TOKEN="$(cat "$TOKEN_FILE")"; export AINRA_STAGE_ISSUE_TOKEN
   if [ -s target/release/.prebuilt ] && [ "$(cat target/release/.prebuilt)" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
     echo "stage: programs prebuilt for this commit (D-119): nothing compiled here"
   else

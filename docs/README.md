@@ -56,6 +56,7 @@ Every document in this folder, grouped by what you would open it for. Where two 
 | [PROBES.md](PROBES.md) | Compliance measured adversarially |
 | [../kits/monitor/](../kits/monitor/README.md) | Watch a registrar's log for passports nobody expected (D-116) |
 | [../deploy/home-node/](../deploy/home-node/README.md) | The test network on an always-on node, watched; its root seed sealed with the operator (D-117) |
+| [../kits/registrar/](../kits/registrar/README.md) | Run a registrar the network does not run, and how the root signs it in (D-120) |
 | [drills/](drills/) | The drills: root dark, registrar dark, succession, staleness, crossed withdrawal, fuzz, negative controls |
 
 ## Governance and the root
