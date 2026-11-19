@@ -19,4 +19,31 @@ ignore = [
   #                       upgraded from "unmaintained" to an actual vulnerability. Either flips this back to a hard
   #                       failure — the entry is narrow (one ID) precisely so that it does.
   "RUSTSEC-2023-0089",
+
+  # RUSTSEC-2026-0574 … -0582 — nine "unsound" notices against heapless < 0.9.4, published 2026-11-18 (recorded
+  # 2026-11-19). Each names specific functions: SortedLinkedList (FindMutView::pop, zeroize), spsc::Spsc::peek,
+  # IndexMap (truncate, insert, clear), Deque (clear, make_contiguous, try_from), HistoryBuf::clear, and the
+  # arc/box/object pools.
+  #
+  # Where it comes from:  the same single path as above (ainra-ceremony → frost-ed25519 3.0 → frost-core 3.0 →
+  #                       postcard 1.1.3 → heapless 0.7.17).
+  # Not reached:          frost-core calls only postcard::to_allocvec and postcard::from_bytes; postcard's non-test
+  #                       code uses heapless::Vec (its HVec flavour) and nothing else; its FnvIndexMap imports are
+  #                       inside #[cfg(test)]. None of the named functions is in our build's call path (checked by
+  #                       grep over postcard 1.1.3, frost-core/-ed25519/-rerandomized 3.0.0 sources, 2026-11-19).
+  # Blast radius:         the SIGNING side only; `cargo tree -i heapless@0.7.17` matches nothing for ainra-core,
+  #                       ainra-adapter, ainra-wasm, ainra-cli-rs or ainra-services.
+  # Why not upgraded:     the fix is heapless 0.9.4; postcard 1.1.3 (current) requires heapless 0.7 and frost-core
+  #                       3.0.0 (current) requires postcard 1, so no compatible version exists today.
+  # Revisit when:         postcard or frost-ed25519 releases a version off heapless 0.7, or any notice is extended
+  #                       to heapless::Vec. Either removes these IDs.
+  "RUSTSEC-2026-0574",
+  "RUSTSEC-2026-0575",
+  "RUSTSEC-2026-0576",
+  "RUSTSEC-2026-0577",
+  "RUSTSEC-2026-0578",
+  "RUSTSEC-2026-0579",
+  "RUSTSEC-2026-0580",
+  "RUSTSEC-2026-0581",
+  "RUSTSEC-2026-0582",
 ]
