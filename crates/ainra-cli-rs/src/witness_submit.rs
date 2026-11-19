@@ -155,12 +155,8 @@ fn run(a: &[String], reg: &str, wit: &str, state_path: &str) -> Result<i32, Stri
                 let mut seen = String::from("not checked (no --witness-vkey)");
                 if let Some(vk) = &wvk {
                     let got = note::verify_cosignatures(&text, &resp, vk)?;
-                    seen = match got[0] {
-                        note::Cosig::Verified(t) => format!("verified, made at {t}"),
-                        note::Cosig::MlDsa44Unverified(t) => {
-                            format!("ML-DSA-44, made at {t} (not verified here)")
-                        }
-                    };
+                    let note::Cosig::Verified(t) = got[0];
+                    seen = format!("verified, made at {t}");
                 }
                 let st = json!({ "witness": wit, "size": size, "root": Base64::encode_string(&root),
                     "cosignatures": resp.lines().filter(|l| !l.is_empty()).collect::<Vec<_>>() });

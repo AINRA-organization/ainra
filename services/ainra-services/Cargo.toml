@@ -22,6 +22,8 @@ sha2 = { workspace = true }
 # D-121: C2SP signed notes — the log's permanent Ed25519 note key and standard base64 (both already in the workspace).
 ed25519-dalek = { workspace = true }
 base64ct = { workspace = true }
+# ML-DSA-44 cosignatures (c2sp.org/tlog-cosignature, key type 0x06): the same crate ainra-core verifies passports with.
+ml-dsa = { workspace = true }
 
 [[bin]]
 name = "logd"

@@ -4056,3 +4056,10 @@ requires them. No outside witness cosigns yet: the request to the public witness
 
 *Status:* ACCEPTED 2026-11-18, on the operator's word ("yes yes": run an independent witness locally; draft the
 change proposal); tools only (D-114). The directory part is ACP-0005.
+
+*Addendum 2026-11-19 (ML-DSA-44 cosignatures verified):* `ainra_services::note` now verifies type 0x06 cosignatures
+too: ML-DSA-44 over the `subtree/v1` message for the whole tree [0, size), with an empty context, the key 1312 bytes and
+the signature 2420. The line above ("recognised and reported, not verified yet") no longer holds. *Held to:* a unit test
+pinned to a cosignature made by torchwood v0.10.0 (Go `crypto/mldsa`), not by this code
+(`services/ainra-services/src/testdata/mldsa44-cosignature.txt`): it verifies, and does not over another size, another
+origin, or with one signature byte flipped; changing one field of our message makes the test fail. Tools only.

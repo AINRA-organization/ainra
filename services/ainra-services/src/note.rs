@@ -17,18 +17,20 @@
 //!     before the signature;
 //!   - base64 is standard (RFC 4648) with padding, canonical only.
 //!
-//! ML-DSA-44 cosignatures (type 0x06), which the cosignature document recommends for new witnesses, are recognised
-//! and reported as such, not verified here yet.
+//! ML-DSA-44 cosignatures (type 0x06), which the cosignature document recommends for new witnesses, are verified too:
+//! the `subtree/v1` message over the whole tree, pinned by a test to a cosignature made by torchwood, an independent
+//! implementation (testdata/mldsa44-cosignature.txt).
 
 use base64ct::{Base64, Encoding};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ml_dsa::MlDsa44;
 use sha2::{Digest, Sha256};
 
 /// A log's own Ed25519 signature over the note text.
 pub const TYPE_ED25519: u8 = 0x01;
 /// A cosigner's timestamped Ed25519 checkpoint cosignature (`cosignature/v1`).
 pub const TYPE_COSIG_ED25519: u8 = 0x04;
-/// A cosigner's timestamped ML-DSA-44 checkpoint cosignature (recognised, not verified here).
+/// A cosigner's timestamped ML-DSA-44 checkpoint cosignature (the `subtree/v1` message over the whole tree).
 pub const TYPE_COSIG_MLDSA44: u8 = 0x06;
 
 /// The 4-byte key id of a key named `name`, of signature type `typ`, with encoded public key `pk`.
@@ -253,13 +255,31 @@ pub fn verify_log_signature(note: &Note, vk: &Vkey) -> Result<bool, String> {
     Ok(false)
 }
 
+/// The message an ML-DSA-44 checkpoint cosignature signs (c2sp.org/tlog-cosignature, `subtree/v1`): the whole tree
+/// [0, size) of the checkpoint `text`, at time `t`, by the cosigner `name`.
+fn subtree_v1(name: &str, t: u64, text: &str) -> Result<Vec<u8>, String> {
+    let (origin, size, root) = parse_checkpoint_text(text)?;
+    if name.is_empty() || name.len() > 255 || origin.is_empty() || origin.len() > 255 {
+        return Err("a cosigner name and a log origin are 1 to 255 bytes".into());
+    }
+    let mut m = Vec::with_capacity(12 + 1 + name.len() + 8 + 1 + origin.len() + 16 + 32);
+    m.extend_from_slice(b"subtree/v1\n\0");
+    m.push(name.len() as u8);
+    m.extend_from_slice(name.as_bytes());
+    m.extend_from_slice(&t.to_be_bytes());
+    m.push(origin.len() as u8);
+    m.extend_from_slice(origin.as_bytes());
+    m.extend_from_slice(&0u64.to_be_bytes());
+    m.extend_from_slice(&size.to_be_bytes());
+    m.extend_from_slice(&root);
+    Ok(m)
+}
+
 /// The outcome of checking one cosignature line against a cosigner's key.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Cosig {
-    /// An Ed25519 cosignature that verifies, made at this POSIX time.
+    /// A cosignature that verifies (Ed25519 or ML-DSA-44), made at this POSIX time.
     Verified(u64),
-    /// An ML-DSA-44 cosignature from this key: recognised, not verified here.
-    MlDsa44Unverified(u64),
 }
 
 /// Check the cosignature lines a witness returned (each `— <name> <base64>`) against the witness's verifier key, over
@@ -296,7 +316,26 @@ pub fn verify_cosignatures(text: &str, lines: &str, vk: &Vkey) -> Result<Vec<Cos
                     .map_err(|_| format!("the cosignature by {} does not verify", vk.name))?;
                 out.push(Cosig::Verified(t));
             }
-            TYPE_COSIG_MLDSA44 => out.push(Cosig::MlDsa44Unverified(t)),
+            TYPE_COSIG_MLDSA44 => {
+                if t > i64::MAX as u64 {
+                    return Err(format!(
+                        "the cosignature by {} has an impossible time",
+                        vk.name
+                    ));
+                }
+                let enc = ml_dsa::EncodedVerifyingKey::<MlDsa44>::try_from(vk.pk.as_slice())
+                    .map_err(|_| "an ML-DSA-44 key is 1312 bytes".to_string())?;
+                let vkey = ml_dsa::VerifyingKey::<MlDsa44>::decode(&enc);
+                let enc = ml_dsa::EncodedSignature::<MlDsa44>::try_from(&bytes[12..])
+                    .map_err(|_| "an ML-DSA-44 signature is 2420 bytes".to_string())?;
+                let sig = ml_dsa::Signature::<MlDsa44>::decode(&enc)
+                    .ok_or_else(|| format!("the cosignature by {} is malformed", vk.name))?;
+                let msg = subtree_v1(&vk.name, t, text)?;
+                if !vkey.verify_with_context(&msg, &[], &sig) {
+                    return Err(format!("the cosignature by {} does not verify", vk.name));
+                }
+                out.push(Cosig::Verified(t));
+            }
             other => {
                 return Err(format!(
                     "a cosigner key of type {other:#04x} is not a checkpoint cosignature"
@@ -378,5 +417,44 @@ mod tests {
         let other_text = checkpoint_text("ainra-log/registrar-07", 15, &[9u8; 32]);
         assert!(verify_cosignatures(&other_text, &line, &vk).is_err());
         assert!(verify_cosignatures(&text, "", &vk).is_err());
+    }
+
+    /// A cosignature made by torchwood (filippo.io/torchwood v0.10.0, Go crypto/mldsa), not by this code: the first
+    /// line is the witness's vkey, the rest is the checkpoint note it cosigned.
+    #[test]
+    fn an_mldsa44_cosignature_from_an_independent_witness_verifies_and_fails_when_moved() {
+        let v = include_str!("testdata/mldsa44-cosignature.txt");
+        let (vk_line, signed) = v.split_once('\n').unwrap();
+        let vk = parse_vkey(vk_line).unwrap();
+        assert_eq!(
+            (vk.typ, vk.pk.len()),
+            (TYPE_COSIG_MLDSA44, 1312),
+            "an ML-DSA-44 cosigner key"
+        );
+        let n = parse_note(signed).unwrap();
+        let lines: String = n
+            .sigs
+            .iter()
+            .map(|(name, b)| format!("\u{2014} {name} {}\n", Base64::encode_string(b)))
+            .collect();
+        let got = verify_cosignatures(&n.text, &lines, &vk).unwrap();
+        assert_eq!(got.len(), 1);
+        // the same cosignature over a different size, root or origin does not verify
+        for other in [
+            checkpoint_text(
+                "ainra-log/registrar-07",
+                15,
+                &parse_checkpoint_text(&n.text).unwrap().2,
+            ),
+            n.text.replacen("registrar-07", "registrar-11", 1),
+        ] {
+            assert!(verify_cosignatures(&other, &lines, &vk).is_err());
+        }
+        // a flipped signature byte does not verify
+        let (head, b64) = lines.trim_end().rsplit_once(' ').unwrap();
+        let mut b = Base64::decode_vec(b64).unwrap();
+        b[100] ^= 1;
+        let bad = format!("{head} {}\n", Base64::encode_string(&b));
+        assert!(verify_cosignatures(&n.text, &bad, &vk).is_err());
     }
 }
