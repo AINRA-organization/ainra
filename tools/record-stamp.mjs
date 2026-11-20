@@ -42,14 +42,25 @@ const files = [...readdirSync(SITE).filter((f) => f.endsWith(".html")).map((f) =
 let drift = 0, wrote = 0, unknown = 0;
 for (const file of files) {
   const s = readFileSync(file, "utf8");
-  let t = s.replace(/(<([a-z0-9]+)\b[^>]*\bdata-stamp="([a-z0-9-]+)"[^>]*>)([^<]*)(<\/\2>)/g, (all, open, _tag, key, _v, close) => {
+  // A value may have been wrapped by tools/nobreak.mjs (<span class="nw">…</span>, which runs after this tool). The
+  // wrapper is kept and the value inside it is stamped. Before 20 November 2026 a wrapped value was skipped without a
+  // word, and the footer's record date stood at 4 November on every page while the record said 17 November.
+  let t = s.replace(/(<([a-z0-9]+)\b[^>]*\bdata-stamp="([a-z0-9-]+)"[^>]*>)(?:(<span class="nw">)([^<]*)<\/span>|([^<]*))(<\/\2>)/g, (all, open, _tag, key, nw, _vw, _v, close) => {
     if (!(key in values)) { console.log(`  ? ${file.slice(ROOT.length + 1)}: unknown stamp "${key}"`); unknown++; return all; }
-    return open + values[key].replace(/&/g, "&amp;").replace(/</g, "&lt;") + close;
+    const v = values[key].replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return open + (nw ? nw + v + "</span>" : v) + close;
   });
-  t = t.replace(/<!--stamp:([a-z0-9-]+)-->[\s\S]*?<!--\/stamp:\1-->/g, (all, key) => {
+  // A stamped element whose content is neither plain text nor one no-break wrapper cannot be stamped: say so and fail,
+  // so a value can never again be skipped in silence.
+  for (const mm of t.matchAll(/<([a-z0-9]+)\b[^>]*\bdata-stamp="([a-z0-9-]+)"[^>]*>(?!(?:<span class="nw">[^<]*<\/span>|[^<]*)<\/\1>)/g)) {
+    console.log(`  ? ${file.slice(ROOT.length + 1)}: stamp "${mm[2]}" holds markup this tool cannot stamp`); unknown++;
+  }
+  const bare = (x) => x.replace(/<span class="nw">([^<]*)<\/span>/g, "$1");
+  t = t.replace(/<!--stamp:([a-z0-9-]+)-->([\s\S]*?)<!--\/stamp:\1-->/g, (all, key, cur) => {
     const f = view.stampBlocks[key];
     if (!f) { console.log(`  ? ${file.slice(ROOT.length + 1)}: unknown block "${key}"`); unknown++; return all; }
-    return `<!--stamp:${key}-->${f(m)}<!--/stamp:${key}-->`;
+    const want = f(m);
+    return bare(cur) === bare(want) ? all : `<!--stamp:${key}-->${want}<!--/stamp:${key}-->`;   // no-break wrappers are not a difference
   });
   t = t.replace(/(<meta name="ainra-checkpoints" content=")[^"]*(")/g, `$1${cpFiles.join(" ")}$2`);
   if (t !== s) {

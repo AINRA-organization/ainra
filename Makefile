@@ -467,6 +467,7 @@ site-down:
 	bash tools/site.sh down
 site-check:
 	node tools/site-includes.mjs --check
+	node tools/record-stamp.mjs --check
 	node tools/nobreak.mjs --check
 	node tools/news.mjs --check
 	node tools/news.mjs --drill
