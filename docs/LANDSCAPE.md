@@ -390,7 +390,8 @@ were missed by earlier checks; each carries its own date.
     status ACTIVE, valid for 3600 s, and its ES256 signature verified against the log's published key. To check it,
     with the Python packages `cbor2` and `cryptography` installed, run
     `python3 -c 'import base64,urllib.request as r,cbor2 as c;from cryptography.hazmat.primitives import hashes,serialization;from cryptography.hazmat.primitives.asymmetric import ec,utils;H="https://transparency.ans.godaddy.com/";t=r.urlopen(H+"v1/agents/4ad720a9-a1a5-4462-9832-372d8ebf5f21/status-token").read();p,_,m,g=c.loads(t).value;k=serialization.load_der_public_key(base64.b64decode(r.urlopen(H+"root-keys").read().split(b"+",2)[2])[1:]);k.verify(utils.encode_dss_signature(int.from_bytes(g[:32],"big"),int.from_bytes(g[32:],"big")),c.dumps(["Signature1",p,b"",m]),ec.ECDSA(hashes.SHA256()));d=c.loads(m);print(len(t),"bytes",d[2],d[4]-d[3],"s, signature ok")'`,
-    which printed `398 bytes ACTIVE 3600 s, signature ok`; with one byte of the token's payload changed, the same
+    which printed `398 bytes ACTIVE 3600 s, signature ok` (on 20 November 2026 it printed `489 bytes ACTIVE 3600 s,
+    signature ok`: the token's size changes with its contents; see "Re-checked 20 November 2026"); with one byte of the token's payload changed, the same
     check fails with `InvalidSignature`. That agent's badge reads "Issued By: ra.godaddy.com", "Tier 3: Domain Validated (DV)" and
     "Verified Business: NOT PERFORMED"
     (`curl -s -H 'Accept: text/html' https://transparency.ans.godaddy.com/v1/agents/4ad720a9-a1a5-4462-9832-372d8ebf5f21`).
@@ -440,6 +441,9 @@ were missed by earlier checks; each carries its own date.
   history), and only collaborators can open pull requests. Sierra's 9 October post said "Over the next month we will
   host design workshops and publish a reference implementation"; none was listed on the protocol's site or in its
   GitHub organisation on 12 November 2026, and a search of Meta's newsroom that day found no post about the protocol.
+  **Updated 20 November 2026:** version 1.0 was published and frozen on 14 November, and draft 1.1 began on
+  17 November; the revocation text quoted above is in 1.0. The partner page lists 102 entries. No reference
+  implementation is in the GitHub organisation, and no home body is named.
   <https://sierra.ai/blog/introducing-personal-agent-protocol> <https://sierra.ai/blog/poppy>
   <https://personalagentprotocol.org/docs/changelog> <https://personalagentprotocol.org/docs/path-to-1>
   <https://personalagentprotocol.org/docs/introduction> <https://personalagentprotocol.org/docs/1.0/spec>
@@ -643,6 +647,47 @@ field: the last sweep is the one dated 12 November. One limit is stated per entr
   human stands behind an agent is one fact about a principal. It is the kind of evidence a registrar's principal
   check takes in (see the personhood kit), not a registry of organisations' agents; an agent could carry both.
   <https://alien.org/agent-id>
+
+## Re-checked 20 November 2026 (the weekly pass)
+
+A re-read of the entries this file watches most closely, each at its own source on 20 November 2026. Not a sweep: the
+counts above stay the August floor, and items not named here were not re-read.
+
+- **Agent Name Service, measured again.** The production checkpoint at 11:21 UTC covered 461,395 entries; both of
+  its signatures are by the log's own key, with no outside witness. The status token of the agent above is now 489
+  bytes, ACTIVE, valid for 3600 s, and its signature verifies (the command above). The reference code still sets
+  `DefaultStatusTokenTTL = 1 * time.Hour`. Two items opened since 12 November: ANS-1 §4.3 moves a registration to
+  ACTIVE when DNS verifies and enqueues its log event "in the same transaction", with sealing after, while the
+  project's site says the log "seals it before activation succeeds" (an open site pull request would align the site
+  with the spec; a conforming verifier still checks the seal); and an open specification pull request adds a list of
+  known registries that "is not an endorsement, it does not make a registry trusted, and no entry is a default". The
+  operator's blog (18 November) describes a Trust Index over the log with five dimensions, three of them "declared but
+  empty" in its first version, scoring left to each provider.
+  <https://github.com/agentnameservice/ans-spec/blob/main/spec/ans-1-registration.md>
+  <https://github.com/agentnameservice/ans-spec/pull/97> <https://github.com/agentnameservice/trust-index-spec>
+- **Vouched KYA** (formerly "Agent Checkpoint", row above) is middleware for Express, Next.js and ASP.NET Core
+  (`@kya-os/checkpoint-express` 1.14.0, 17 November 2026). Per request it detects bots and agents, checks RFC 9421
+  Ed25519 signatures against published keys or a DID document and KYA-OS delegation proofs, optionally reads a
+  reputation score, and applies a Cedar policy fetched from the vendor's dashboard (cached 300 s by default). A
+  delegation is revoked in the vendor's dashboard or API; the documentation does not say how a self-hosted verifier
+  learns of it, and only the last hop of a delegation chain is checked ("Chain walking is on the roadmap"). No
+  transparency log is described. <https://kya.vouched.id/docs/enforce/middleware>
+  <https://kya.vouched.id/docs/govern/delegations>
+- **Skyfire KYAPay** presented six drafts to the IETF OAuth working group at IETF 127 (18 November 2026) and asked
+  what adoption would need. The KYA token is a JWT naming the principal, the agent platform, the agent instance and
+  how the information was validated; no slide mentions revocation or status. The slides list public deployments,
+  as the vendor's own claim. <https://datatracker.ietf.org/meeting/127/materials/slides-127-oauth-sessa-kyapay-token-00.pdf>
+- **Agent Identity Registry System** (`draft-drake-agent-identity-registry-06`, 16 November 2026, individual,
+  Experimental), not in this file before: a Governance Authority, one production Registry Operator ("singular
+  production namespace is an architectural invariant") and competing accredited Registrars, mapped by the draft to
+  ICANN's roles; EPP to write and RDAP to read; a permanent `aid` URN; higher tiers anchored in hardware. The base
+  identity and its record "are not revocable artifacts"; tokens expire, and de-accrediting a registrar ends its
+  assertions. No transparency log was found in the text. <https://datatracker.ietf.org/doc/draft-drake-agent-identity-registry/>
+- **Citations moved forward.** `draft-ietf-webbotauth-httpsig-protocol-01` (29 October) keeps "It is not a
+  revocation mechanism, and this document does not define any" and adds "This document defines no revocation" (§6.3).
+  `draft-ietf-wimse-aims-01` (2 November) keeps short-lived credentials in place of revocation. The OAuth Token Status
+  List (draft-21) is still in the RFC Editor queue, "In Progress (Second Edit)" since 18 November 2026: an RFC to be,
+  not yet an RFC.
 
 ## Corrections applied before publishing
 
