@@ -683,6 +683,17 @@ counts above stay the August floor, and items not named here were not re-read.
   ICANN's roles; EPP to write and RDAP to read; a permanent `aid` URN; higher tiers anchored in hardware. The base
   identity and its record "are not revocable artifacts"; tokens expire, and de-accrediting a registrar ends its
   assertions. No transparency log was found in the text. <https://datatracker.ietf.org/doc/draft-drake-agent-identity-registry/>
+- **TENON** (Affinidi and Terminal 3), announced on 19 November 2026 at the Singapore FinTech Festival: "a public
+  network that verifies, governs, and secures the work of AI agents across organizations, starting with the financial
+  services sector", with both companies as its first node operators. Every agent call passes through the network,
+  which checks the agent's identity and authority "against trusted registries built on open standards", applies each
+  organisation's policy, routes the call to a model and keeps "a private and immutable audit trail". Each agent has a
+  `did:webvh` identifier; each organisation keeps its own trust registry, and whether an agent is still authorised is
+  a live query to it (TRQP). Agent Gateway and Agent Stream are Apache-2.0. **Relation to AINRA:** the same
+  cross-organisation question; TENON answers it inside the call path with live lookups, AINRA with a signed status a
+  verifier checks offline and public, witnessed logs.
+  <https://www.affinidi.com/newsroom/terminal-3-and-affinidi-partner-to-launch-tenon>
+  <https://www.affinidi.com/solutions/cross-org-agent-trust> <https://www.tenonai.com/>
 - **Citations moved forward.** `draft-ietf-webbotauth-httpsig-protocol-01` (29 October) keeps "It is not a
   revocation mechanism, and this document does not define any" and adds "This document defines no revocation" (§6.3).
   `draft-ietf-wimse-aims-01` (2 November) keeps short-lived credentials in place of revocation. The OAuth Token Status
