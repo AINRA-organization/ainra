@@ -14,7 +14,7 @@
 #   pinned     the same record read at this machine's clock alarms (so round 1 passing shows the instant was used).
 #   real time  a fixed instant left in the watcher's settings (AINRA_HOME_NOW) is not used, shown with one that would
 #              alarm if it were; and a copy of the record with its statement removed, shown to the watcher that saw the
-#              statement, is an alarm.
+#              statement, is an alarm; one whose statement cannot be read is a round that could not check.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 unset AINRA_STAGE_CLOCK AINRA_STAGE_RESIGN AINRA_STAGE_NEW_ROOT AINRA_STAGE_TAKE_BACK AINRA_CLOCK \
@@ -41,7 +41,7 @@ for clock in pinned wall; do
   for _ in $(seq 1 40); do busy=0; for p in "${PORTS[@]}"; do taken "$p" && busy=1; done; [ "$busy" = 0 ] && break; sleep 0.25; done
   net "$clock" up > "$T/$clock-up.log" 2>&1
   PUB="$T/$clock/public"
-  [ -s "$PUB/roots.json" ] && [ -s "$PUB/index.json" ] || { fail "the $clock network did not come up:"; tail -12 "$T/$clock-up.log"; echo "HOME WATCH DRILL FAILED"; exit 1; }
+  [ -s "$PUB/roots.json" ] && [ -s "$PUB/index.json" ] || { fail "the $clock network did not come up:"; tail -n 12 "$T/$clock-up.log"; echo "HOME WATCH DRILL FAILED"; exit 1; }
   cp "$PUB/roots.json" "$T/$clock-pinned-roots.json"
   export AINRA_HOME_NET="http://127.0.0.1:$ART" AINRA_HOME_REGISTRARS="http://$R1 http://$R2" \
          AINRA_HOME_ROOTS="$T/$clock-pinned-roots.json" AINRA_HOME_STATE="$T/$clock-state" AINRA_HOME_ALERT="cat >> $T/$clock-alerts.txt"
@@ -52,7 +52,7 @@ for clock in pinned wall; do
   echo "1 · a network that is as it says, and a watcher told no clock"
   bash tools/home-watch.sh > "$T/out" 2>&1; c=$?
   if [ $c = 0 ] && [ "$(alerts)" = 0 ] && grep -q "$said" "$T/out"; then ok "exit 0, no alert; $said"
-  else fail "expected exit 0, no alert and '$said': exit $c"; tail -20 "$T/out"; fi
+  else fail "expected exit 0, no alert and '$said': exit $c"; tail -n 20 "$T/out"; fi
 
   echo "2 · a fork planted in what the watcher saw last"
   f="$(find "$T/$clock-state" -name 'monitor-*5967*.json' | head -1)"; cp "$f" "$T/good.json"
@@ -83,7 +83,7 @@ for clock in pinned wall; do
     ahead=$(( $(date +%s) + 100*86400 ))
     AINRA_HOME_NOW="$ahead" bash tools/home-watch.sh > "$T/out" 2>&1; c=$?
     if [ $c = 0 ] && grep -q "AINRA_HOME_NOW is set and not used" "$T/out"; then ok "a fixed instant left in the watcher's settings (AINRA_HOME_NOW) is not used over this network: exit 0"
-    else fail "a fixed instant steered a watch over a network that keeps real time: exit $c"; tail -12 "$T/out"; fi
+    else fail "a fixed instant steered a watch over a network that keeps real time: exit $c"; tail -n 12 "$T/out"; fi
     ctl="$(./target/release/ainra ctl status --net "$AINRA_HOME_NET" --roots "$AINRA_HOME_ROOTS" --state "$T/wall-ctl.json" --now "$ahead" 2>&1)"; c=$?
     if [ $c = 1 ] && echo "$ctl" | grep -q "ALARM  stale directory: issued 100 day(s) ago"; then ok "WITNESS: read at that instant by hand, the same record alarms (stale directory), so the watcher did not use it"
     else fail "the record passed at an instant 100 days ahead (exit $c), so the line above proves nothing"; echo "$ctl" | tail -4; fi
@@ -91,9 +91,15 @@ for clock in pinned wall; do
     node -e 'const fs=require("fs"),p=process.argv[1]+"/index.json",j=JSON.parse(fs.readFileSync(p,"utf8"));delete j.clock;fs.writeFileSync(p,JSON.stringify(j))' "$T/wall-relabelled"
     AINRA_HOME_NET="$T/wall-relabelled" bash tools/home-watch.sh > "$T/out" 2>&1; c=$?
     if [ $c = 3 ] && grep -q "ALARM  this network stated real time before and its record now states the pinned clock" "$T/out"; then ok "the record's statement removed, shown to the watcher that saw it: exit 3, the alarm names it"
-    else fail "a record relabelled as pinned was accepted by a watcher that had seen it keep real time: exit $c"; tail -12 "$T/out"; fi
+    else fail "a record relabelled as pinned was accepted by a watcher that had seen it keep real time: exit $c"; tail -n 12 "$T/out"; fi
+    # A statement that cannot be read is not a pinned record: everything else in this copy checks out, and the round
+    # must still say it could not check.
+    node -e 'const fs=require("fs"),p=process.argv[1]+"/index.json",j=JSON.parse(fs.readFileSync(p,"utf8"));j.clock="sideways";fs.writeFileSync(p,JSON.stringify(j))' "$T/wall-relabelled"
+    AINRA_HOME_NET="$T/wall-relabelled" bash tools/home-watch.sh > "$T/out" 2>&1; c=$?
+    if [ $c = 2 ] && grep -q "could not read which clock the record states" "$T/out" && grep -q "^CTL OK" "$T/out" && grep -q "^HOME WATCH COULD NOT CHECK" "$T/out"; then ok "a statement that cannot be read (a word that is neither): exit 2, could not check, though every other check passes"
+    else fail "a record with an unreadable clock was not reported as could-not-check: exit $c"; tail -n 8 "$T/out"; fi
     bash tools/home-watch.sh > "$T/out" 2>&1; c=$?
-    if [ $c = 0 ]; then ok "the true record again: exit 0"; else fail "the true record no longer passes: exit $c"; tail -12 "$T/out"; fi
+    if [ $c = 0 ]; then ok "the true record again: exit 0"; else fail "the true record no longer passes: exit $c"; tail -n 12 "$T/out"; fi
   fi
   net "$clock" down >/dev/null 2>&1
 done

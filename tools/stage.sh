@@ -66,6 +66,7 @@ NBF=1775865600 ; RENEW_AT=$((NBF + 5*24*3600)) ; NOW=$((NBF + 10*24*3600)) ; AUD
 # The time a seed write names. Pinned: the fixed instants above, as always. Wall clock: none — the registrar signs a
 # revocation or a renewal at its own clock (registrar-box default_now), and refuses an instant outside the window its
 # delegates were certified for when it started, which a time fixed in April 2026 is.
+PINNED_AT="$NOW"   # the pinned clock's one instant, whatever clock this run is on
 AT_NOW=",\"now\":$NOW" ; AT_RENEW=",\"now\":$RENEW_AT"
 if [ "$AINRA_CLOCK" != pinned ]; then AT_NOW="" ; AT_RENEW="" ; NOW="$(date +%s)" ; fi
 export AINRA_STAGE=1
@@ -154,6 +155,11 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
   # Built aside and swapped in whole: a registrar that does not answer leaves the published record as it was.
   # A pinned publish over a network that keeps real time is refused, here by the date of its newest directory and
   # below by what each registrar answers (a network just moved has restarted registrars and an April directory).
+  local lag
+  if lag="$(wall_on_pinned_registrar)"; then
+    echo "publish: $lag still runs on the pinned clock and this publish keeps real time ($CLOCK_FILE or AINRA_STAGE_CLOCK says wall) — restart it on the wall clock first; the published record is left as it was"
+    return 1
+  fi
   if pinned_on_wall_history; then
     echo "publish: this network's newest directory is dated at the real time and this publish is pinned (neither $CLOCK_FILE nor AINRA_STAGE_CLOCK says wall) — the published record is left as it was"
     return 1
@@ -261,11 +267,32 @@ newest_epoch_date(){ # the date under the newest published epoch; nothing if the
 # A pinned run over a network that keeps real time: its newest directory carries a date that is not the fixed ceremony
 # instant every pinned directory carries (NBF less an hour).
 pinned_on_wall_history(){ local n; n="$(newest_epoch_date)"; [ "$AINRA_CLOCK" = pinned ] && [ -n "$n" ] && [ "$n" != "$((NBF - 3600))" ]; }
+# The other way round: a run that keeps real time over a registrar that is still pinned. A pinned registrar signs at
+# whatever instant it is asked for; one that keeps real time answers with its own clock. Asked for the pinned instant,
+# a registrar that answers with exactly that instant is still pinned. Signing or publishing over it would date the
+# directory today and state "clock": "wall" above registrars that go on answering in April 2026: every reader that
+# then named no instant would be handed April presentations and call them stale. It is what happens when the folder's
+# CLOCK file is changed and the registrars are not restarted before the next step. Prints the first such registrar.
+wall_on_pinned_registrar(){
+  [ "$AINRA_CLOCK" != pinned ] || return 1
+  local pair
+  for pair in "$REG1_ADDR:$REG1_ID" "$REG2_ADDR:$REG2_ID"; do
+    if get "${pair%:*}/fresh-head?now=$PINNED_AT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.exit(JSON.parse(s).ts===Number(process.argv[1])?0:1)}catch{process.exit(1)}})' "$PINNED_AT"; then
+      echo "${pair##*:}"; return 0
+    fi
+  done
+  return 1
+}
 accredit_net(){ # ask each running registrar for its accreditation and sign the directory over them
   mkdir -p "$STAGE/genesis"
   # A pinned signing dates the directory at the fixed ceremony instant. Over a history whose newest epoch is dated at
   # the real time, that publishes a NEWER epoch under an OLDER date and brings the stale alarm back (seen on a
   # throwaway network, 22 November 2026). Refused before the registrars or the seed are asked for anything.
+  local lag
+  if lag="$(wall_on_pinned_registrar)"; then
+    echo "stage: $lag still runs on the pinned clock and this signing keeps real time ($CLOCK_FILE or AINRA_STAGE_CLOCK says wall) — restart it on the wall clock first; nothing accredited, nothing published"
+    return 1
+  fi
   if pinned_on_wall_history; then
     echo "stage: this network's newest directory is dated at the real time and this signing is pinned (neither $CLOCK_FILE nor AINRA_STAGE_CLOCK says wall) — nothing accredited, nothing published"
     return 1

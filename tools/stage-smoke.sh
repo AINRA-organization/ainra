@@ -15,6 +15,7 @@ fail(){ echo "  ✗ $1"; exit 1; }
 # named in every request, as this drill has always run (M35: a reproducible clock is what makes it reproducible).
 # Real time: no instant is named, and the registrar answers and signs at its own clock.
 CLOCK_LINE="$(node tools/net-clock.mjs "$ART")" || fail "the record at $ART does not say which clock the network keeps — is it up? (make stage-up)"
+case "$CLOCK_LINE" in wall|pinned|"pinned "*) ;; *) fail "could not tell which clock the network keeps (tools/net-clock.mjs said '$CLOCK_LINE')" ;; esac
 if [ "$CLOCK_LINE" = wall ]; then
   export AINRA_CLOCK=wall ; NOWQ="" ; NOWB=""
 else

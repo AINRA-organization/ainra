@@ -54,12 +54,17 @@ note(){ # note CODE — keep the worst outcome: an alarm (3) outranks could-not-
   if [ "$1" = 3 ]; then worst=3; elif [ "$1" != 0 ] && [ "$worst" = 0 ]; then worst=2; fi
 }
 
-# The clock this round reads at (see THE CLOCK above). A record that cannot be read states nothing: the checks below
-# then report that they could not check, at the instant this machine was given, if any.
+# The clock this round reads at (see THE CLOCK above). A record whose clock cannot be read is a round that could not
+# check, said in its own line: the checks below still run (at the instant this machine was given, if it was given one
+# and the network has never stated real time), but the round is not reported as well.
 stated="$(node tools/net-clock.mjs "$NET" 2>/dev/null)" || stated=""
 seen="$(cat "$STATE/clock" 2>/dev/null)"
 nowarg=(); [ "$seen" != wall ] && [ -n "${AINRA_HOME_NOW:-}" ] && nowarg=(--now "$AINRA_HOME_NOW")
 case "$stated" in
+  "")
+    echo "== the clock: could not read which clock the record states (tools/net-clock.mjs: is the record there, and is node installed?)" >> "$report"
+    note 2
+    ;;
   wall)
     nowarg=(); echo wall > "$STATE/clock"
     echo "== the clock: the record states real time; read at this machine's clock" >> "$report"

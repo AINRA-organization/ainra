@@ -88,6 +88,7 @@ TREE=$(cd "$TMP" && find registrars -type f | sort)
 CLOCK_LINE="$(node tools/net-clock.mjs "$TMP" 2>/dev/null)" \
   || { echo "site-net: the network's index.json states a clock this cannot read — refusing to $MODE over it"; exit 2; }
 CLOCK="${CLOCK_LINE%% *}"
+case "$CLOCK" in wall|pinned) ;; *) echo "site-net: could not tell which clock the network keeps (tools/net-clock.mjs said '$CLOCK_LINE') — refusing to $MODE"; exit 2 ;; esac
 NOWQ=""; [ "$CLOCK" = pinned ] && NOWQ="&now=1776729600"
 
 if [ "$MODE" = "check" ]; then
