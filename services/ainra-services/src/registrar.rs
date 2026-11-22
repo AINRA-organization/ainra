@@ -1741,7 +1741,10 @@ impl RegistrarBox {
     /// log, signed by the CURRENT delegate (M35). The one place both `present()` and `verify_record()` get them, so
     /// the bundle a verifier receives and the registrar's own verdict cannot diverge. The stored values stay on the
     /// record untouched as the issuance receipt.
-    fn with_current_checkpoint(&self, rec: &IssuedRecord) -> Option<IssuedRecord> {
+    ///
+    /// Public for the daemon's `/export` on a registrar that keeps real time: a third party re-verifies an exported
+    /// record as it stands, and the receipt stops verifying when its issuance-day delegate lapses (at most 92 days).
+    pub fn with_current_checkpoint(&self, rec: &IssuedRecord) -> Option<IssuedRecord> {
         let cp = self.log.signed_checkpoint();
         let signed = self.log.sign_checkpoint(&cp);
         let proof = self.log.inclusion_proof(rec.leaf_index)?;

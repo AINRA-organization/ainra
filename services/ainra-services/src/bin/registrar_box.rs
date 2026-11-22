@@ -1574,7 +1574,18 @@ fn export_json(rb: &RegistrarBox, now: u64) -> String {
         .records()
         .map(|r| {
             let v = rb.verify_record(&r.sub, now);
-            json!({ "record": r, "verdict": serde_json::to_value(&v).unwrap() })
+            // On a registrar that keeps real time the record goes out proven against the CURRENT checkpoint, as
+            // `/present` and the verdict beside it already are (M35). The stored one is the issuance receipt, signed
+            // by that day's delegate: everything that re-verifies an export from the record (the explorer, the site,
+            // the smoke test) called a good passport `checkpoint_invalid` once that delegate had lapsed, at most 92
+            // days after issuance, and at once for a network moved from the pinned clock to the real one. A pinned
+            // registrar's delegate never lapses in its own world, and its export is byte for byte what it was.
+            let current = if clock_pinned() {
+                None
+            } else {
+                rb.with_current_checkpoint(r)
+            };
+            json!({ "record": current.as_ref().unwrap_or(r), "verdict": serde_json::to_value(&v).unwrap() })
         })
         .collect();
     json!({
