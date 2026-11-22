@@ -51,6 +51,8 @@ done
 if [ -n "$broken" ]; then
   if [ "$restarted" -eq 0 ]; then
     echo "watchdog: the published record is unreadable for$broken — republishing from the registrars"
+    # On the network's own clock: stage.sh reads it from the network's folder (stage/CLOCK) and sets AINRA_CLOCK for
+    # itself, whatever the unit settings sourced above hold. Nothing here names a clock, and nothing has to.
     bash tools/stage.sh publish || echo "watchdog: republish refused; the record is left as it was"
   else
     echo "watchdog: the published record is unreadable for$broken — not republishing while a unit was just restarted"

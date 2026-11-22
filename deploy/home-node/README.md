@@ -69,6 +69,15 @@ bash deploy/home-node/sign-for-node.sh pi@ainra-node.local ainra bind-chains
 It opens a tunnel to the node's registrars, signs here (the sealed seed asks for its passphrase), sends the signed
 directory to the node, and the node republishes. A node that is asked to sign by itself refuses: the seed is not there.
 
+The clock is the network's own. The file `stage/CLOCK` in the node's clone holds `wall` for a network whose registrars
+keep real time; with no file the network is pinned. Every script reads it (`tools/stage.sh`, the installer, the
+watchdog, this signing), and the published record repeats it (`"clock": "wall"` in `index.json`), which is what the
+home watch and the site read. A network that keeps real time must be signed again within the published 92 days:
+
+```sh
+AINRA_STAGE_RESIGN=1 bash deploy/home-node/sign-for-node.sh pi@ainra-node.local   # the same registrars, today's date
+```
+
 ## The home watch
 
 `ainra-home-watch.timer` runs `tools/home-watch.sh` every five minutes. It reads only. Configuration in
@@ -78,10 +87,14 @@ runs `AINRA_HOME_ALERT` once, with the report on standard input; on the clearing
 notification through a push service of your choosing that accepts a plain HTTP POST:
 `AINRA_HOME_ALERT=curl -s --data-binary @- https://<your push service>/<a long random topic only you know>`.
 
+The watch reads the network at the clock the network's record states, every round: this machine's clock for a record
+that says it keeps real time, the record's own fixed instant for a pinned one. `AINRA_HOME_NOW` stays empty. Once a
+network has stated real time, a record of it that says pinned is an alarm.
+
 ```sh
 bash deploy/home-node/install.sh status          # the last round, any standing alarm
 journalctl --user -u ainra-home-watch -f         # every round
-make home-watch-drill                            # a planted fork alarms once, is not repeated, then clears
+make home-watch-drill                            # on throwaway networks, both clocks: a planted fork alarms once, then clears
 ```
 
 `install.sh install --watch-only` installs the watch alone, to watch a network that runs elsewhere (a second home, a

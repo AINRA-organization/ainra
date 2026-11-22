@@ -57,7 +57,9 @@ lines.push(`- Unpushed commits: ${unpushed ?? "could not tell"}`);
 const live = sh("bash", ["tools/live.sh", "status"]);
 lines.push(`- Live network (wall clock, :4970): ${live ? live.split("\n").slice(-1)[0].trim() : "DOWN — `make live-up` to start it"}`);
 const stage = sh("systemctl", ["--user", "is-active", "ainra-stage.target"]);
-lines.push(`- Staging network (pinned): ${stage ?? "not running"}`);
+// The clock the network states in its own folder (stage/CLOCK, tools/stage.sh): `wall`, or pinned when there is no file.
+const stageClock = (() => { try { return readFileSync(join(ROOT, "stage/CLOCK"), "utf8").trim() === "wall" ? "wall clock" : "pinned"; } catch { return "pinned"; } })();
+lines.push(`- Staging network (${stageClock}): ${stage ?? "not running"}`);
 // PLAN-M53 R3 (D-107): the record a visitor reads, compared passport by passport with the registrars, every morning.
 // Three answers, and "could not check" is its own: a check that goes quiet when the site is unreachable reads as green.
 {

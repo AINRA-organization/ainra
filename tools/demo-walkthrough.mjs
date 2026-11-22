@@ -26,11 +26,28 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { inflateSync, deflateSync } from "node:zlib";
 import { conformance, verdictEvent, serializeVerdictEvent } from "../site/vendor/ainra-sdk.js";
+import { netClock } from "./net-clock.mjs";
 const { runVector } = conformance;
 
-const REG = process.argv[2] || process.env.AINRA_REG || "http://127.0.0.1:4907";
+const DEFAULT_REG = "http://127.0.0.1:4907";
+const REG = process.argv[2] || process.env.AINRA_REG || DEFAULT_REG;
 const REGID = process.argv[3] || process.env.AINRA_REGID || "registrar-07";
-const NOW = Number(process.env.AINRA_NOW || 1776729600); // staging's default verification time (nbf + 10d)
+// The instant is the network's own, from the clock its record states (tools/net-clock.mjs). Pinned: the record's fixed
+// instant (staging's nbf + 10d), named in every request. Real time: none is named, the registrar answers at its own
+// clock, and each verdict-event is dated by the presentation it is about. AINRA_NOW names an instant by hand (the
+// negative control does). The record is AINRA_ART; without it, the standing record goes with the standing registrar,
+// and a registrar named on its own is treated as pinned, as it always was.
+const PINNED_NOW = 1776729600;
+const ART = process.env.AINRA_ART || (REG === DEFAULT_REG ? "http://127.0.0.1:8091" : "");
+let NAMED = true, NOW = Number(process.env.AINRA_NOW || PINNED_NOW);
+const readClock = async () => {
+  if (process.env.AINRA_NOW || !ART) return;
+  const c = await netClock(ART).catch(() => null);
+  if (c?.clock === "wall") NAMED = false;
+  else if (c?.at) NOW = c.at;
+};
+const nowQ = () => (NAMED ? `&now=${NOW}` : "");
+const at = (pres) => (NAMED ? NOW : pres?.now ?? Math.floor(Date.now() / 1000));
 const j = async (u, o) => (await fetch(u, o)).json();
 
 let failed = 0;
@@ -125,6 +142,7 @@ async function negative() {
 }
 
 const main = async () => {
+  await readClock();
   const acc = await j(`${REG}/accreditation`).catch(() => ({}));
   if (!acc.issuer_key || !acc.log_root_key) {
     console.error(`  ✗ no accreditation from ${REG} — is the staging network up?  run:  make stage-up`);
@@ -145,18 +163,18 @@ const main = async () => {
   step(2, "logged before valid", RULES.logged(rec, recCheck), `leaf at checkpoint height ${rec.checkpoint_size}, records=${health.records}`);
 
   // 3. VERIFY (real SDK, locally) — the browser fetches /present and recomputes the inclusion proof itself
-  const pres1 = await j(`${REG}/present?sub=${encodeURIComponent(sub)}&now=${NOW}`);
+  const pres1 = await j(`${REG}/present?sub=${encodeURIComponent(sub)}${nowQ()}`);
   const v1 = runVector({ name: sub, expect: {}, anchors, presentation: pres1 });
-  step(3, "verify (real SDK)", RULES.verified(v1), `verdict-event ${serializeVerdictEvent(verdictEvent(pres1, v1, NOW))}`);
+  step(3, "verify (real SDK)", RULES.verified(v1), `verdict-event ${serializeVerdictEvent(verdictEvent(pres1, v1, at(pres1)))}`);
 
   // 4. REVOKE via the public door
-  const rv = await j(`${REG}/demo/revoke`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sub, now: NOW }) });
+  const rv = await j(`${REG}/demo/revoke`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(NAMED ? { sub, now: NOW } : { sub }) });
   step(4, "revoke (public door)", RULES.revoked(rv, sub), rv.revoked ? `revoked ${sub.split(":").pop()}` : JSON.stringify(rv));
 
   // 5. RE-VERIFY — must fail closed with the named reason
-  const pres2 = await j(`${REG}/present?sub=${encodeURIComponent(sub)}&now=${NOW}`);
+  const pres2 = await j(`${REG}/present?sub=${encodeURIComponent(sub)}${nowQ()}`);
   const v2 = runVector({ name: sub, expect: {}, anchors, presentation: pres2 });
-  step(5, "re-verify fails closed", RULES.refused(v2), `verdict-event ${serializeVerdictEvent(verdictEvent(pres2, v2, NOW))}`);
+  step(5, "re-verify fails closed", RULES.refused(v2), `verdict-event ${serializeVerdictEvent(verdictEvent(pres2, v2, at(pres2)))}`);
 
   console.log();
   console.log(failed === 0

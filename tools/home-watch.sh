@@ -19,9 +19,19 @@
 #   AINRA_HOME_REGISTRARS  registrar URLs, space separated                  (default the two test registrars)
 #   AINRA_HOME_WATCH       operators whose passports must all be expected  (optional, space separated)
 #   AINRA_HOME_EXPECT      a file of the passports those operators asked for (required with AINRA_HOME_WATCH)
-#   AINRA_HOME_NOW         a fixed clock for a pinned network (the test network: 1776729600); empty = wall clock
+#   AINRA_HOME_NOW         leave empty: the watch reads the network at the clock the network states (below). Set, it
+#                          is the instant used for a record that states the pinned clock, and for nothing else
 #   AINRA_HOME_STATE       where the watcher remembers what it saw         (default ~/.local/state/ainra-home)
 #   AINRA_HOME_ALERT       a command run on a new alarm or its clearing    (optional; e.g. a mail or push command)
+#
+# THE CLOCK is the network's own, read from the record it publishes (index.json, tools/net-clock.mjs), every round:
+#   "clock": "wall"   the registrars keep real time, so the watch reads at this machine's clock and names no time
+#   no such field     the pinned clock: the watch reads at the record's own fixed instant (its verified_at)
+# So the watch cannot be on one clock while the registrars are on the other, and a network that moves to real time
+# is followed without anyone editing this machine's settings. The statement is not signed, which matters in one
+# direction only: a record that keeps real time and claimed to be pinned would be read at an instant of its own
+# choosing and never go stale. So the watch remembers that a network stated the wall clock ($STATE/clock), and a
+# later record of that network stating the pinned one is an alarm, read at the real clock.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
@@ -37,13 +47,34 @@ mkdir -p "$STATE"; chmod 700 "$STATE"
 if [ -n "${AINRA_HOME_WATCH:-}" ] && [ ! -s "${AINRA_HOME_EXPECT:-}" ]; then
   echo "home-watch: AINRA_HOME_WATCH is set, so AINRA_HOME_EXPECT must name the list of expected passports"; exit 2
 fi
-nowarg=(); [ -n "${AINRA_HOME_NOW:-}" ] && nowarg=(--now "$AINRA_HOME_NOW")
 
 report="$STATE/round.txt"; : > "$report"
 worst=0
 note(){ # note CODE — keep the worst outcome: an alarm (3) outranks could-not-check (2), which outranks well (0)
   if [ "$1" = 3 ]; then worst=3; elif [ "$1" != 0 ] && [ "$worst" = 0 ]; then worst=2; fi
 }
+
+# The clock this round reads at (see THE CLOCK above). A record that cannot be read states nothing: the checks below
+# then report that they could not check, at the instant this machine was given, if any.
+stated="$(node tools/net-clock.mjs "$NET" 2>/dev/null)" || stated=""
+seen="$(cat "$STATE/clock" 2>/dev/null)"
+nowarg=(); [ "$seen" != wall ] && [ -n "${AINRA_HOME_NOW:-}" ] && nowarg=(--now "$AINRA_HOME_NOW")
+case "$stated" in
+  wall)
+    nowarg=(); echo wall > "$STATE/clock"
+    echo "== the clock: the record states real time; read at this machine's clock" >> "$report"
+    [ -n "${AINRA_HOME_NOW:-}" ] && echo "   (AINRA_HOME_NOW is set and not used: it is for a record that states the pinned clock)" >> "$report"
+    ;;
+  pinned*)
+    if [ "$seen" = wall ]; then
+      echo "== the clock: ALARM  this network stated real time before and its record now states the pinned clock; read at this machine's clock" >> "$report"
+      note 3
+    elif [ -z "${AINRA_HOME_NOW:-}" ]; then
+      at="${stated#pinned}"; at="${at# }"
+      if [ -n "$at" ]; then nowarg=(--now "$at"); echo "== the clock: the record states the pinned clock; read at its instant $at" >> "$report"; fi
+    fi   # with AINRA_HOME_NOW set, a pinned record is read at that instant, as this watch always did
+    ;;
+esac
 
 echo "== the published record: $NET" >> "$report"
 "$BIN" ctl status --net "$NET" --roots "$ROOTS" --state "$STATE/ctl-seen.json" "${nowarg[@]}" >> "$report" 2>&1

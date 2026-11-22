@@ -54,8 +54,9 @@ install)
 AINRA_HOME_NET=http://127.0.0.1:8091
 AINRA_HOME_ROOTS=$CONF/pinned-roots.json
 AINRA_HOME_REGISTRARS=http://127.0.0.1:4907 http://127.0.0.1:4911
-# The test network runs on a pinned clock; a wall-clock network leaves this empty.
-AINRA_HOME_NOW=1776729600
+# Leave empty: the watch reads the network at the clock the network's own record states (real time, or its pinned
+# instant), every round. A value here is used only for a record that states the pinned clock.
+AINRA_HOME_NOW=
 # Operators whose every passport must be on the list in AINRA_HOME_EXPECT (one passport name per line).
 AINRA_HOME_WATCH=
 AINRA_HOME_EXPECT=

@@ -9,15 +9,28 @@ import { spawn, execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { netClock } from "./net-clock.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REG = process.env.AINRA_REG || "http://127.0.0.1:4907";
 const REGID = "registrar-07";
-const NOW = 1776729600;
+// The record the registrar belongs to: client 2 verifies against its directory, and all three take their clock from it.
+const ART = process.env.AINRA_ARTIFACTS || "http://127.0.0.1:8091";
+// The instant is the network's own, from the clock its record states (tools/net-clock.mjs). Pinned: the record's fixed
+// instant, named in every request and handed to each verifier. Real time: none is named, the registrar answers at its
+// own clock, and each verifier uses its own.
+let NAMED = true, NOW = 1776729600;
+const readClock = async () => {
+  const c = await netClock(ART).catch(() => null);
+  if (c?.clock === "wall") NAMED = false;
+  else if (c?.at) NOW = c.at;
+};
+const nowQ = () => (NAMED ? `&now=${NOW}` : "");
+const revokeBody = (sub) => (NAMED ? { sub, now: NOW } : { sub });
 
 const post = async (path, body) => (await fetch(REG + path, { method: "POST", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined })).json();
 const get = async (path) => (await fetch(REG + path)).json();
-const present = (sub) => get(`/present?sub=${encodeURIComponent(sub)}&now=${NOW}`);
+const present = (sub) => get(`/present?sub=${encodeURIComponent(sub)}${nowQ()}`);
 const anchors = async () => { const a = await get("/accreditation"); return { [REGID]: { issuer_key: a.issuer_key, log_root_key: a.log_root_key } }; };
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 
@@ -29,7 +42,7 @@ async function clientHTTP() {
   assert(rec.sub, "issue failed");
   const v1 = runVector({ name: rec.sub, expect: {}, anchors: A, presentation: await present(rec.sub) });
   assert(v1.verdict === "valid", "verify not valid");
-  await post("/demo/revoke", { sub: rec.sub, now: NOW });
+  await post("/demo/revoke", revokeBody(rec.sub));
   const v2 = runVector({ name: rec.sub, expect: {}, anchors: A, presentation: await present(rec.sub) });
   assert(v2.verdict === "invalid" && v2.reason === "revoked", "re-verify not revoked");
   return { sub: rec.sub, clean: "valid", revoked: "invalid:revoked" };
@@ -42,11 +55,11 @@ async function clientCurl() {
   const A = await anchors();
   const rec = curl(["-X", "POST", `${REG}/demo/issue`]);
   assert(rec.sub, "issue failed");
-  const p1 = curl([`${REG}/present?sub=${encodeURIComponent(rec.sub)}&now=${NOW}`]);
+  const p1 = curl([`${REG}/present?sub=${encodeURIComponent(rec.sub)}${nowQ()}`]);
   const v1 = runVector({ name: rec.sub, expect: {}, anchors: A, presentation: p1 });
   assert(v1.verdict === "valid", "verify not valid");
-  curl(["-X", "POST", "-H", "Content-Type: application/json", "-d", JSON.stringify({ sub: rec.sub, now: NOW }), `${REG}/demo/revoke`]);
-  const p2 = curl([`${REG}/present?sub=${encodeURIComponent(rec.sub)}&now=${NOW}`]);
+  curl(["-X", "POST", "-H", "Content-Type: application/json", "-d", JSON.stringify(revokeBody(rec.sub)), `${REG}/demo/revoke`]);
+  const p2 = curl([`${REG}/present?sub=${encodeURIComponent(rec.sub)}${nowQ()}`]);
   const v2 = runVector({ name: rec.sub, expect: {}, anchors: A, presentation: p2 });
   assert(v2.verdict === "invalid" && v2.reason === "revoked", "re-verify not revoked");
   return { sub: rec.sub, clean: "valid", revoked: "invalid:revoked" };
@@ -58,21 +71,28 @@ function mcpSession() {
   let buf = "", nextId = 1; const waiters = new Map();
   child.stdout.on("data", (d) => {
     buf += d; let i;
-    while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (!line.trim()) continue; try { const m = JSON.parse(line); if (m.id && waiters.has(m.id)) { waiters.get(m.id)(m); waiters.delete(m.id); } } catch {} }
+    while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (!line.trim()) continue; try { const m = JSON.parse(line); if (m.id && waiters.has(m.id)) { waiters.get(m.id)[0](m); waiters.delete(m.id); } } catch {} }
   });
-  const call = (method, params) => new Promise((res) => { const id = nextId++; waiters.set(id, res); child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n"); });
-  return { call, close: () => child.stdin.end() };
+  // A server that dies answers nothing. Until 22 November 2026 that left the call pending for ever, Node ran out of
+  // work and exited 0 after client 1, with no verdict printed: a missing dependency read as a quiet pass.
+  let dead = null;
+  const gone = (why) => { dead = why; for (const [, , rej] of waiters.values()) rej(new Error(why)); waiters.clear(); };
+  child.on("error", (e) => gone(`the MCP server did not start (${e.message})`));
+  child.on("exit", (code) => gone(`the MCP server exited (code ${code}) before answering — is packages/mcp installed? (make mcp-test)`));
+  child.stdin.on("error", () => {});
+  const call = (method, params) => new Promise((res, rej) => { if (dead) return rej(new Error(dead)); const id = nextId++; waiters.set(id, [res, id, rej]); child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n"); });
+  return { call, close: () => { waiters.clear(); child.removeAllListeners("exit"); child.stdin.end(); } };
 }
 async function clientMCP() {
   // The MCP tool DECIDES (D-074): it takes the signed directory and the roots, checks the one against the other,
   // and authenticates the status — where clients A and C replay the bundle through the fixture-semantics verifier.
-  // `now` is this drill's pinned clock, passed as the caller's; the tool never reads one off the bundle.
-  const ART = process.env.AINRA_ARTIFACTS || "http://127.0.0.1:8091";
+  // On a pinned network `now` is the record's fixed instant, passed as the caller's; on one that keeps real time none
+  // is passed and the tool uses its own clock. Either way the tool never reads one off the bundle.
   const [directory, roots] = await Promise.all(["/directory.json", "/roots.json"].map(async (f) => (await fetch(ART + f)).json()));
   const m = mcpSession();
   await m.call("initialize", {});
   const verify = async (sub) => {
-    const r = await m.call("tools/call", { name: "ainra_verify", arguments: { directory, roots, now: NOW, presentation: await present(sub) } });
+    const r = await m.call("tools/call", { name: "ainra_verify", arguments: { directory, roots, ...(NAMED ? { now: NOW } : {}), presentation: await present(sub) } });
     const text = r.result?.content?.map((c) => c.text).join("") ?? JSON.stringify(r.result);
     const j = JSON.parse(text);
     return { verdict: j.verdict, reason: j.reason ?? null };
@@ -81,7 +101,7 @@ async function clientMCP() {
   assert(rec.sub, "issue failed");
   const v1 = await verify(rec.sub);
   assert(v1.verdict === "valid", "MCP verify not valid: " + JSON.stringify(v1));
-  await post("/demo/revoke", { sub: rec.sub, now: NOW });
+  await post("/demo/revoke", revokeBody(rec.sub));
   const v2 = await verify(rec.sub);
   m.close();
   assert(v2.verdict === "invalid" && v2.reason === "revoked", "MCP re-verify not revoked: " + JSON.stringify(v2));
@@ -96,6 +116,7 @@ const CLIENTS = [
 
 const main = async () => {
   if (!(await get("/health").then((h) => h.ok).catch(() => false))) { console.error("  ✗ registrar not up — run: make stage-up"); process.exit(2); }
+  await readClock();
   console.log("AINRA · any-agent proof — three independent clients, one lifecycle, no client-specific server code\n");
   const results = [];
   let failed = 0;
@@ -103,8 +124,10 @@ const main = async () => {
     try { const r = await fn(); console.log(`  ✓ ${label} — issue → VALID → revoke → INVALID:revoked`); results.push({ client: results.length + 1, transport: label.replace(/^client-\d+ \(|\)$/g, ""), result: "green", clean: r.clean, revoked: r.revoked }); }
     catch (e) { console.log(`  ✗ ${label} — ${e.message}`); results.push({ client: results.length + 1, transport: label, result: "red", error: e.message }); failed++; }
   }
-  mkdirSync(join(ROOT, "evidence"), { recursive: true });
-  writeFileSync(join(ROOT, "evidence", "three-clients.json"), JSON.stringify({
+  // AINRA_EVIDENCE_DIR: where a drill against a throwaway network writes its evidence, so it never replaces this file.
+  const OUT = process.env.AINRA_EVIDENCE_DIR || join(ROOT, "evidence");
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(join(OUT, "three-clients.json"), JSON.stringify({
     claim: "3 independent client implementations completed the full lifecycle (issue → verify → revoke → re-verify) against the same registrar public door + read surface, with no client-specific server code.",
     network: "staging", root: "test-root", clients: results.length, green: results.filter((r) => r.result === "green").length, results,
   }, null, 2) + "\n");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// STATUS: passes against the wall-clock live registrar (`make live-up`, M35). It FAILS against the pinned staging
-// network, correctly — that world is fixed at 2026-04-21 and says so.
+// STATUS: passes against the wall-clock live registrar (`make live-up`, M35). It FAILS against a network on the
+// pinned clock, correctly — that world is fixed at 2026-04-21. The staging network runs on the clock it states.
 //
 // make identity-e2e — the whole working identity, end to end, the way a stranger's agent would do it.
 //

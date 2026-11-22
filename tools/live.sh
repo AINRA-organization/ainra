@@ -3,10 +3,10 @@
 #
 # make live-up · live-down · live-status — a registrar that KEEPS TIME, with the public door open (M35).
 #
-# The staging network (`make stage-up`) is a reproducible reference world pinned to 2026-04-21, and says so. This is
-# the other thing: the same registrar on the WALL CLOCK, renewing its delegates before they lapse and presenting
-# every passport against the current checkpoint. It is what a stranger's agent should actually talk to, and what
-# `make identity-e2e` proves end to end.
+# The staging network (`make stage-up`) runs on the clock it states: a reproducible reference world pinned to
+# 2026-04-21, unless its folder says it keeps real time (stage/CLOCK). This is the other thing: the same registrar
+# on the WALL CLOCK, renewing its delegates before they lapse and presenting every passport against the current
+# checkpoint. It is what a stranger's agent should actually talk to, and what `make identity-e2e` proves end to end.
 #
 # It is still TEST-ROOT. Until 13 November 2026 this registrar ran on the key that derives from its id, because that
 # was the key the staging network's directory accredited, and anyone could recompute it. Since PLAN-M53 step R3

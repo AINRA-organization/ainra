@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 # make stage-install | stage-uninstall | stage-health
+#   bash tools/stage-install.sh show-env [stage folder]   print the units' settings install would write; writes nothing
 #
 # Turns the staging network from "four processes that die with a terminal" into a standing service: systemd USER
 # units with restart-on-failure, start-on-boot (via linger), journal logging (rotated and size-capped by systemd,
@@ -27,6 +28,32 @@ REG2_ADDR=127.0.0.1:4911 ; REG2_ID=registrar-11
 WIT_ADDR=127.0.0.1:4991
 ART_PORT=8091
 
+# The clock the units run on is the network's own, read from its folder (stage/CLOCK: `wall`, or absent/`pinned`; see
+# tools/stage.sh). Until this was read here, every install wrote AINRA_CLOCK=pinned, so installing again over a
+# network that keeps real time would have put its registrars back on the April clock at their next restart.
+stage_clock(){ # stage_clock <stage folder> — prints wall or pinned; refuses a file that says anything else
+  local f="$1/CLOCK" c=pinned
+  if [ -e "$f" ]; then
+    c="$(tr -d ' \t\r\n' < "$f" 2>/dev/null)"
+    case "$c" in wall|pinned) ;; *) echo "✗ $f must hold 'wall' or 'pinned', not '$c'" >&2; return 1 ;; esac
+  fi
+  echo "$c"
+}
+# unit_env <file name> <clock> — the settings one unit reads, one per line, without the write token (a secret, added
+# only when the file is written). `install` writes exactly these lines; `show-env` prints them and writes nothing.
+unit_env(){
+  case "$1" in
+    "$REG1_ID.env") echo "REG_ADDR=$REG1_ADDR"; echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=$2"; echo "AINRA_FRESH_KEYS=1" ;;
+    "$REG2_ID.env") echo "REG_ADDR=$REG2_ADDR"; echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=$2"; echo "AINRA_FRESH_KEYS=1" ;;
+    witness.env)    echo "WIT_ADDR=$WIT_ADDR";  echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=$2" ;;
+    artifacts.env)  echo "ART_PORT=$ART_PORT";  echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=$2" ;;
+  esac
+}
+UNIT_ENVS="$REG1_ID.env $REG2_ID.env witness.env artifacts.env"
+# The instant a probe names when it asks a registrar to present something: the pinned network's fixed one, and none
+# on a network that keeps real time (its registrars answer at their own clock).
+probe_now(){ [ "$1" = pinned ] && printf '&now=1776729600'; return 0; }
+
 prebuilt_here(){ # D-119: programs built elsewhere for this very commit (deploy/home-node/build-for-node.sh)
   [ -s target/release/.prebuilt ] && [ "$(cat target/release/.prebuilt)" = "$(git rev-parse HEAD 2>/dev/null)" ]
 }
@@ -41,6 +68,7 @@ install)
     echo "  To bring it back: deploy/home-node/README.md § taking it back."
     exit 1
   fi
+  CLOCK="$(stage_clock stage)" || exit 1
   if ! have_systemd; then
     echo "✗ no usable systemd --user session here."
     echo "  The units are still committed under $UNIT_SRC/ and work on any machine with a systemd user session."
@@ -55,11 +83,19 @@ install)
   else cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd || { echo "✗ build failed"; exit 1; }; fi
 
   # 2. per-instance environment. Addresses live here, not baked into units, so a port change is one file edit.
+  #    The clock is the network's own (stage/CLOCK). A unit that is already running keeps the clock it started with,
+  #    so a changed clock is said out loud: nothing here restarts a registrar.
   mkdir -p "$ENVDIR"
-  { echo "REG_ADDR=$REG1_ADDR"; echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=pinned"; echo "AINRA_FRESH_KEYS=1"; } > "$ENVDIR/$REG1_ID.env"
-  { echo "REG_ADDR=$REG2_ADDR"; echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=pinned"; echo "AINRA_FRESH_KEYS=1"; } > "$ENVDIR/$REG2_ID.env"
-  { echo "WIT_ADDR=$WIT_ADDR";  echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=pinned"; } > "$ENVDIR/witness.env"
-  { echo "ART_PORT=$ART_PORT";  echo "AINRA_STAGE=1"; echo "AINRA_CLOCK=pinned"; } > "$ENVDIR/artifacts.env"
+  was="$(sed -n 's/^AINRA_CLOCK=//p' "$ENVDIR/$REG1_ID.env" 2>/dev/null | head -1)"
+  for f in $UNIT_ENVS; do unit_env "$f" "$CLOCK" > "$ENVDIR/$f"; done
+  if [ "$CLOCK" != pinned ] || { [ -n "$was" ] && [ "$was" != "$CLOCK" ]; }; then
+    echo "== the units' clock: $CLOCK (the network's own, from stage/CLOCK) =="
+  fi
+  if [ -n "$was" ] && [ "$was" != "$CLOCK" ]; then
+    echo "!! the units were set to the $was clock and are now set to $CLOCK. A running registrar keeps the clock it"
+    echo "!! started with: restart both for this to take effect (systemctl --user restart"
+    echo "!! ainra-registrar@$REG1_ID.service ainra-registrar@$REG2_ID.service), then sign the directory and republish."
+  fi
   # the write token the doors require; generated once and kept out of git
   mkdir -p stage
   [ -s stage/.issue-token ] || head -c 32 /dev/urandom | base64 | tr -d '\n=' > stage/.issue-token
@@ -107,7 +143,7 @@ install)
   if [ -n "$probe_sub" ]; then
     # A slow machine (a small board, D-119) can take longer than a moment to load a registrar's state: ask for up to
     # thirty seconds before concluding that it has lost it. The first version asked once, two seconds after start.
-    q="http://127.0.0.1:${REG1_ADDR##*:}/present?sub=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$probe_sub")&now=1776729600"
+    q="http://127.0.0.1:${REG1_ADDR##*:}/present?sub=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$probe_sub")$(probe_now "$CLOCK")"
     for _ in $(seq 1 30); do curl -s -m 5 "$q" 2>/dev/null | grep -q '"claims"' && { seeded=1; break; }; sleep 1; done
     if [ "$seeded" -eq 1 ]; then :
     else
@@ -148,7 +184,21 @@ uninstall)
   echo "Linger left enabled — 'loginctl disable-linger $USER' if you want that off too."
   ;;
 
+show-env)
+  # What `install` would write into deploy/systemd/env/ for the network in a folder (default: stage), printed and not
+  # written: no unit is touched, no file is made, and the write token is never shown.
+  dir="${2:-stage}"
+  CLOCK="$(stage_clock "$dir")" || exit 1
+  echo "# the units' settings for the network in $dir (its clock: $CLOCK)"
+  for f in $UNIT_ENVS; do
+    echo "# $ENVDIR/$f"
+    unit_env "$f" "$CLOCK"
+    case "$f" in registrar-*) echo "AINRA_STAGE_ISSUE_TOKEN=<the write token; never printed>" ;; esac
+  done
+  ;;
+
 health)
+  CLOCK="$(stage_clock stage)" || exit 1
   echo "AINRA staging network — health"
   echo "────────────────────────────────────────────────────────────"
   fail=0
@@ -183,7 +233,7 @@ health)
   probe_sub=$(curl -s -m 5 "http://127.0.0.1:$ART_PORT/registry.json" 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);for(const R of r.registrars||[])for(const e of R.records||[]){const x=e.record?.sub||e.sub;if(x){console.log(x);process.exit(0)}}}catch{}})' 2>/dev/null)
   if [ -n "$probe_sub" ]; then
-    if curl -s -m 8 "http://127.0.0.1:${REG1_ADDR##*:}/present?sub=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$probe_sub")&now=1776729600" 2>/dev/null | grep -q '"claims"'; then
+    if curl -s -m 8 "http://127.0.0.1:${REG1_ADDR##*:}/present?sub=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$probe_sub")$(probe_now "$CLOCK")" 2>/dev/null | grep -q '"claims"'; then
       printf "  %-42s %s\n" "registrar can present a published subject" "yes"
     else
       printf "  %-42s %s\n" "registrar can present a published subject" "NO — record and registrar disagree"
@@ -199,5 +249,5 @@ health)
   exit $fail
   ;;
 
-*) echo "usage: stage-install.sh [install|uninstall|health]"; exit 2 ;;
+*) echo "usage: stage-install.sh [install|uninstall|health|show-env [stage folder]]"; exit 2 ;;
 esac

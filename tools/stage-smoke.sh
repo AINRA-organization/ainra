@@ -3,15 +3,24 @@
 # make stage-smoke — end-to-end against the LIVE staging deployment: issue → log → verify via the public artifact
 # contract (in the real SDK) → revoke → propagation, plus the ARTIFACTS.md contract header assertions. Real output.
 set -uo pipefail
-# M35: this drill runs at the fixed genesis instant on purpose — it is HERMETIC, and a reproducible clock is
-# what makes it reproducible. The daemon now defaults to the wall clock, so pinning is stated, not assumed.
-export AINRA_CLOCK=pinned
 cd "$(dirname "$0")/.."
 # The verdicts below come from the SDK this checkout builds — never from a bundle left over from an earlier build.
 [ -f packages/sdk-ts/dist/conformance.js ] || make -s sdk-build >/dev/null
-REG=127.0.0.1:4907 ; RID=registrar-07 ; ART=http://127.0.0.1:8091 ; NOW=$((1775865600 + 10*24*3600))
-TOKEN="$(cat stage/.issue-token 2>/dev/null)"
+# The network: the standing one unless a drill names another (the same three variables tools/stage.sh takes).
+STAGE="${AINRA_STAGE_DIR:-stage}"
+REG="${AINRA_STAGE_REG1:-127.0.0.1:4907}" ; RID=registrar-07 ; ART="http://127.0.0.1:${AINRA_STAGE_ART:-8091}"
+TOKEN="$(cat "$STAGE/.issue-token" 2>/dev/null)"
 fail(){ echo "  ✗ $1"; exit 1; }
+# The clock is the one the network states in its record (tools/net-clock.mjs). Pinned: the fixed genesis instant,
+# named in every request, as this drill has always run (M35: a reproducible clock is what makes it reproducible).
+# Real time: no instant is named, and the registrar answers and signs at its own clock.
+CLOCK_LINE="$(node tools/net-clock.mjs "$ART")" || fail "the record at $ART does not say which clock the network keeps — is it up? (make stage-up)"
+if [ "$CLOCK_LINE" = wall ]; then
+  export AINRA_CLOCK=wall ; NOWQ="" ; NOWB=""
+else
+  export AINRA_CLOCK=pinned ; NOW="${CLOCK_LINE#pinned}" ; NOW="${NOW# }" ; NOW="${NOW:-$((1775865600 + 10*24*3600))}"
+  NOWQ="&now=$NOW" ; NOWB=",\"now\":$NOW"
+fi
 
 echo "== 1. the public artifact contract serves with correct headers (what a browser/mirror needs) =="
 hdr(){ curl -s -m 8 -D - -o /dev/null "$1"; }
@@ -21,7 +30,7 @@ echo "$D" | grep -qi "x-ainra-network: staging"               || fail "registry.
 echo "$D" | grep -qiE "etag: \"[0-9a-f]+\""                   || fail "registry.json (mutable) missing ETag"
 echo "$D" | grep -qi "cache-control: public, max-age=5"        || fail "registry.json wrong cache policy"
 echo "  ✓ registry.json: CORS * · ETag · short-cache · X-AINRA-Network: staging"
-CK=$(ls stage/public/registrars/$RID/checkpoints/*.json 2>/dev/null | head -1)
+CK=$(ls "$STAGE"/public/registrars/$RID/checkpoints/*.json 2>/dev/null | head -1)
 if [ -n "$CK" ]; then CKN=$(basename "$CK"); DC=$(hdr "$ART/registrars/$RID/checkpoints/$CKN")
   echo "$DC" | grep -qi "cache-control: public, max-age=31536000, immutable" || fail "checkpoint not immutable-cached"
   echo "  ✓ checkpoints/$CKN: immutable, max-age=1y (content/height-addressed)"; fi
@@ -50,10 +59,10 @@ SUB="ainra:$RID:smoke:$LIN@1.0.0"
 curl -s -m 8 -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d "{\"operator\":\"smoke\",\"lineage\":\"$LIN\",\"version\":\"1.0.0\",\"tier\":\"L2\",\"auth_class\":\"A2\",\"principal_proof\":\"deadbeefsmoke\",\"capabilities\":[\"read:x\"],\"scope_ceiling\":[\"read:x\"],\"hops\":[]}" \
   "http://$REG/issue" >/dev/null
-V1=$(curl -s -m 8 "http://$REG/verify?sub=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$SUB")&now=$NOW" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).verdict.verdict))')
+V1=$(curl -s -m 8 "http://$REG/verify?sub=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$SUB")$NOWQ" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).verdict.verdict))')
 [ "$V1" = "valid" ] && echo "  ✓ issued + verified VALID via the daemon" || fail "fresh issue did not verify ($V1)"
-curl -s -m 8 -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "{\"sub\":\"$SUB\",\"now\":$NOW}" "http://$REG/revoke" >/dev/null
-V2=$(curl -s -m 8 "http://$REG/verify?sub=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$SUB")&now=$NOW" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s).verdict;console.log(j.reason||j.verdict)})')
+curl -s -m 8 -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "{\"sub\":\"$SUB\"$NOWB}" "http://$REG/revoke" >/dev/null
+V2=$(curl -s -m 8 "http://$REG/verify?sub=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$SUB")$NOWQ" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s).verdict;console.log(j.reason||j.verdict)})')
 [ "$V2" = "revoked" ] && echo "  ✓ revoked → propagates → verify now INVALID (revoked)" || fail "revocation did not propagate ($V2)"
 
 echo "== 4. write path is guarded (online-exposure hardening) =="

@@ -153,7 +153,15 @@ QS = `?now=${d3.issued_at + 93 * 86400}`;
 const prod = contract([d1, d2, d3], { mutate: edit("index.json", (v) => { v.network = "production"; v.root = "production"; }) });
 await expect("a production contract read 93 days after its epoch shows the stale directory", await browser.newContext(), prod, "red", "stale directory");
 await expect("a TEST-ROOT copy read 93 days after its epoch: a labelled warning, not an alarm (ctl still alarms)", await browser.newContext(), honest, "green");
+// The record states its clock (tools/net-clock.mjs). A test record that says it keeps real time is held to the cadence
+// as production is; the case above (no such statement: the pinned record) is its witness, on the same directories.
+const wall = contract([d1, d2, d3], { mutate: edit("index.json", (v) => { v.clock = "wall"; }) });
+await expect("a TEST-ROOT record that states real time, read 93 days after its epoch, shows the stale directory", await browser.newContext(), wall, "red", "stale directory");
 QS = `?now=${d3.issued_at + 86400}`;
+const kept = await browser.newContext();
+await expect("the same record read a day after its epoch: no alarm, and this browser remembers it keeps real time", kept, wall, "green");
+await expect("the statement dropped afterwards (a record that keeps real time passed off as held still)", kept, honest, "red", "keeps real time");
+await expect("WITNESS: the same record without the statement, in a fresh browser, passes", await browser.newContext(), honest, "green");
 
 await browser.close(); server.close();
 if (failed) { console.error(`CONTROL-PAGE-DRILL FAILED — ${failed} case(s)`); process.exit(1); }

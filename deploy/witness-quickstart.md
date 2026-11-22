@@ -41,7 +41,7 @@ make witness-feed-drill     # three witnesses against a real registrar; restart,
 make drill-networked        # N independent witnessd processes; an injected fork is refused by the quorum
 ```
 
-Honest state: the directory is published (a dated copy of the STAGING network, TEST-ROOT), but its registrars run on a
-pinned clock and bind `127.0.0.1`, so there is no public, wall-clock registrar feed for an outside witness to poll
-until the network is hosted (PLAN-M52). Everything above runs today; the public feed is the missing piece, and it is
+Honest state: the directory is published (a dated copy of the STAGING network, TEST-ROOT), but its registrars bind
+`127.0.0.1` and run on the clock the network states (pinned, until its record says `"clock": "wall"`), so there is no
+public, wall-clock registrar feed for an outside witness to poll until the network is hosted (PLAN-M52). Everything above runs today; the public feed is the missing piece, and it is
 ours to provide.

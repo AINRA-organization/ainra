@@ -4,14 +4,25 @@
 // to them, then the passport to the accredited registrar. Fails closed if the directory isn't root-signed or the
 // passport doesn't chain. Negative control: a tampered root must reject the directory. Needs `make stage-up`.
 import { Verifier } from "../packages/sdk-ts/dist/index.js";
+import { netClock } from "./net-clock.mjs";
 
 const ART = process.env.AINRA_ART || "http://127.0.0.1:8091";
 const REG = process.env.AINRA_REG || "http://127.0.0.1:4907";
-const NOW = Number(process.env.AINRA_NOW || 1776729600);
+// The instant is the network's own, from the clock its record states (tools/net-clock.mjs). Pinned: the record's fixed
+// instant, named in the request. Real time: none is named, and the passport is verified at this machine's clock.
+// AINRA_NOW still names one by hand.
+const PINNED_NOW = 1776729600;
+const clockNow = async () => {
+  if (process.env.AINRA_NOW) return { named: true, now: Number(process.env.AINRA_NOW) };
+  const c = await netClock(ART).catch(() => null);
+  if (c?.clock === "wall") return { named: false, now: Math.floor(Date.now() / 1000) };
+  return { named: true, now: c?.at ?? PINNED_NOW };
+};
 const SUB = process.env.AINRA_SUB || "ainra:registrar-07:acme:invoicing@4.2.1";
 const j = async (u) => (await fetch(u)).json();
 
 const main = async () => {
+  const { named, now: NOW } = await clockNow();
   const directory = await j(`${ART}/directory.json`).catch(() => null);
   const roots = await j(`${ART}/roots.json`).catch(() => null);
   if (!directory || !roots?.root_ed25519) { console.error("  ✗ no genesis directory/roots on the contract — run: make stage-up"); process.exit(2); }
@@ -26,7 +37,7 @@ const main = async () => {
   // "INVALID:schema_violation" for a passport that simply did not exist on the running registrar. The verifier was
   // being handed {"error":"unknown subject"} and dutifully rejecting it as malformed — a true statement about the
   // bytes and a completely misleading statement about the network. Separate the two before verifying anything.
-  const bundle = await j(`${REG}/present?sub=${encodeURIComponent(SUB)}&now=${NOW}`).catch((e) => ({ error: String(e) }));
+  const bundle = await j(`${REG}/present?sub=${encodeURIComponent(SUB)}${named ? `&now=${NOW}` : ""}`).catch((e) => ({ error: String(e) }));
   // `/present` returns the presentation FLAT — claims/checkpoint/issuer_sig at top level, never wrapped.
   if (!bundle || bundle.error || !bundle.claims) {
     console.log(`  ✗ ${SUB} could NOT BE FETCHED from the registrar: ${bundle?.error ?? "no presentation in response"}`);

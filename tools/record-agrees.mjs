@@ -63,8 +63,14 @@ function toWire(rec, R, now) {
 
 // The comparison itself. `door(id)` gives a registrar: { records(): [{sub, revoked}], present(sub, now): bundle|null }.
 // A door that cannot be reached throws; that is "could not ask", never a disagreement.
+//
+// The time each side is read at follows the clock the record states (tools/net-clock.mjs). The stored passports are
+// always verified at the record's own verified_at: the status lists stored beside them were signed for that time. A
+// pinned registrar signs a presentation at the instant it is asked for, so it is asked for that same instant and its
+// answer verified there. A registrar that keeps real time (the record says `"clock": "wall"`) signs at its own clock
+// whatever it is asked, so it is asked for no instant and its answer is verified at this machine's clock, now.
 export async function agree({ registry, directory, roots, door }) {
-  const bad = [], now = registry?.generated_window?.verified_at;
+  const bad = [], now = registry?.generated_window?.verified_at, wall = registry?.clock === "wall";
   let passports = 0;
   if (!now || !Array.isArray(registry?.registrars)) return { bad: ["the record is not a published record (no verify time, or no registrars)"], passports };
   const verifier = Verifier.fromDirectoryB64(directory, roots.root_ed25519, roots.root_slh, "F3");
@@ -77,7 +83,7 @@ export async function agree({ registry, directory, roots, door }) {
       let again;
       try { again = runVector(toWire(rec, R, now)); } catch (x) { again = { verdict: "invalid", reason: `could not be verified (${String(x.message).slice(0, 60)})` }; }
       if (!same(stored, again)) bad.push(`${who}: the record shows ${said(stored)}, and its own stored passport verifies as ${said(again)}`);
-      const b = await d.present(who, now);
+      const b = await d.present(who, wall ? null : now);
       if (!b || typeof b.claims !== "string") { bad.push(`${who}: the record lists it, and ${R.registrar} cannot present it`); continue; }
       const claims = Buffer.from(b.claims, "base64url").toString("utf8");
       if (claims !== rec.claims || b.issuer_sig?.ed25519 !== rec.issuer_sig_ed25519 || b.leaf_index !== rec.leaf_index) {
@@ -85,7 +91,7 @@ export async function agree({ registry, directory, roots, door }) {
       if (b.checkpoint?.size === rec.checkpoint_size && b.checkpoint?.root !== rec.checkpoint_root)
         bad.push(`${who}: ${R.registrar}'s log has another root at size ${rec.checkpoint_size} than the record published — a forked log`);
       let live;
-      try { live = verifier.verify(b, now); } catch (x) { live = { verdict: "invalid", reason: `could not be verified (${String(x.message).slice(0, 60)})` }; }
+      try { live = verifier.verify(b, wall ? Math.floor(Date.now() / 1000) : now); } catch (x) { live = { verdict: "invalid", reason: `could not be verified (${String(x.message).slice(0, 60)})` }; }
       if (!same(stored, live)) bad.push(`${who}: the record shows ${said(stored)}, and ${R.registrar} presents it as ${said(live)}`);
     }
     const held = await d.records();
@@ -111,7 +117,7 @@ function doors() {
     const ask = async (p) => fetch(base + p, { signal: AbortSignal.timeout(10000) });
     return {
       async records() { const r = await ask("/records"); if (!r.ok) throw new Error(`${id}: /records answered HTTP ${r.status}`); return (await r.json()).records || []; },
-      async present(sub, now) { const r = await ask(`/present?sub=${encodeURIComponent(sub)}&now=${now}`); if (r.status >= 500) throw new Error(`${id}: /present answered HTTP ${r.status}`); try { return await r.json(); } catch { return null; } },
+      async present(sub, now) { const r = await ask(`/present?sub=${encodeURIComponent(sub)}${now ? `&now=${now}` : ""}`); if (r.status >= 500) throw new Error(`${id}: /present answered HTTP ${r.status}`); try { return await r.json(); } catch { return null; } },
     };
   };
 }

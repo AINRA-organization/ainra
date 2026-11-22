@@ -755,9 +755,10 @@ crossed-withdrawal: sdk-build  ## issuer A withdraws; a verifier with no network
 root-seal-drill:  ## the root seed sealed: opens in memory only, refuses a wrong passphrase, an overwrite, tampering, a disk
 	@bash tools/root-seal-drill.sh
 
-# D-117: the home node's watcher (ctl status + a monitor per registrar), against the running test network.
-home-watch-drill:  ## the home watcher: a planted fork alarms once, is not repeated, and its clearing is reported
-	@cargo build --release -q -p ainra-cli-rs --bin ainra
+# D-117: the home node's watcher (ctl status + a monitor per registrar), on two throwaway networks (spare ports, their
+# own roots): one pinned, one keeping real time. The watcher is told no clock and must take each network's own.
+home-watch-drill:  ## the home watcher, on both clocks: a planted fork alarms once, is not repeated, and its clearing is reported
+	@cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd -p ainra-ceremony --bin accredit -p ainra-cli-rs --bin ainra
 	@bash tools/home-watch-drill.sh
 
 # D-120: a registrar the network does not run joins it, on a whole throwaway network (spare ports, its own root).
@@ -766,9 +767,13 @@ registrar-join-drill:  ## an outside registrar: wrong fingerprint refused, right
 	@bash tools/registrar-join-drill.sh
 
 # D-064: the test network on the wall clock, rehearsed on two throwaway networks (spare ports, their own roots): one
-# born keeping real time (AINRA_STAGE_CLOCK=wall), one born pinned as today and then moved.
+# born keeping real time (its folder's CLOCK file says wall), one born pinned as today and then moved. On both, what
+# surrounds a network reads the network's own clock: the installer's settings, the home watch, a copy of the record
+# and its check (in a temporary folder), and the four drills that talk to a running network.
 stage-wallclock-drill: sdk-build  ## the test network on the wall clock: no stale alarm at the real clock, valid and revoked read right, pinned default unchanged
 	@cargo build --release -q -p ainra-services --bin registrar-box --bin witnessd -p ainra-ceremony --bin accredit -p ainra-cli-rs --bin ainra
+	@# three-clients' second client is packages/mcp, which resolves @ainra/sdk through its own node_modules (as mcp-test).
+	@cd packages/mcp && { [ -d node_modules ] || npm install --prefer-offline --no-audit --no-fund --silent; }
 	@bash tools/stage-wallclock-drill.sh
 
 # D-121: a registrar's log cosigned by an independent witness (litewitness, c2sp.org/tlog-witness), all local.
@@ -789,8 +794,9 @@ stage-uninstall: ## remove the units (state in stage/ is left alone)
 stage-health:    ## probe the public read contract + unit state; exits non-zero when degraded
 	@bash tools/stage-install.sh health
 
-# M35 — the network keeps time. `stage-*` is the reproducible world pinned to 2026-04-21; `live-*` is the same
-# registrar on the WALL CLOCK, renewing its delegates and presenting against the current checkpoint.
+# M35 — the network keeps time. `stage-*` runs on the clock the network states (the reproducible world pinned to
+# 2026-04-21, unless stage/CLOCK says `wall`); `live-*` is the same registrar on the WALL CLOCK, renewing its
+# delegates and presenting against the current checkpoint.
 live-up:         ## a wall-clock registrar with the public door open (TEST-ROOT, live/)
 	@bash tools/live.sh up
 live-down:
