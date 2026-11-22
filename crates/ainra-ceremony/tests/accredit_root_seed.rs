@@ -57,14 +57,30 @@ struct Run {
     stderr: String,
     roots: Option<String>,
     epoch: Option<u64>,
+    issued_at: Option<u64>,
+    directory: Option<String>,
 }
 
 fn run(out: &Path, acc: &Path, seed: Option<&Path>, epoch: Option<u64>) -> Run {
+    run_at(out, acc, seed, epoch, None)
+}
+
+fn run_at(
+    out: &Path,
+    acc: &Path,
+    seed: Option<&Path>,
+    epoch: Option<u64>,
+    issued_at: Option<&str>,
+) -> Run {
     let _ = std::fs::remove_dir_all(out);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_accredit"));
     cmd.arg(out).arg(acc);
     cmd.env_remove("AINRA_ROOT_SEED_FILE")
-        .env_remove("AINRA_DIRECTORY_EPOCH");
+        .env_remove("AINRA_DIRECTORY_EPOCH")
+        .env_remove("AINRA_DIRECTORY_ISSUED_AT");
+    if let Some(t) = issued_at {
+        cmd.env("AINRA_DIRECTORY_ISSUED_AT", t);
+    }
     if let Some(s) = seed {
         cmd.env("AINRA_ROOT_SEED_FILE", s);
     }
@@ -73,16 +89,65 @@ fn run(out: &Path, acc: &Path, seed: Option<&Path>, epoch: Option<u64>) -> Run {
     }
     let o = cmd.output().expect("run accredit");
     let roots = std::fs::read_to_string(out.join("roots.json")).ok();
-    let epoch = std::fs::read_to_string(out.join("directory.json"))
-        .ok()
-        .and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok())
-        .and_then(|d| d["epoch"].as_u64());
+    let directory = std::fs::read_to_string(out.join("directory.json")).ok();
+    let parsed = directory
+        .as_deref()
+        .and_then(|d| serde_json::from_str::<serde_json::Value>(d).ok());
+    let epoch = parsed.as_ref().and_then(|d| d["epoch"].as_u64());
+    let issued_at = parsed.as_ref().and_then(|d| d["issued_at"].as_u64());
     Run {
         code: o.status.code().unwrap_or(-1),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
         roots,
         epoch,
+        issued_at,
+        directory,
     }
+}
+
+/// A network that keeps real time states when its directory was issued (D-064). Unset, the directory carries the
+/// fixed ceremony instant it always carried, so the pinned reference network and every hermetic drill are unchanged.
+/// Stated, that instant is under both signatures, one instant gives one directory, the root does not move, and a
+/// value that is not a time signs nothing.
+#[test]
+fn the_issue_time_is_the_fixed_ceremony_instant_unless_the_caller_states_one() {
+    const PINNED: u64 = 1_775_865_600 - 3600;
+    const WALL: u64 = 1_795_000_000;
+    let dir = scratch("issued-at");
+    let acc = accreditation(&dir);
+    let seed = seed_file(&dir, "a.seed", &[0xA1; 32], 0o600);
+    let wall = WALL.to_string();
+
+    let unset = run(&dir.join("unset"), &acc, Some(&seed), None);
+    assert_eq!(unset.code, 0, "{}", unset.stderr);
+    assert_eq!(unset.issued_at, Some(PINNED), "unset: as before");
+
+    let stated = run_at(&dir.join("stated"), &acc, Some(&seed), None, Some(&wall));
+    assert_eq!(stated.code, 0, "{}", stated.stderr);
+    assert_eq!(stated.issued_at, Some(WALL), "stated: the caller's instant");
+    assert_eq!(stated.roots, unset.roots, "the root does not move");
+    assert_ne!(
+        stated.directory, unset.directory,
+        "the issue time is under the signatures"
+    );
+
+    let again = run_at(&dir.join("again"), &acc, Some(&seed), None, Some(&wall));
+    assert_eq!(
+        again.directory, stated.directory,
+        "one instant, one directory"
+    );
+
+    for bad in ["", "0", "now", "-5", "1795000000.5"] {
+        let r = run_at(&dir.join("bad"), &acc, Some(&seed), None, Some(bad));
+        assert_eq!(r.code, 2, "{bad:?}: {}", r.stderr);
+        assert!(
+            r.stderr.contains("AINRA_DIRECTORY_ISSUED_AT"),
+            "{bad:?}: {}",
+            r.stderr
+        );
+        assert!(r.directory.is_none(), "{bad:?}: nothing is signed");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

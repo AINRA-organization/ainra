@@ -16,7 +16,16 @@
 set -uo pipefail
 # M35: this drill runs at the fixed genesis instant on purpose — it is HERMETIC, and a reproducible clock is
 # what makes it reproducible. The daemon now defaults to the wall clock, so pinning is stated, not assumed.
-export AINRA_CLOCK=pinned
+#
+# AINRA_STAGE_CLOCK=wall is the other clock, and only when asked for by name (tools/stage-wallclock-drill.sh): the
+# registrars keep real time (D-064), the seed's revocations and renewal happen when they happen, the directory is
+# dated the moment it is signed, and the published record says when it was published. Unset, nothing here changes.
+case "${AINRA_STAGE_CLOCK:-pinned}" in
+  pinned) export AINRA_CLOCK=pinned ;;
+  wall)   export AINRA_CLOCK=wall ;;
+  *) echo "stage: AINRA_STAGE_CLOCK is 'pinned' (the default) or 'wall', not '$AINRA_STAGE_CLOCK'"; exit 2 ;;
+esac
+unset AINRA_DIRECTORY_ISSUED_AT   # the directory's date is decided in accredit_sign, never inherited
 cd "$(dirname "$0")/.." || exit 2
 
 # The folder and the addresses can be moved for a drill that runs a whole throwaway network beside the real one
@@ -31,6 +40,11 @@ REG2_ADDR="${AINRA_STAGE_REG2:-127.0.0.1:4911}" ; REG2_ID=registrar-11
 WIT_ADDR="${AINRA_STAGE_WIT:-127.0.0.1:4991}"
 ART_PORT="${AINRA_STAGE_ART:-8091}"
 NBF=1775865600 ; RENEW_AT=$((NBF + 5*24*3600)) ; NOW=$((NBF + 10*24*3600)) ; AUDIT_EXP=1900000000
+# The time a seed write names. Pinned: the fixed instants above, as always. Wall clock: none — the registrar signs a
+# revocation or a renewal at its own clock (registrar-box default_now), and refuses an instant outside the window its
+# delegates were certified for when it started, which a time fixed in April 2026 is.
+AT_NOW=",\"now\":$NOW" ; AT_RENEW=",\"now\":$RENEW_AT"
+if [ "$AINRA_CLOCK" != pinned ]; then AT_NOW="" ; AT_RENEW="" ; NOW="$(date +%s)" ; fi
 export AINRA_STAGE=1
 # PLAN-M53 step R3 (D-107): a staging registrar's keys come from the OS. The pinned clock above used to decide that
 # too (pinned meant "a drill", and a drill's keys derive from its id), but this network's record is published, so
@@ -115,6 +129,12 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
   # ONLY the currently-live registrars. A leftover dir from a prior onboarding (registrar-22) once inflated
   # registry.json (3 registrars / 9 issued) past the live board (2 / 8): the contract advertised a dead registrar.
   # Built aside and swapped in whole: a registrar that does not answer leaves the published record as it was.
+  # A pinned publish over a network that keeps real time is refused, here by the date of its newest directory and
+  # below by what each registrar answers (a network just moved has restarted registrars and an April directory).
+  if pinned_on_wall_history; then
+    echo "publish: this network's newest directory is dated at the real time and this publish is pinned (AINRA_STAGE_CLOCK=wall is not set) — the published record is left as it was"
+    return 1
+  fi
   local NEW="$PUB/registrars.new"; rm -rf "$NEW"
   for pair in "$REG1_ADDR:$REG1_ID" "$REG2_ADDR:$REG2_ID"; do
     local addr="${pair%:*}" d="$NEW/${pair##*:}"
@@ -125,6 +145,12 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
       && fetch "$addr/fresh-head?now=$NOW"  "$d/fresh-head.json" \
       && fetch "$addr/deltas?since=0"       "$d/status/deltas.json" \
       || { echo "publish: ${pair##*:} at $addr did not answer every artifact — the published record is left as it was"; rm -rf "$NEW"; return 1; }
+    # A pinned registrar signs at the instant it is asked for; one that answers with another time keeps real time. A
+    # pinned publish over it would state April 2026 as verified_at above status lists signed today, and every reader
+    # of the record would call every passport stale (seen on a throwaway network, 22 November 2026). Refused.
+    if [ "$AINRA_CLOCK" = pinned ] && ! node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).verified_at===Number(process.argv[2])?0:1)' "$d/export.json" "$NOW"; then
+      echo "publish: ${pair##*:} keeps real time and this publish is pinned (AINRA_STAGE_CLOCK=wall is not set) — the published record is left as it was"; rm -rf "$NEW"; return 1
+    fi
     node -e 'const fs=require("fs");const e=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const r=(e.records||[])[0]?.record;if(r){fs.writeFileSync(process.argv[2]+"/checkpoints/"+r.checkpoint_size+".json",JSON.stringify({origin:r.log_origin,size:r.checkpoint_size,root:r.checkpoint_root}))}' "$d/export.json" "$d"
   done
   # D-120: the registrars the network does not run. One that does not answer does not stop the record: its last
@@ -150,6 +176,10 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
     fi
   done <<< "$olist"
   rm -rf "$PUB/registrars"; mv "$NEW" "$PUB/registrars"
+  # Wall clock: a registrar keeping real time signs what it serves at its own clock, whatever `now` a request names
+  # (registrar-box qnow), so the record was verified when it was fetched: now, taken after the last fetch, and not
+  # the fixed instant the pinned record states.
+  [ "$AINRA_CLOCK" = pinned ] || NOW="$(date +%s)"
   # build the combined artifacts from the per-registrar exports (one pass, robust)
   NBF="$NBF" WEXP="$((NBF+366*24*3600))" NOW="$NOW" node -e '
     const fs=require("fs"); const pub=process.argv[1];
@@ -173,7 +203,7 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
     [ -x target/release/ainra ] || cargo build --release -q -p ainra-cli-rs
     ./target/release/ainra directory archive "$PUB/directory.json" --roots "$PUB/roots.json" --into "$PUB" >/dev/null \
       || { echo "publish: the directory cannot join the epoch history — refusing to publish it"; return 1; }
-    FP="$(node -e 'process.stdout.write(require("./"+process.argv[1]+"/genesis/roots.json").root_ed25519.slice(0,16))' "$STAGE")"
+    FP="$(node -e 'process.stdout.write(require(require("path").resolve(process.argv[1],"genesis/roots.json")).root_ed25519.slice(0,16))' "$STAGE")"
     node -e 'const fs=require("fs"),d=process.argv[1],fp=process.argv[2];const j=JSON.parse(fs.readFileSync(d+"/index.json"));j.root="genesis:"+fp;j.label="AINRA NETWORK · GENESIS ROOT "+fp+" (operator-run ceremony)";j.roots="/roots.json";j.ceremony="operator-run; public multi-custodian ceremony + external verifiers + 14d soak are the remaining real-world milestones";fs.writeFileSync(d+"/index.json",JSON.stringify(j))' "$PUB" "$FP"
   fi
   # M23 Task 4 — witness diversity: publish the witness set's SELF-DECLARED /info into the registry the explorer reads,
@@ -197,8 +227,21 @@ publish(){ # fetch each daemon's public artifacts → static files with the cont
 # history. Epoch 1 here named keys anyone could recompute; they were retired on 13 November 2026 and the directory
 # naming their replacements is epoch 2 (D-107). A re-key adds an epoch. It never puts a second directory at one
 # already published — the archive step in `publish` refuses that as equivocation, and so would any mirror.
+newest_epoch_date(){ # the date under the newest published epoch; nothing if there is none, or it cannot be read
+  node -e 'const fs=require("fs"),p=process.argv[1];try{const e=JSON.parse(fs.readFileSync(p+"/epochs.json","utf8")).epochs||[];const n=Math.max(0,...e.map(x=>x.epoch));if(n>=1)process.stdout.write(String(JSON.parse(fs.readFileSync(p+"/epochs/"+n+".json","utf8")).issued_at))}catch{}' "$PUB"
+}
+# A pinned run over a network that keeps real time: its newest directory carries a date that is not the fixed ceremony
+# instant every pinned directory carries (NBF less an hour).
+pinned_on_wall_history(){ local n; n="$(newest_epoch_date)"; [ "$AINRA_CLOCK" = pinned ] && [ -n "$n" ] && [ "$n" != "$((NBF - 3600))" ]; }
 accredit_net(){ # ask each running registrar for its accreditation and sign the directory over them
   mkdir -p "$STAGE/genesis"
+  # A pinned signing dates the directory at the fixed ceremony instant. Over a history whose newest epoch is dated at
+  # the real time, that publishes a NEWER epoch under an OLDER date and brings the stale alarm back (seen on a
+  # throwaway network, 22 November 2026). Refused before the registrars or the seed are asked for anything.
+  if pinned_on_wall_history; then
+    echo "stage: this network's newest directory is dated at the real time and this signing is pinned (AINRA_STAGE_CLOCK=wall is not set) — nothing accredited, nothing published"
+    return 1
+  fi
   # Checked, both steps. This used plain `get` and ignored `accredit`'s exit: when a registrar did not answer, the
   # accreditation file was empty, `accredit` stopped, the PREVIOUS directory (naming the previous keys) stayed in
   # place, and `publish` put it out as the record. A 0-byte acc file from 31 October shows it happened once.
@@ -277,18 +320,37 @@ accredit_sign(){ # sign the directory with the seed at AINRA_STAGE_ROOT_SEED (or
     fi
     rm -rf "$STAGE/genesis/.probe"
   fi
-  local last epoch
+  local last epoch at="" fresh="" again=0
   last=$(node -e 'try{const e=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).epochs||[];console.log(Math.max(0,...e.map(x=>x.epoch)))}catch{console.log(0)}' "$PUB/epochs.json")
   epoch=$(( last >= 1 ? last : 1 ))
+  # The date under the signatures. Pinned: none is named, and `accredit` writes its fixed ceremony instant, as always.
+  # Wall clock: a new directory is dated now. The comparison with the newest published epoch is made at THAT epoch's
+  # own date, so the same registrars with the same keys still give the same bytes and a restart still changes
+  # nothing. A directory older than the published cadence is stale to `ainra ctl` (92 days), and signing the same
+  # registrars again under today's date is a new epoch, made only when asked for: AINRA_STAGE_RESIGN=1.
+  if [ "$AINRA_CLOCK" != pinned ]; then
+    fresh="$(date +%s)"; at="$fresh"
+    if [ "$last" -ge 1 ]; then
+      at="$(newest_epoch_date)"
+      [[ "$at" =~ ^[0-9]+$ ]] || { echo "stage: cannot read the date of published epoch $last — nothing accredited, nothing published"; return 1; }
+      [ "${AINRA_STAGE_RESIGN:-0}" = 1 ] && again=1
+    fi
+  elif [ "${AINRA_STAGE_RESIGN:-0}" = 1 ]; then
+    echo "stage: AINRA_STAGE_RESIGN is for a network on the wall clock (AINRA_STAGE_CLOCK=wall). Pinned, a directory's date never changes, so there is nothing to sign again — ignored."
+  fi
   sign_at(){ rm -f "$STAGE/genesis/directory.json"
-    AINRA_ROOT_SEED_FILE="$seedfile" AINRA_DIRECTORY_EPOCH="$1" ./target/release/accredit "$STAGE/genesis" "${ACCS[@]}" >/dev/null \
+    env ${2:+"AINRA_DIRECTORY_ISSUED_AT=$2"} AINRA_ROOT_SEED_FILE="$seedfile" AINRA_DIRECTORY_EPOCH="$1" ./target/release/accredit "$STAGE/genesis" "${ACCS[@]}" >/dev/null \
       && [ -s "$STAGE/genesis/directory.json" ]; }
   same_as_archived(){ node -e 'const fs=require("fs"),j=(p)=>JSON.stringify(JSON.parse(fs.readFileSync(p,"utf8")));process.exit(j(process.argv[1])===j(process.argv[2])?0:1)' "$STAGE/genesis/directory.json" "$PUB/epochs/$1.json" 2>/dev/null; }
-  sign_at "$epoch" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }
+  sign_at "$epoch" "$at" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }
   if [ "$last" -ge 1 ] && ! same_as_archived "$epoch"; then
     epoch=$((last + 1))
     echo "stage: the registrars' keys are not the ones epoch $last names — signing epoch $epoch; epoch $last stays in the history"
-    sign_at "$epoch" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }
+    sign_at "$epoch" "$fresh" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }
+  elif [ "$again" = 1 ]; then
+    epoch=$((last + 1))
+    echo "stage: the same registrars, signed again under today's date (AINRA_STAGE_RESIGN=1) — signing epoch $epoch; epoch $last stays in the history"
+    sign_at "$epoch" "$fresh" || { echo "stage: accredit failed — there is no signed directory, and nothing is published"; return 1; }
   fi
   STAGE_EPOCH="$epoch"
 }
@@ -335,15 +397,15 @@ up)
   # configures none. The seed asked for A1 until 13 November 2026 and never looked at the answer, so the crawler was
   # silently missing, and with it registrar-11's one revoked passport.
   issue "$REG2_ADDR" operator-03 crawler     0.9.0 L0 A2 "fetch:public" "fetch:public"
-  seeded "$REG1_ADDR" "the revocation of data-export" "{\"sub\":\"ainra:$REG1_ID:acme:data-export@2.0.0\",\"now\":$NOW}" revoke
-  seeded "$REG2_ADDR" "the revocation of crawler"     "{\"sub\":\"ainra:$REG2_ID:operator-03:crawler@0.9.0\",\"now\":$NOW}" revoke
-  seeded "$REG2_ADDR" "the renewal of scheduler"      "{\"sub\":\"ainra:$REG2_ID:operator-03:scheduler@2.2.0\",\"new_version\":\"2.3.0\",\"now\":$RENEW_AT}" renew
+  seeded "$REG1_ADDR" "the revocation of data-export" "{\"sub\":\"ainra:$REG1_ID:acme:data-export@2.0.0\"$AT_NOW}" revoke
+  seeded "$REG2_ADDR" "the revocation of crawler"     "{\"sub\":\"ainra:$REG2_ID:operator-03:crawler@0.9.0\"$AT_NOW}" revoke
+  seeded "$REG2_ADDR" "the renewal of scheduler"      "{\"sub\":\"ainra:$REG2_ID:operator-03:scheduler@2.2.0\",\"new_version\":\"2.3.0\"$AT_RENEW}" renew
   bind_chain_seed
   [ "${SEED_BAD:-0}" = 0 ] || { echo "stage: the seed was not accepted as written — nothing accredited, nothing published"; exit 1; }
   echo "== accredit the network under a REAL genesis dual-root (FROST 5-of-9 + SLH-DSA) =="
   accredit_net || exit 1
   echo "   the directory is epoch $STAGE_EPOCH"
-  ROOT_FP="$(node -e 'process.stdout.write(require("./"+process.argv[1]+"/genesis/roots.json").root_ed25519.slice(0,16))' "$STAGE")"
+  ROOT_FP="$(node -e 'process.stdout.write(require(require("path").resolve(process.argv[1],"genesis/roots.json")).root_ed25519.slice(0,16))' "$STAGE")"
   export AINRA_ROOT="genesis:$ROOT_FP"
   echo "== publish the public artifacts (the contract read surface) =="
   publish || { echo "stage: the network came up but could not publish its record — not starting the artifact server over it"; exit 1; }

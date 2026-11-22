@@ -133,8 +133,26 @@ fn main() {
             }
         },
     };
+    // The instant the directory says it was issued at. Unset, it is the fixed ceremony time above, so every hermetic
+    // drill and the pinned reference network sign the bytes they always signed. A network that keeps real time
+    // (D-064) states the real time here: `ainra ctl` and a gate's own policy measure a directory's age from this
+    // field against their own clock, and a directory dated April 2026 is a stale one to both. Stated by the caller,
+    // never read from this machine's clock, so one instant gives one directory and a re-run reproduces it.
+    let issued_at = match std::env::var("AINRA_DIRECTORY_ISSUED_AT") {
+        Err(_) => NOW,
+        Ok(v) => match v.parse::<u64>() {
+            Ok(t) if t >= 1 => t,
+            _ => {
+                eprintln!(
+                    "AINRA_DIRECTORY_ISSUED_AT must be a time in whole Unix seconds, not {v:?}"
+                );
+                std::process::exit(2);
+            }
+        },
+    };
     let (directory, root_ed, root_slh) =
-        Genesis::accredit_external_at(entries, vec![], epoch, NOW, &mut rng).expect("accredit");
+        Genesis::accredit_external_at(entries, vec![], epoch, issued_at, &mut rng)
+            .expect("accredit");
 
     // Self-verify the way a stranger would, before writing anything.
     match directory.accredit(&root_ed, &root_slh) {
