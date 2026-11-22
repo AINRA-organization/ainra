@@ -373,6 +373,8 @@ html[data-motion="off"] .is-down{scale:none}
 nav:not([class]) a.brand,.announce a,.g-announce a,a.nw-feed{padding-block:4px;margin-block:-4px}
 .sec-head__row a{padding-block:6px!important;margin-block:-6px!important}
 .g-announce__x{min-width:28px;min-height:28px}
+.g-menu a{padding-block:4px;margin-block:-4px}
+.g-menu__note a{display:inline-block;padding-block:6px;margin-block:-6px}
 @media (max-width:700px){
   .brand .mean,.g-menu__k,.g-side__head span,.g-side li span,.g-side__tab,.g-foot__cols h4,.g-foot__status,.g-search__k,
   .life--ribbon .life__rule,.nw-kind,.nw-flag,.chip,.tier-chip,.g-announce__k,.g-hero__cue,.g-hero__spec span,.sec-index,
@@ -390,6 +392,8 @@ nav:not([class]) a.brand,.announce a,.g-announce a,a.nw-feed{padding-block:4px;m
   .g-menu__small a,nav.gi-sub a{display:inline-flex;align-items:center;min-height:44px}
   .nw-chips button{min-height:44px!important}
   nav.chapter-rail a{display:inline-flex;align-items:center;min-height:44px}
+  .g-menu__big li li a,.g-menu__kv a{display:inline-flex;align-items:center;min-height:44px}
+  .g-menu__note a{display:inline-block;padding-block:14px;margin-block:-14px}
   .code-panel p code{font-size:11px!important}
   .sec-head__row a{padding-block:13px!important;margin-block:-13px!important}
 }
