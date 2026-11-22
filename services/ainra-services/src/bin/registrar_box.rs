@@ -416,7 +416,7 @@ fn main() {
         // their record is published, so their keys must not be something anyone can recompute. Off by default, so
         // every hermetic drill keeps the keys it has always had.
         let fresh_keys = std::env::var("AINRA_FRESH_KEYS").ok().as_deref() == Some("1");
-        if (clock_pinned() || test_derived_new) && !fresh_keys {
+        let created = if (clock_pinned() || test_derived_new) && !fresh_keys {
             RegistrarBox::create_seeded(data_dir, &id, 4096, seed, NBF - 3600, NBF, EXP)
                 .expect("create registrar-box")
         } else {
@@ -430,7 +430,19 @@ fn main() {
             }
             RegistrarBox::create_seeded32(data_dir, &id, 4096, key_seed, NBF - 3600, NBF, EXP)
                 .expect("create registrar-box")
+        };
+        // Keys made on first start are kept before anything is served. They used to reach the disk only with the
+        // first write, so a registrar restarted before its first passport came back with other keys under the same
+        // id and the same note key: the fingerprint its operator had already sent, or the directory the root had
+        // already signed, named keys that no longer existed (found 22 November 2026, with OS-made keys; derived keys
+        // hid it, because they come back the same). A registrar that cannot keep its keys does not start.
+        if let Err(e) = created.save() {
+            eprintln!(
+                "registrar-box '{id}': cannot keep the new registrar's keys in {dir}: {e:?} — refusing to start"
+            );
+            std::process::exit(2);
         }
+        created
     };
     // A registrar keeping real time refuses to run on keys anyone can recompute from its public id. Such a snapshot is
     // from before the 2026-11-07 fix, or from a drill; it must be re-keyed (a new data directory, re-accredited).

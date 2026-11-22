@@ -172,3 +172,57 @@ fn a_logged_decision_head_survives_a_restart() {
         "after a restart the gate still cannot rewind"
     );
 }
+
+/// A registrar with keys from the OS (`AINRA_FRESH_KEYS=1`) keeps them from its first start, before any write. Until
+/// 22 November 2026 they reached the disk only with the first write: restarted before its first passport, the
+/// registrar served other keys under the same id, so a fingerprint already sent, or a directory already signed, named
+/// keys that no longer existed. Keys derived from the id come back the same, which is why the pinned drills never saw
+/// it.
+#[test]
+fn keys_made_on_first_start_survive_a_restart_before_any_write() {
+    fn start_fresh(addr: &str, dir: &Path) -> Daemon {
+        let child = Command::new(env!("CARGO_BIN_EXE_registrar-box"))
+            .args([addr, "registrar-07", dir.to_str().unwrap()])
+            .env("AINRA_FRESH_KEYS", "1")
+            .env_remove("AINRA_CLOCK")
+            .env_remove("AINRA_TEST_DERIVED_KEYS")
+            .env_remove("AINRA_STAGE_ISSUE_TOKEN")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn registrar-box");
+        let d = Daemon(child);
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            if http_get(addr, "/health").is_ok_and(|b| b.contains("\"ok\":true")) {
+                return d;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        panic!("registrar-box did not come up on {addr}");
+    }
+    let d = dir("first-start");
+    let addr = format!("127.0.0.1:{}", free_port());
+    let first = {
+        let _rb = start_fresh(&addr, &d);
+        http_get(&addr, "/accreditation").unwrap()
+    };
+    assert!(
+        d.join("registrar.secret").exists() && d.join("registrar.json").exists(),
+        "a new registrar's keys are on disk before its first write"
+    );
+    let _rb = start_fresh(&addr, &d);
+    assert_eq!(
+        http_get(&addr, "/accreditation").unwrap(),
+        first,
+        "restarted before any write, the registrar must serve the keys it was created with"
+    );
+    let other = dir("first-start-other");
+    let addr2 = format!("127.0.0.1:{}", free_port());
+    let _rb2 = start_fresh(&addr2, &other);
+    assert_ne!(
+        http_get(&addr2, "/accreditation").unwrap(),
+        first,
+        "two new registrars with one id do not share keys: they come from the OS, not from the id"
+    );
+}
