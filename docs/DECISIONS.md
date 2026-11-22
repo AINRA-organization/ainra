@@ -4120,3 +4120,55 @@ removed shown red (`export_keeps_time.rs`).
 *Status:* ACCEPTED 2026-11-22, on the operator's word of 20 November ("lets start with all of that that you can do",
 on the proposal to put the test network on a real clock); tools only (D-114). The move itself waits for the
 operator's passphrase at the signing and for the issuance-window decision.
+
+---
+
+## D-123 — The network states its clock, and everything around it reads it there
+
+*Problem:* D-122 showed the test network can keep real time, and listed what around the published network still
+assumed the pinned clock: the installer wrote `AINRA_CLOCK=pinned` into the units on every install, the watch carried
+the April instant in its settings, four drills and two site scripts named that instant, the site's byte-for-byte
+comparison with the running network cannot hold once heads are signed anew at each publish, and the control room
+excused every test record from the 92-day cadence. A move with any of these left behind would either be refused
+half-way or, worse, be silently undone by the next install.
+
+*Decision (tools only, D-114; the published network is still pinned and is NOT moved by this record):*
+
+- **A statement in the network's own folder.** `<stage dir>/CLOCK` holding `wall` (absent or `pinned`: pinned).
+  `tools/stage.sh` follows it when no variable is given; a variable that disagrees with it is refused by name. No
+  caller has to remember a setting.
+- **The record states it too.** A publish at the real clock writes `"clock": "wall"` into `index.json` and
+  `registry.json`; a pinned record carries no such field and its bytes are unchanged. The site's stamp
+  (`published.json`) says `pinned` or `wall` and what `verified_at` means in each case. `tools/net-clock.mjs` is the
+  one reader.
+- **What reads it:** the installer (and `stage-install.sh show-env`, which prints what it would write and writes
+  nothing), the watchdog's publish, the node-side publish and the quarterly signing in `sign-for-node.sh`, the home
+  watch (no instant on a record that says `wall`; an unreadable statement is "could not check", never "pinned"), the
+  four drills that talk to a standing network, the site's live scripts, and the control room.
+- **The control room holds a real-time test record to the cadence.** Only a record that does not say `wall` is
+  excused as "held still on purpose". The page and the watch remember that a record said `wall`, and alarm if it
+  later does not: the statement is unsigned, and a record relabelled as pinned would otherwise be read at an instant
+  of its own choosing.
+- **`make site-net-check` on a record that keeps real time:** roots, directory, epoch history, accreditations and
+  every listed passport must be identical; `verified_at`, log size (same size, same root), status sequence and fresh
+  heads may only move forward; signatures over heads and status may differ. A copy still showing a passport as good
+  that the network has revoked is refused. Pinned: byte for byte, as before.
+- **One more guard:** a real-time publish or signing over registrars that have not been restarted is refused.
+
+*Held to:* `make stage-wallclock-drill` (42 lines, two throwaway networks): the file alone makes a real-time network;
+disagreement refused both ways; the installer's settings for both clocks; the watch on both; a site copy accepted
+after a republish and refused after a tampered directory, an epoch behind, or a revocation it does not show; the four
+drills on both clocks; the move rehearsed with no clock variable. `make home-watch-drill` now runs on its own two
+throwaway networks, one per clock. `make control-page-drill` gained four cases. Fourteen sabotages, planted one at a
+time, each turned its lines red. A pinned network's publish, accredit and bring-up log were compared with the previous
+commit's: byte for byte the same.
+
+*Limits:* `sign-for-node.sh`, the installer's install and health paths, and the watchdog were checked for syntax and
+by reading, not run (they need ssh and the service manager). A site copy first taken from a network past its first
+epoch has an incomplete history (unchanged behaviour). `ainra ctl` still lists `registry.json` as a byte-for-byte
+mirror file, which will differ between mirrors of a real-time network after each publish. D-122's limit stands: a
+first issuance still expires on 12 April 2027.
+
+*Not changed:* the published network, its clock, its record, any verdict, any vector, any crate.
+
+*Status:* ACCEPTED 2026-11-22, on the operator's word of that day to continue the preparation; tools only (D-114).

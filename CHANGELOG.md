@@ -17,6 +17,14 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
   stale-directory alarm 100 days ahead, a pinned run over it refused. `accredit` takes the directory's date from
   `AINRA_DIRECTORY_ISSUED_AT`. The published network is unchanged and still pinned.
 
+### Changed — the network states its clock, and its surroundings read it there (D-123)
+
+- A network's folder says which clock it keeps (`CLOCK`: `wall`, or nothing for pinned) and its published record says
+  so too. The installer, the watchdog, the home watch, the quarterly signing, four drills, the site's live scripts and
+  the control room follow that statement, so none of them has to be told. On a record that keeps real time the control
+  room applies the 92-day cadence, and `make site-net-check` compares what must stay identical and what may only move
+  forward. A pinned network, including the published one, is unchanged byte for byte.
+
 ### Fixed — an export from a registrar that keeps real time
 
 - `/export` handed out each record with the checkpoint of its issuance day, so a re-verifier read a good passport as
