@@ -4063,3 +4063,60 @@ the signature 2420. The line above ("recognised and reported, not verified yet")
 pinned to a cosignature made by torchwood v0.10.0 (Go `crypto/mldsa`), not by this code
 (`services/ainra-services/src/testdata/mldsa44-cosignature.txt`): it verifies, and does not over another size, another
 origin, or with one signature byte flipped; changing one field of our message makes the test fail. Tools only.
+
+---
+
+## D-122 — The test network can keep real time: an opt-in clock, a dated directory, exports proven against today's checkpoint
+
+*Problem:* the published test network runs on a clock pinned at April 2026 (D-064 item 4). Its directory is therefore
+dated April, and `ainra ctl status` run against it at the real clock, as the control room tells a stranger to do,
+ends in "stale directory" (found 20 November 2026: the page showed no alarm, the tool one). A network held still was
+right for reproducible drills; it is wrong for the one network a stranger is asked to look at. Before moving it, the
+move had to be shown possible, and what it breaks had to be known.
+
+*Decision (tools only, D-114; the published network is NOT moved by this record):*
+
+- **An opt-in clock for `tools/stage.sh`:** `AINRA_STAGE_CLOCK=wall` brings a network up, seeds, accredits and
+  publishes it at the real clock. Unset, everything is as it was: the same bring-up log and the same record.
+- **The directory's date is stated, not built in.** `accredit` took its issue time from a constant; it now takes
+  `AINRA_DIRECTORY_ISSUED_AT` when given (whole seconds; anything else is refused), and the constant otherwise.
+- **Signing the same registrars again is asked for by name** (`AINRA_STAGE_RESIGN=1`, wall clock only). Without it a
+  restart still signs nothing new; with it the same registrars are signed under today's date as the next epoch. A
+  directory must be signed again within the published 92 days, so a network that keeps real time needs this.
+- **A pinned run over a network that keeps real time is refused,** at publish and at accredit, and leaves the record
+  as it was. Both were reproduced first: a pinned publish wrote an April `verified_at` over status lists signed today
+  and every good passport read as stale; a pinned accredit dated a newer epoch before an older one.
+- **An export carries the current checkpoint on a registrar that keeps real time.** D-064 moved `/present` and the
+  registrar's own verdict to the current checkpoint; `/export` was missed, so anything re-verifying an exported record
+  read a good passport as `checkpoint_invalid` once its issuance-day delegate lapsed (within 92 days, and at once on a
+  network moved from the pinned clock). On a pinned registrar the export is byte for byte what it was.
+- **Fixed on the way:** a throwaway network at an absolute folder published an empty root fingerprint.
+
+*Held to:* `make stage-wallclock-drill` (two throwaway networks, own ports and root seeds). Born on the real clock: the
+directory is dated the moment it was signed; a passport issued there is valid and a revoked one refused at the real
+clock; `ainra ctl status` with no `--now` raises no alarm; 100 days ahead it raises exactly the stale-directory alarm;
+a second accredit signs nothing; a requested one makes the next epoch; a pinned publish and a pinned signing are each
+refused by name. Born pinned, then moved: at the real clock it alarms; its registrars restarted on the real clock
+reload their state with the same keys; signing again gives the next epoch under the same root and the alarm is gone;
+passports issued in the pinned world read valid and revoked correctly. With the switch sabotaged the drill fails at
+seven lines. Unit tests: the directory's date (`accredit_root_seed.rs`), the export on both clocks with the fix
+removed shown red (`export_keeps_time.rs`).
+
+*Limits:*
+- **A first issuance still gets a fixed validity window** (April 2026 to 12 April 2027) on either clock. On a network
+  keeping real time every passport expires on 12 April 2027, and one issued after that is expired at birth. Not fixed
+  here: giving each issuance its own window changes what both parties of a bound chain sign beforehand (D-113), so it
+  needs its own record before that date.
+- Not exercised: the sealed-seed path with the two variables set, the home node's units, an outside registrar, a
+  witness over a moved log, the 64-bit ARM build, and time actually passing (the 92-day and delegate-renewal cases were
+  reached by moving the reader's clock).
+- Moving the published network is one-way in practice: after an epoch dated today, a return to the pinned clock is
+  refused. What still assumes the pinned clock around the published network (the installer's unit settings, the
+  watchdog, the node-side publish, the home watch, four standing-network drills, two site scripts, the site's copy of
+  the record and its byte comparison) is listed in the plan for the move and changes with it, not here.
+
+*Not changed:* the published network, its clock, its directory, any verdict, any vector.
+
+*Status:* ACCEPTED 2026-11-22, on the operator's word of 20 November ("lets start with all of that that you can do",
+on the proposal to put the test network on a real clock); tools only (D-114). The move itself waits for the
+operator's passphrase at the signing and for the issuance-window decision.

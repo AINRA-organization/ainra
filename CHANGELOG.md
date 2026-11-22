@@ -10,6 +10,19 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — the test network can keep real time (D-122)
+
+- `AINRA_STAGE_CLOCK=wall` brings a network up at the real clock, and `make stage-wallclock-drill` rehearses both a
+  network born that way and one moved from the pinned clock: no alarm from `ainra ctl status` at the real clock, the
+  stale-directory alarm 100 days ahead, a pinned run over it refused. `accredit` takes the directory's date from
+  `AINRA_DIRECTORY_ISSUED_AT`. The published network is unchanged and still pinned.
+
+### Fixed — an export from a registrar that keeps real time
+
+- `/export` handed out each record with the checkpoint of its issuance day, so a re-verifier read a good passport as
+  `checkpoint_invalid` once that day's delegate had lapsed. It now carries the current checkpoint, as `/present` does.
+  A pinned registrar's export is unchanged.
+
 ### Added — logs any public witness can cosign (D-121, ACP-0005 draft)
 
 - A registrar keeps a permanent Ed25519 note key and serves its checkpoint as a C2SP signed note (`GET /checkpoint`,
