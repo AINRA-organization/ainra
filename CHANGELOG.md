@@ -17,6 +17,18 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
   stale-directory alarm 100 days ahead, a pinned run over it refused. `accredit` takes the directory's date from
   `AINRA_DIRECTORY_ISSUED_AT`. The published network is unchanged and still pinned.
 
+### Added — a registrar started for an organisation and handed over to it (D-124)
+
+- `tools/managed-registrar.sh`: `create` starts a registrar for a named organisation and prints what the root's holder
+  needs to sign it in; `handover` seals its whole state into one file under a passphrase; `receive` starts the same
+  registrar elsewhere with the same keys and log; `confirm` destroys the copy here once the new home serves the same
+  log. `make managed-registrar-drill`. The keys have existed on the first machine: `kits/registrar` says so.
+
+### Fixed — a new registrar keeps its keys from its first start
+
+- A registrar with keys from the operating system saved them only with its first write; restarted before that, it
+  came back with other keys under the same id. They are now saved before anything is served.
+
 ### Changed — the network states its clock, and its surroundings read it there (D-123)
 
 - A network's folder says which clock it keeps (`CLOCK`: `wall`, or nothing for pinned) and its published record says

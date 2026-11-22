@@ -4172,3 +4172,57 @@ first issuance still expires on 12 April 2027.
 *Not changed:* the published network, its clock, its record, any verdict, any vector, any crate.
 
 *Status:* ACCEPTED 2026-11-22, on the operator's word of that day to continue the preparation; tools only (D-114).
+
+---
+
+## D-124 — A registrar started for an organisation and handed over to it; a new registrar keeps its keys from its first start
+
+*Problem:* the joining path of D-120 asks an organisation to run a registrar before it has issued one passport. An
+organisation that already checks who stands behind an agent should be able to issue under its own name the same day,
+and take the registrar over when it is ready. Building that exposed a defect: a registrar whose keys come from the
+operating system wrote them to disk only with its first write, so one restarted before its first passport came back
+with different keys under the same id, after its fingerprint had been sent or even signed into the directory.
+
+*Decision (tools only, D-114; no wire format, directory field, verifier rule or verdict changes):*
+
+- **`tools/managed-registrar.sh`.** `create` starts a registrar for a named organisation in its own folder, with keys
+  made by the operating system, a write token that is never shown, and prints what the root's holder needs to sign it
+  in by the path of D-120 (address, fingerprint, list entry, the formal request). `status`, `start`, `stop`.
+  `handover` stops it and seals its whole state (keys, log, status, note key) into one file under a passphrase, the
+  way the root seed is sealed (D-117), with a plain-language note beside it. `receive` opens the package elsewhere,
+  checks every file against the list inside it, makes a new write token and starts the same registrar: same keys,
+  same log, same origin. `confirm` destroys the keys, the token and the package here only after the new home serves
+  the same fingerprint and a log that only grew, and the operator types the id; `resume` undoes an unconfirmed
+  hand-over. The directory does not change at a hand-over: the keys are the same.
+- **A new registrar's keys are saved before anything is served** (`registrar-box`), and it refuses to start if it
+  cannot keep them. Existing data folders are untouched.
+
+*Held to:* `make managed-registrar-drill` (42 lines, a throwaway real-time network with its own root): created and
+answering in about a second and a half; a wrong fingerprint refused with nothing signed, the right one signed in as the
+next epoch, `ainra ctl status` with no alarm; a passport valid and a revoked one refused; the package unreadable
+without the passphrase, refused with a wrong one, with one byte changed, or under another id; received on another
+address with the same log; the confirmation refused when pointed at another registrar or with the id mistyped; after
+it, the old folder cannot be started, the earlier passport still verifies from the new home, a new one and a new
+revocation are seen, and a watcher with memory from before sees the same log, grown, nothing rewritten; neither token
+nor passphrase in any output. A second part joins a pinned network the same way. Nineteen guards, removed one at a
+time, each turned its lines red. Unit test: `keys_made_on_first_start_survive_a_restart_before_any_write`.
+
+*Limits, stated plainly:*
+- **After a hand-over the keys have existed on the operator's machine.** Nothing built today gives the same registrar
+  keys the operator never held: there is no key roll under one id (it needs a directory field, a verifier rule and
+  the offline approver set of D-094 item 13). The route that exists is a second registrar the organisation makes
+  itself, accredited under a new id, with each lineage moved by its own operator through the transfer doors of D-102;
+  that changes every passport's name, takes five days per move, and no client for the operator's side exists yet.
+- In a managed start the fingerprint is computed on the operator's machine, so where the operator and the root's
+  holder are the same party the second channel guards against a changed address, not against that party.
+- **This is an aid to joining, not a service of the root.** Whoever holds the root running registrars for others is a
+  conflict of interest; the tool exists so that a hand-over is ordinary and early, and the test network says which
+  registrars are managed. What production accreditation requires of a managed start is not decided here.
+- A managed registrar keeps real time; read at a pinned network's fixed instant its passports are stale (D-120's
+  limit). D-122's limit applies: its first issuances expire on 12 April 2027. The passphrase prompt was exercised
+  from a file, not typed by a person; a second physical machine was not used.
+
+*Not changed:* the published network, the directory, any verdict, any vector.
+
+*Status:* ACCEPTED 2026-11-22, on the operator's word of 20 November (the proposal to make joining a matter of a
+day) and of 22 November to continue; tools only (D-114).
