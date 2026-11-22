@@ -50,7 +50,7 @@ button{font-family:var(--body);cursor:pointer;border:none;background:none;color:
 .skip{position:absolute;left:-9999px;top:0;z-index:200;background:var(--ink);color:#fff;padding:10px 16px;border-radius:0 0 8px 0;font-weight:600}
 .skip:focus{left:0}
 .announce{background:var(--ink);color:#E2E8F0;font-size:12.5px;text-align:center;padding:9px 16px}
-.announce a{color:var(--green-br);font-weight:600}
+body .announce a{color:#F5F6F3;font-weight:600;text-decoration:underline;text-underline-offset:3px} /* light on the dark bar; green means valid only */
 nav{position:sticky;top:0;z-index:60;background:var(--paper);border-bottom:1px solid var(--line)}
 .nav-in{display:flex;align-items:center;gap:14px;height:68px}
 .brand{display:flex;align-items:center;gap:11px}
@@ -102,7 +102,7 @@ nav{position:sticky;top:0;z-index:60;background:var(--paper);border-bottom:1px s
 .stepper .g-dot[data-on="1"]{color:var(--green)}.stepper .g-dot[data-on="1"]:before{background:var(--green)}
 .flow{max-width:720px;margin:26px auto 0}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px;box-shadow:0 24px 56px -34px rgba(11,18,32,.24)}
-.panel .tag{float:right;font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:3px 8px}
+.panel .tag{float:right;font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:3px 8px}
 .panel h2{font-size:20px;margin-bottom:4px}.panel .lede{color:var(--muted);font-size:14px;margin-bottom:18px}
 label.fld{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin:14px 0 5px}
 input.txt{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;background:var(--paper);color:var(--ink);font:14px var(--mono)}
@@ -196,6 +196,8 @@ footer{padding:52px 0 40px;border-top:1px solid var(--line);margin-top:92px}
 }
 nav .nav-links a[aria-current="page"],nav .ndocs[aria-current="page"]{text-decoration:underline;text-underline-offset:6px;text-decoration-thickness:2px}
 @media(max-width:480px){.announce{font-size:11px;padding:8px 12px}}
+body .announce a{display:inline-block;padding:6px 0;margin:-6px 0}
+@media(max-width:700px){.panel .tag{font-size:11px}.actions button{min-height:44px}body .announce a{padding:15px 0;margin:-15px 0}}
 @media(max-width:1023px){nav .mean{display:none}}
 
 /* landscape page */
