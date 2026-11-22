@@ -126,6 +126,8 @@ campaign/sendbox/
 
 # M35: the wall-clock live network (tools/live.sh) — local state, never committed
 live/
+# registrars run for an organisation (tools/managed-registrar.sh): their keys, tokens and logs — never committed
+/managed/
 # PLAN-M51 step 5: the newer fuzz targets are seeded from vectors/ at run time; what libFuzzer adds is not committed.
 fuzz/corpus/link/
 fuzz/corpus/decision/
