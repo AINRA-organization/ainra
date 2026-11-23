@@ -9,6 +9,11 @@
 //   node tools/site-anchors.mjs           exit 1 if a site script builds an anchor by naming `log_root_key` itself
 //                                         outside `anchorOf`, or uses a registrar anchor without calling `anchorOf`
 //   node tools/site-anchors.mjs --drill   the check, run on a planted copy of each mistake, must fail on both
+//
+// WITNESS (what turns this red): a site script that writes `log_root_key:` beside `issuer_key:` outside the one helper
+// line, or an `anchors: { [registrar]: ... }` that never calls anchorOf. The historical defect itself is the negative
+// control: the seven anchors of 22 Nov, each of which this check refuses, and --drill plants both shapes and fails
+// unless both are caught and the helper alone is accepted.
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
