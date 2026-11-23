@@ -249,3 +249,11 @@ kbd{font:12px var(--mono);border:1px solid var(--hair);border-radius:5px;padding
 .brand{padding-block:4px;margin-block:-4px}
 .seg button{min-height:28px}
 @media (pointer:coarse),(max-width:700px){.seg button{min-height:44px}.brand{padding-block:10px;margin-block:-10px;min-width:44px;justify-content:center}}
+
+/* ── Drawn in characters (23 Nov): a View control, and the loading mark in text ───────────────────────────────
+   Our own renderer: the live canvas is sampled into cells; each cell becomes a character (Text), a 2×4 dot cell
+   (Braille) or a 1-bit ordered-dither pixel (Dither). Ink and paper only, both appearances. Labels stay crisp. */
+.dock__right{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+@media (max-width:900px){.dock__right{justify-content:flex-start}}
+.boot__art{margin:0 auto 14px;font:9px/9px var(--mono);letter-spacing:0;color:var(--ink);white-space:pre;text-align:left;display:inline-block}
+.boot__art[hidden]{display:none}

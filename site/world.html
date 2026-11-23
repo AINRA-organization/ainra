@@ -31,7 +31,7 @@
 <!-- Loading: determinate, with the real step named, shown from the first paint (before any script runs). -->
 <div class="boot" id="boot" role="progressbar" aria-label="Loading the network" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
   <div class="boot__in">
-    <svg class="boot__mark" viewBox="0 0 112 112" aria-hidden="true"><use href="#mark"/></svg>
+    <svg class="boot__mark" id="bootMark" viewBox="0 0 112 112" aria-hidden="true"><use href="#mark"/></svg><pre class="boot__art" id="bootArt" aria-hidden="true" hidden></pre>
     <div class="boot__title">AINRA WORLD</div>
     <div class="boot__bar"><i id="bootBar"></i></div>
     <div class="boot__step" id="bootStep">Reading the published record</div>
@@ -88,7 +88,7 @@
       <div class="stat"><b id="sChk">0</b><span>checks here</span></div>
       <div class="stat"><b id="sMs">–</b><span>median check</span></div>
     </div>
-    <div class="seg" id="filters" role="radiogroup" aria-label="Show registrars"><span class="seg__pill" id="segPill" aria-hidden="true"></span></div>
+    <div class="dock__right"><div class="seg" id="viewSeg" role="radiogroup" aria-label="How the world is drawn"><span class="seg__pill" aria-hidden="true"></span></div><div class="seg" id="filters" role="radiogroup" aria-label="Show registrars"><span class="seg__pill" id="segPill" aria-hidden="true"></span></div></div>
   </div>
   <div class="timeline">
     <button class="play" id="play" type="button" aria-label="Replay the record" aria-pressed="false"><span class="swap" id="playIc"></span></button>

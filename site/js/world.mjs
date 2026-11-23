@@ -81,7 +81,31 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readTheme)
 const boot = $("#boot");
 function stepOn(s, label, pct) { const li = boot.querySelector(`li[data-s="${s}"]`); if (li) li.className = "on"; $("#bootStep").textContent = label; progress(pct); }
 function stepOk(s) { const li = boot.querySelector(`li[data-s="${s}"]`); if (li) li.className = "ok"; }
-function progress(p) { $("#bootBar").style.width = `${p}%`; boot.setAttribute("aria-valuenow", String(Math.round(p))); }
+function progress(p) { $("#bootBar").style.width = `${p}%`; boot.setAttribute("aria-valuenow", String(Math.round(p))); bootP = p; paintArt(); }
+// The loading mark, drawn in characters: the AINRA mark sampled into a small grid, each cell revealed as the real
+// loading passes its place (the bar and the steps say the same in words). Decoration only: aria-hidden.
+let bootP = 0, artCells = null;
+function bootArt() {
+  const g = document.getElementById("mark"); if (!g) return;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" width="448" height="448"><rect width="112" height="112" fill="#fff"/><g fill="none" stroke="#000" stroke-linecap="round">${g.innerHTML.replace(/currentColor/g, "#000")}</g></svg>`;
+  const im = new Image();
+  im.onload = () => {
+    const cols = 40, rows = 20, c = document.createElement("canvas"); c.width = cols; c.height = rows;
+    const x = c.getContext("2d", { willReadFrequently: true }); x.imageSmoothingQuality = "high"; x.drawImage(im, 0, 0, cols, rows);
+    const px = x.getImageData(0, 0, cols, rows).data, ramp = " .:-=+*#%@";
+    artCells = []; for (let i = 0; i < cols * rows; i++) {
+      const v = 1 - (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 765;
+      artCells.push({ ch: v < 0.05 ? " " : ramp[Math.min(ramp.length - 1, 1 + Math.floor(Math.sqrt(v) * (ramp.length - 1)))], at: hash(i * 3.1) * 100, eol: (i + 1) % cols === 0 });
+    }
+    $("#bootArt").hidden = false; const m = $("#bootMark"); if (m) m.style.display = "none"; paintArt();
+  };
+  im.src = "data:image/svg+xml," + encodeURIComponent(svg);
+}
+function paintArt() {
+  if (!artCells) return; let t = "";
+  for (const c of artCells) { t += c.ch !== " " && (c.at <= bootP || RM.matches) ? c.ch : c.ch !== " " ? "·" : " "; if (c.eol) t += "\n"; }
+  $("#bootArt").textContent = t;
+}
 function bootFail(msg) {
   const on = boot.querySelector("li.on"); if (on) on.className = "bad";
   $("#bootStep").textContent = "The world could not be built";
@@ -284,6 +308,7 @@ function draw(dt) {
     const pri = n === focusN || n === sheetN ? 0 : n === hoverN ? 1 : { root: 2, registrar: 2, witness: 3, open: 3, operator: 4, passport: 5 }[n.kind];
     if (pri !== undefined && n.label && (n.kind !== "passport" || pri < 2 || n.sr > 7)) labels.push({ n, r, f, pri });
   }
+  if (VIEW !== "points") charPass();
   // labels: most important first; one that would overlap another is left out (the hover pill still names it)
   labels.sort((a, b) => a.pri - b.pri || a.n.depth - b.n.depth); const placed = [];
   ctx.textAlign = "left"; ctx.textBaseline = "middle";
@@ -300,6 +325,61 @@ function draw(dt) {
   const hp = $("#hoverPill");
   if (hoverN && hoverN.vis && !drag) { hp.hidden = false; hp.style.transform = `translate(${hoverN.sx}px, ${hoverN.sy - Math.max(6, hoverN.sr) - 8}px) translate(-50%,-100%)`; }
   else hp.hidden = true;
+}
+
+// ---------- drawn in characters: the frame above, sampled into cells and redrawn as text, braille dots or 1-bit dither ----------
+let VIEW = "points";
+const small = document.createElement("canvas"), sctx = small.getContext("2d", { willReadFrequently: true });
+const charCv = document.createElement("canvas"), cctx = charCv.getContext("2d");   // the character layer, kept between frames
+const RAMP = " .,:;-~=+*o#%@";                                  // light to dense, for ink on paper
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+let glyphW = null, dens = new Float32Array(0), charAt = 0, charKey = "";
+function sampleTo(sw, sh) {                                       // the live frame, averaged down to sw × sh: 0 paper … 1 ink
+  if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
+  if (dens.length !== sw * sh) dens = new Float32Array(sw * sh);
+  sctx.imageSmoothingEnabled = true; sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(cv, 0, 0, cv.width, cv.height, 0, 0, sw, sh);
+  const px = sctx.getImageData(0, 0, sw, sh).data;
+  const pl = (parseInt(PAPER.slice(1, 3), 16) + parseInt(PAPER.slice(3, 5), 16) + parseInt(PAPER.slice(5, 7), 16)) / 3, il = (rgb[0] + rgb[1] + rgb[2]) / 3, k = 1 / (il - pl);
+  for (let i = 0, n = sw * sh; i < n; i++) { const v = ((px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3 - pl) * k; dens[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
+  return dens;
+}
+// Redrawn about twenty times a second (the camera and the checks still move at full rate underneath); in between the
+// kept layer is copied, which costs almost nothing. A change of view, size or appearance redraws it at once.
+function charPass() {
+  const now = performance.now(), key = `${VIEW}|${cv.width}x${cv.height}|${INK}|${PAPER}`;
+  if (key !== charKey || now - charAt > 50) { charKey = key; charAt = now; renderChars(); }
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(charCv, 0, 0); ctx.restore();
+}
+function renderChars() {
+  if (charCv.width !== cv.width || charCv.height !== cv.height) { charCv.width = cv.width; charCv.height = cv.height; }
+  const c = cctx, dpr = cv.width / Math.max(1, W); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = PAPER; c.fillRect(0, 0, W, H);
+  if (VIEW === "text") {
+    const fs = W < 700 ? 10 : 12; c.font = `${fs}px ${MONO}`; if (!glyphW || glyphW.fs !== fs) glyphW = { fs, w: c.measureText("M").width };
+    const cw = glyphW.w, ch = Math.round(fs * 1.08), cols = Math.floor(W / cw), rows = Math.floor(H / ch), d = sampleTo(cols, rows);
+    c.fillStyle = ink(0.92); c.textBaseline = "top"; c.textAlign = "left";
+    for (let y = 0; y < rows; y++) {
+      let line = ""; for (let x = 0; x < cols; x++) { const v = d[y * cols + x]; line += RAMP[Math.min(RAMP.length - 1, Math.floor(Math.pow(v, 0.7) * RAMP.length * 1.15))]; }
+      c.fillText(line, 0, y * ch);
+    }
+  } else if (VIEW === "braille") {
+    const dx = W < 700 ? 2.6 : 3, cols = Math.floor(W / dx), rows = Math.floor(H / dx), d = sampleTo(cols, rows), dot = dx * 0.62;
+    c.fillStyle = ink(0.95); c.beginPath();
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      if (d[y * cols + x] <= BAYER[(y & 3) * 4 + (x & 3)] * 0.9) continue;
+      c.rect(x * dx + (x % 2 ? 0.6 : 0), y * dx + (y % 4 === 3 ? 0.6 : 0), dot, dot);   // 2 × 4 cells, a hair apart
+    }
+    c.fill();
+  } else if (VIEW === "dither") {
+    const k = W < 700 ? 2 : 2.5, sw = Math.floor(W / k), sh = Math.floor(H / k), d = sampleTo(sw, sh);
+    const img = sctx.createImageData(sw, sh), P2 = [parseInt(PAPER.slice(1, 3), 16), parseInt(PAPER.slice(3, 5), 16), parseInt(PAPER.slice(5, 7), 16)];
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      const i = y * sw + x, col = d[i] > BAYER[(y & 3) * 4 + (x & 3)] ? rgb : P2;
+      img.data[i * 4] = col[0]; img.data[i * 4 + 1] = col[1]; img.data[i * 4 + 2] = col[2]; img.data[i * 4 + 3] = 255;
+    }
+    sctx.putImageData(img, 0, 0); c.imageSmoothingEnabled = false; c.drawImage(small, 0, 0, sw, sh, 0, 0, W, H); c.imageSmoothingEnabled = true;
+  }
 }
 
 // ---------- checks (real) ----------
@@ -554,28 +634,39 @@ addEventListener("keydown", (e) => {
   if (k === "+" || k === "=") zoomBy(0.8); if (k === "-" || k === "_") zoomBy(1.25); if (k === "0") resetView();
   if (k === " ") { setPlaying(!playing); e.preventDefault(); }
 });
-// segmented control: All, or one registrar; the pill slides under the choice on a spring, from where it is
-const segX = new Spring(0, 0.35, 0.85), segW = new Spring(0, 0.35, 0.85); let segOpts = [];
-function filters() {
-  const box = $("#filters");
-  const opts = [{ id: null, label: "All registrars", short: "All" }, ...regs.map((r) => ({ id: r.id, label: `${r.id} · ${r.recs.length}`, short: `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` }))];
-  segOpts = opts.map((o, i) => {
+// segmented controls: a pill slides under the choice on a spring, from where it is (arrow keys move the choice)
+const segs = [];
+function makeSeg(box, opts, start, onChoose) {
+  const sg = { box, pill: box.querySelector(".seg__pill"), x: new Spring(0, 0.35, 0.85), w: new Spring(0, 0.35, 0.85), opts: [], i: start };
+  sg.opts = opts.map((o, i) => {
     const b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "radio"); b.setAttribute("aria-label", o.label);
-    b.innerHTML = `<span class="seg__l"></span><span class="seg__s" aria-hidden="true"></span>`; b.querySelector(".seg__l").textContent = o.label; b.querySelector(".seg__s").textContent = o.short;
-    b.setAttribute("aria-checked", String(i === 0)); b.tabIndex = i === 0 ? 0 : -1;
-    b.addEventListener("click", () => chooseSeg(i, true));
-    b.addEventListener("keydown", (e) => { const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]; if (!d) return; e.preventDefault(); const j = (i + d + opts.length) % opts.length; chooseSeg(j, true); segOpts[j].b.focus(); });
+    b.innerHTML = `<span class="seg__l"></span><span class="seg__s" aria-hidden="true"></span>`; b.querySelector(".seg__l").textContent = o.label; b.querySelector(".seg__s").textContent = o.short || o.label;
+    b.setAttribute("aria-checked", String(i === start)); b.tabIndex = i === start ? 0 : -1;
+    b.addEventListener("click", () => sg.choose(i, true));
+    b.addEventListener("keydown", (e) => { const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]; if (!d) return; e.preventDefault(); const j = (i + d + opts.length) % opts.length; sg.choose(j, true); sg.opts[j].b.focus(); });
     box.append(b); return { ...o, b };
   });
-  requestAnimationFrame(() => { const b = segOpts[0].b; segX.x = segX.to = b.offsetLeft; segW.x = segW.to = b.offsetWidth; placeSeg(); });
+  sg.choose = (i, user) => {
+    sg.i = i; sg.opts.forEach((o, j) => { o.b.setAttribute("aria-checked", String(i === j)); o.b.tabIndex = i === j ? 0 : -1; });
+    const b = sg.opts[i].b; RM.matches ? ((sg.x.x = b.offsetLeft), (sg.w.x = b.offsetWidth)) : (sg.x.go(b.offsetLeft), sg.w.go(b.offsetWidth));
+    onChoose(sg.opts[i], user);
+  };
+  sg.sync = () => { const b = sg.opts[sg.i].b; sg.x.x = sg.x.to = b.offsetLeft; sg.w.x = sg.w.to = b.offsetWidth; sg.x.on = sg.w.on = false; sg.place(); };
+  sg.place = () => { sg.pill.style.transform = `translateX(${sg.x.x}px)`; sg.pill.style.width = `${Math.max(0, sg.w.x)}px`; };
+  sg.step = (dt) => { sg.x.step(dt); sg.w.step(dt); sg.place(); };
+  requestAnimationFrame(sg.sync); segs.push(sg); return sg;
 }
-function chooseSeg(i, fly) {
-  segOpts.forEach((o, j) => { o.b.setAttribute("aria-checked", String(i === j)); o.b.tabIndex = i === j ? 0 : -1; });
-  const b = segOpts[i].b; RM.matches ? ((segX.x = b.offsetLeft), (segW.x = b.offsetWidth)) : (segX.go(b.offsetLeft), segW.go(b.offsetWidth));
-  const id = segOpts[i].id; for (const r of regs) r.dim = !!id && r.id !== id; stats();
-  if (fly) id ? flyTo(byId[id].pos, 760, { pitch: 0.3 }) : resetView();
+function filters() {
+  const opts = [{ id: null, label: "All registrars", short: "All" }, ...regs.map((r) => ({ id: r.id, label: `${r.id} · ${r.recs.length}`, short: `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` }))];
+  makeSeg($("#filters"), opts, 0, (o, user) => {
+    for (const r of regs) r.dim = !!o.id && r.id !== o.id; stats();
+    if (user) o.id ? flyTo(byId[o.id].pos, 760, { pitch: 0.3 }) : resetView();
+  });
+  const views = [{ id: "points", label: "Points" }, { id: "text", label: "Text" }, { id: "braille", label: "Braille" }, { id: "dither", label: "Dither" }];
+  let saved = "points"; try { saved = localStorage.getItem("ainra-world-view") || "points"; } catch { /* storage unavailable */ }
+  const start = Math.max(0, views.findIndex((v) => v.id === saved)); VIEW = views[start].id;
+  makeSeg($("#viewSeg"), views, start, (o) => { VIEW = o.id; try { localStorage.setItem("ainra-world-view", o.id); } catch { /* not kept */ } });
 }
-function placeSeg() { const p = $("#segPill"); p.style.transform = `translateX(${segX.x}px)`; p.style.width = `${Math.max(0, segW.x)}px`; }
 
 // ---------- the timeline: the knob follows the finger and can be grabbed mid-replay ----------
 const track = $("#track");
@@ -599,7 +690,7 @@ $("#play").addEventListener("click", () => setPlaying(!playing));
 
 // ---------- boot ----------
 async function bootUp() {
-  readTheme(); paintIcons(); swapIcon($("#playIc"), "play"); swapIcon($("#shCopyIc"), "copy");
+  readTheme(); bootArt(); paintIcons(); swapIcon($("#playIc"), "play"); swapIcon($("#shCopyIc"), "copy");
   stepOn("record", "Reading the published record", 6);
   let done = 0; const tick = (x) => { done++; progress(6 + (done / 6) * 34); return x; };
   const sdkP = import("../vendor/ainra-sdk.js").then(tick);
@@ -638,12 +729,12 @@ async function bootUp() {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (playing && !document.hidden) { playT += dt; if (playT > (RM.matches ? 0.9 : 0.42)) { playT = 0; applyStep(step + 1); if (live()) setPlaying(false); } }
     if (!document.hidden && now >= nextCheck && live() && !tour.on) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 2600 : 1300); }
-    physics(dt); lift.step(dt); sheetPos.step(dt); segX.step(dt); segW.step(dt); placeSeg(); placeSheet(); draw(dt);
+    physics(dt); lift.step(dt); sheetPos.step(dt); for (const sg of segs) sg.step(dt); placeSheet(); draw(dt);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 }
 const narrowFind = () => { $("#find").placeholder = innerWidth <= 520 ? "Find" : "Find a passport"; };
 narrowFind();
-addEventListener("resize", () => { readTheme(); narrowFind(); if (nodes.length) { resize(); placeSheet(); const o = segOpts.find((x) => x.b.getAttribute("aria-checked") === "true"); if (o) { segX.x = segX.to = o.b.offsetLeft; segW.x = segW.to = o.b.offsetWidth; segX.on = segW.on = false; } } });
+addEventListener("resize", () => { readTheme(); narrowFind(); if (nodes.length) { resize(); placeSheet(); for (const sg of segs) sg.sync(); } });
 bootUp().catch((e) => { console.info("[world] did not start:", e); bootFail(e?.message || String(e)); });
