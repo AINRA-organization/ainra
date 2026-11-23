@@ -4,9 +4,10 @@
 # make stage-wallclock-drill — the test network on the wall clock instead of its pinned April 2026 clock (D-064),
 # rehearsed on a whole throwaway network, with everything that surrounds the network reading its clock from it.
 #
-# The published test network is pinned: its directory is dated 10 April 2026, and `ainra ctl status` read at the
-# real clock says so ("stale directory: issued N day(s) ago, the published quarterly cadence allows 92"). This drill
-# runs what moving it would take, beside the real network and touching none of it: its own folder under the cache
+# The published test network was pinned until 23 November 2026, when it was moved this way (D-125): its directory was
+# dated 10 April 2026, and `ainra ctl status` read at the real clock said so ("stale directory: issued N day(s) ago,
+# the published quarterly cadence allows 92"). This drill runs what moving a network takes, beside the real network
+# and touching none of it: its own folder under the cache
 # directory, its own root seeds (made for the drill), and spare addresses (5947, 5951, 5981, 9097). In two parts:
 #
 #   A · a network BORN on the wall clock, from the statement in its own folder alone (the file CLOCK says `wall`; no

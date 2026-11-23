@@ -67,8 +67,7 @@ the history kept. There is no command-line client for the operator's side of a m
 with the registrar's id. If keys that were never on another machine matter to you from the start, begin at step 1
 instead.
 
-A managed registrar keeps real time. The published test network is still pinned at April 2026: there its passports
-verify at the real clock, and a reader standing at the pinned instant sees their status as stale.
+A managed registrar keeps real time, as the published test network has since 23 November 2026 (D-125).
 
 ## 1. Run the registrar
 

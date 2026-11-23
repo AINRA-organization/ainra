@@ -4226,3 +4226,55 @@ time, each turned its lines red. Unit test: `keys_made_on_first_start_survive_a_
 
 *Status:* ACCEPTED 2026-11-22, on the operator's word of 20 November (the proposal to make joining a matter of a
 day) and of 22 November to continue; tools only (D-114).
+
+---
+
+## D-125 — The published test network keeps real time
+
+*Problem:* D-122 made a real clock possible and D-123 made everything around the published network read the
+network's own statement of its clock; neither moved the published network. While it stayed at its April 2026 instant,
+every check of its record at today's date raised "stale directory", a reader had to be told which alarm to ignore,
+and the network never had to show what real time asks of it: delegates renewing, a directory growing old, a signing
+every quarter. D-064 item 4 kept the staging network on the pinned clock; this record ends that for the published one.
+
+*Decision (operations; no wire format, directory field, verifier rule, verdict or vector changes):*
+
+- **Moved on 23 November 2026,** in the order D-123 prepared: the node's network folder backed up; its timers
+  stopped; `wall` written to `stage/CLOCK`; the installer run; both registrars and the witness restarted; the
+  directory signed again for the node with the sealed root seed (`AINRA_STAGE_RESIGN=1 bash
+  deploy/home-node/sign-for-node.sh`, the passphrase typed by the operator on the laptop); the timers started again.
+- **Epoch 3, dated 2026-11-23 20:33 UTC.** The same root (fingerprint `6677b9d45a0990ae`), the same registrar keys,
+  the same logs (registrar-07 at size 15, registrar-11 at size 4) and the same fifteen passports.
+- **The site's copy was taken again** from the moved network (published 2026-11-23T20:35:03Z). It says
+  `"clock": "wall"`, so `control.html` and `ainra ctl status` hold it to the 92-day cadence at today's date.
+- **From now on** the directory is signed again at least every 92 days (D-094's cadence; next by 23 February 2027),
+  and the site's copy is taken again and deployed each time. On day 93 the control room alarms, as it should.
+- The hermetic drills and the samples keep the pinned clock: D-064 item 4 still holds for them.
+
+*Held to:*
+- `ainra ctl status` against the node at the real date: "CTL OK — no alarm"; three epochs, contiguous, each signed,
+  each digest as listed.
+- `make site-net-check`: "agrees with the running network, which keeps real time (16 files)"; `make record-agrees`:
+  15 of 15.
+- The fifteen passports checked again with the shipped TypeScript engine against the new copy, at the record's time
+  and at the current time: 9 valid and 6 switched off, the verdicts published before the move.
+- `make preflight` on the commit that carries the copy.
+- After the deploy, from outside: `ainra ctl status --net https://ainra.org/net` with no `--now`.
+
+*What happened on the way:* a first attempt was refused before anything was signed. The signing asked registrar-07
+for its accreditation about a second after its restart, while it was still re-certifying its delegates and not yet
+listening. The node was put back on the pinned clock and checked healthy, and the operator's guided run now waits
+until both registrars answer. The second attempt is the one recorded above.
+
+*Limits, stated plainly:*
+- **Every passport on the network still expires on 12 April 2027** (D-122's limit); one issued after that date would
+  be expired at birth. This record does not change the window, and it must be decided before then.
+- **The public reads a copy.** The network answers only on the home node; the site's copy is as fresh as its last
+  deploy, not as fresh as the network. An outside verifier that needs fresher status needs the network itself.
+- **One person and one laptop sign each quarter.** A missed signing shows as an alarm, not as a silent failure.
+- No witness outside the home node has cosigned the moved logs yet.
+- The 92-day alarm and the renewals have been reached by moving the reader's clock (D-122), not yet by waiting.
+
+*Not changed:* the root, the registrars' keys, any crate, verdict, vector or wire format.
+
+*Status:* ACCEPTED 2026-11-23, on the operator's word of that day to do the move; the move run by the operator.

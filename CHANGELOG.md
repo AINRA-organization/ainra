@@ -10,6 +10,15 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Changed — the published test network keeps real time (D-125)
+
+- Moved on 23 November 2026. The directory was signed again as epoch 3, dated that day. The root, the registrars'
+  keys, their logs and the fifteen passports are the same, and so are the verdicts: 9 valid, 6 switched off.
+- The site's copy of the record was taken again and says `"clock": "wall"`. The control room reads it at today's date
+  with no alarm.
+- The directory must now be signed again at least every 92 days (next by 23 February 2027). Every passport on the
+  network still expires on 12 April 2027 (D-122).
+
 ### Changed — the site meets touch, type and press rules
 
 - Measured with a browser audit of eleven pages at 1440 and 390 px:

@@ -230,6 +230,14 @@ setTimeout(function(){var h=document.documentElement;if(!h.dataset.rvReady)h.cla
   <!--news:start-->
   <section class="nw-month" aria-label="November 2026">
     <h2 class="nw-month__h">November 2026</h2>
+    <article class="nw-item" id="n-the-test-network-keeps-real-time" data-kind="network">
+      <p class="nw-when"><time datetime="2026-11-23">23 November 2026</time><span class="nw-kind nw-kind--network">Network</span></p>
+      <h3 class="nw-title"><a href="#n-the-test-network-keeps-real-time">The test network now keeps real&nbsp;time</a></h3>
+      <p>Our test network used to live on one fixed day in April 2026. Every passport on it was checked as of that day, and the record this site publishes said so. That made our tests repeatable. It also meant the network never had to show what time asks of it: that its parts renew themselves, that a signed directory grows old, and that someone signs it again.</p>
+      <p>On 23 November it moved to the real clock. Its root signed the directory again, dated that day, as epoch 3. The root, the registrars' keys, their logs and the fifteen passports are the same, and so are their verdicts: nine valid, six switched off. The control room on this site now checks the directory against today's date, with no alarm.</p>
+      <p>From now on the directory must be signed again at least every 92 days, as our published cadence says, or the control room raises an alarm. It is still a test network under a test root, and every passport on it expires on 12 April 2027.</p>
+      <p class="nw-proof"><a href="https://github.com/JacobJandon/ainra/blob/main/docs/DECISIONS.md">Decision <span class="nw">D-125</span></a><a href="control.html">The control room</a><a href="net/epochs.json">All three epochs</a></p>
+    </article>
     <article class="nw-item" id="n-site-checks-bound-chains" data-kind="security">
       <p class="nw-when"><time datetime="2026-11-23">23 November 2026</time><span class="nw-kind nw-kind--security">Security</span></p>
       <h3 class="nw-title"><a href="#n-site-checks-bound-chains">The site's checkers now check a bound delegation chain, and no longer refuse&nbsp;one</a></h3>

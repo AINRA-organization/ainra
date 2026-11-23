@@ -196,6 +196,7 @@ footer{padding:52px 0 40px;border-top:1px solid var(--line);margin-top:92px}
 }
 nav .nav-links a[aria-current="page"],nav .ndocs[aria-current="page"]{text-decoration:underline;text-underline-offset:6px;text-decoration-thickness:2px}
 @media(max-width:480px){.announce{font-size:11px;padding:8px 12px}}
+body .announce{display:block} /* plain text here, no .wrap: as a flex row each text run became its own column on a phone */
 body .announce a{display:inline-block;padding:6px 0;margin:-6px 0}
 @media(max-width:700px){.panel .tag{font-size:11px}.actions button{min-height:44px}body .announce a{padding:15px 0;margin:-15px 0}}
 @media(max-width:1023px){nav .mean{display:none}}
