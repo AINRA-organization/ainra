@@ -10,6 +10,27 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Fixed — the site's verifiers check a bound delegation chain (D-113), and no longer refuse one
+
+- Seven places in the site built a registrar's anchor from its two keys only, so `chains_bound_from_leaf` (D-113) and
+  the distrust cutoff never reached the engine:
+  - `verify.html`, twice: the list check, and the fallback for a pasted presentation;
+  - `js/scan.mjs`, `js/home.mjs`, `js/calm.mjs`;
+  - `js/get.mjs` and `js/demo-live.mjs`.
+- **Effect on pages that build their own presentation:** they never checked a bound chain's parties, and still showed
+  the right verdict for the record.
+- **Effect on pages fed by a registrar's `/present`, which carries `chain_parties`:** they refused the valid bound
+  passport (`support-bot@1.1.0`) as `schema_violation`.
+- **The fix:** every site verifier now passes the whole accreditation (`anchorOf`) and each passport's
+  `chain_parties`.
+- **Measured with the shipped engines:**
+  - all 15 test-network passports give the published verdicts (9 valid, 6 switched off), in Node and on `verify.html`
+    with the WebAssembly core;
+  - a bound chain with one party's log position moved is refused as `chain_party_unbound`.
+- **Held by a new step in `make site-check`,** `tools/site-anchors.mjs`. It refuses an anchor written by hand, and its
+  `--drill` proves it catches both mistakes.
+
+
 ### Added — the test network can keep real time (D-122)
 
 - `AINRA_STAGE_CLOCK=wall` brings a network up at the real clock, and `make stage-wallclock-drill` rehearses both a

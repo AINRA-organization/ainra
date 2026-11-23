@@ -6,6 +6,9 @@
 import { conformance, verdictEvent, serializeVerdictEvent } from "../vendor/ainra-sdk.js";
 const { runVector } = conformance;
 import { fetchT, why } from "./net.mjs";
+// The registrar's whole accreditation, as the directory states it: both keys, and the distrust cutoff and the leaf
+// from which delegation chains are bound (D-113) when present. Without the last, a bound chain is not checked.
+const anchorOf = (a) => ({ issuer_key: a.issuer_key, log_root_key: a.log_root_key, ...(a.distrust_from_leaf != null ? { distrust_from_leaf: a.distrust_from_leaf } : {}), ...(a.distrust_root ? { distrust_root: a.distrust_root } : {}), ...(a.chains_bound_from_leaf != null ? { chains_bound_from_leaf: a.chains_bound_from_leaf } : {}) });
 
 const qs = new URLSearchParams(location.search);
 const meta = (n) => document.querySelector(`meta[name="${n}"]`)?.content?.trim();
@@ -51,7 +54,7 @@ async function boot() {
   if (!health || !health.ok) return unavailable("A registrar answered but isn't ready.");
   try {
     const acc = await (await fetchT(REG + "/accreditation")).json();
-    anchors = { [REGID]: { issuer_key: acc.issuer_key, log_root_key: acc.log_root_key } };
+    anchors = { [REGID]: anchorOf(acc) };   // the registrar's presentation carries chain parties: the anchors must ask for them
   } catch { return unavailable("Couldn't read the registrar's accreditation."); }
   let netRoot = health.root || "test-root";
   if (CONTRACT) { try { const ix = await (await fetchT(CONTRACT + "/index.json", { cache: "no-store" })).json(); netRoot = ix.root || netRoot; WALL = ix.clock === "wall"; } catch {} }

@@ -16,10 +16,13 @@ const $ = (s) => document.querySelector(s);
 const enc = (u) => btoa(String.fromCharCode(...u)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const dec = (s) => { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
 let REG = null, NOW = 0, ROWS = [];
+// The registrar's whole accreditation, as the directory states it: both keys, and the distrust cutoff and the leaf
+// from which delegation chains are bound (D-113) when present. Without the last, a bound chain is not checked.
+const anchorOf = (a) => ({ issuer_key: a.issuer_key, log_root_key: a.log_root_key, ...(a.distrust_from_leaf != null ? { distrust_from_leaf: a.distrust_from_leaf } : {}), ...(a.distrust_root ? { distrust_root: a.distrust_root } : {}), ...(a.chains_bound_from_leaf != null ? { chains_bound_from_leaf: a.chains_bound_from_leaf } : {}) });
 
 function toWire(rec, R) {
   return { name: rec.sub, expect: {},
-    anchors: { [R.registrar]: { issuer_key: R.accreditation.issuer_key, log_root_key: R.accreditation.log_root_key } },
+    anchors: { [R.registrar]: anchorOf(R.accreditation) },
     presentation: {
       claims: enc(new TextEncoder().encode(rec.claims)),
       issuer_sig: { ed25519: rec.issuer_sig_ed25519, mldsa65: rec.issuer_sig_mldsa65 },
@@ -28,6 +31,7 @@ function toWire(rec, R) {
       freshness: "F3", checkpoint: { origin: rec.log_origin, size: rec.checkpoint_size, root: rec.checkpoint_root },
       checkpoint_sig: rec.checkpoint_sig, leaf_index: rec.leaf_index, inclusion_proof: rec.inclusion_proof,
       mandate_revocations: [], revoked_delegates: [],
+      ...(rec.chain_parties?.length ? { chain_parties: rec.chain_parties } : {}),   // each delegator's own passport, for a bound chain
     } };
 }
 

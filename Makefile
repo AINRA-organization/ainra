@@ -474,6 +474,8 @@ site-check:
 	node tools/security-txt.mjs
 	node tools/security-txt.mjs --drill
 	node tools/link-check.mjs
+	node tools/site-anchors.mjs
+	node tools/site-anchors.mjs --drill
 
 # M17 — the full staging deploy profile: network (registrars + witness + artifacts + console) + site + explorer, one cmd.
 stage-all:
