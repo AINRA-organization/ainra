@@ -424,5 +424,7 @@ html[data-motion="off"] .g-menu{animation:none!important}
 .world-dot:hover img{scale:1.4}
 .world-dot.is-down,.world-dot:active{scale:.96}
 html.g-menu-open .world-dot,html.g-search-open .world-dot{opacity:0;pointer-events:none}
-@media (max-width:700px){.world-dot{width:72px;height:72px;right:16px;bottom:calc(88px + env(safe-area-inset-bottom))}.world-dot__pill{font-size:11px;padding:3px 7px 3px 8px}}
+@media (max-width:700px){.world-dot{width:72px;height:72px;right:16px;bottom:calc(88px + env(safe-area-inset-bottom))}.world-dot__pill{font-size:11px;padding:3px 7px 3px 8px}
+  /* on a phone the hero stays clear: the way in appears once the hero is scrolled past (index.html) */
+  .world-dot.is-later{opacity:0;scale:.9;pointer-events:none}}
 html[data-motion="off"] .world-dot img{transition:none}
