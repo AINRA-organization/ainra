@@ -10,6 +10,18 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Changed — the site meets touch, type and press rules
+
+- Measured with a browser audit of eleven pages at 1440 and 390 px:
+  - every control is at least 44 px on a phone and 28 px on a desk;
+  - no text is under 11 px on a phone or 10 px anywhere;
+  - a press shows the moment a finger lands.
+- The menu enters from the control that opened it and leaves the same way. It respects reduced motion and the site's
+  Motion switch.
+- `control.html`'s status link had been drawn ink on ink (1.00:1) and is now legible.
+- Copy buttons carry an outline copy icon while waiting and keep the Life glyph once copied. The icon is third-party,
+  Apache-2.0: see THIRD-PARTY.md.
+
 ### Fixed — the site's verifiers check a bound delegation chain (D-113), and no longer refuse one
 
 - Seven places in the site built a registrar's anchor from its two keys only, so `chains_bound_from_leaf` (D-113) and

@@ -75,6 +75,16 @@ Dev-only (not shipped, not on the verify path): `typescript` (Apache-2.0), `@typ
 The verifier kit (`kits/verifier`) and middleware (`packages/middleware`) add **no** runtime dependency beyond
 `@ainra/sdk` — they import only it and Node built-ins.
 
+## Site artwork
+
+| What | Where | License |
+|------|-------|---------|
+| Rune Icons, outline style: the "copy" icon, unmodified, from the npm package `runeicons` 0.1.0 ([runeicons.com](https://runeicons.com), © 2026 Rune Icons Team) | `site/css/living.css` (as a CSS mask on copy buttons) | Apache-2.0, full text in `site/third-party/runeicons/LICENSE` |
+| Inter, Noto Sans Mono, B612 Mono, Bricolage Grotesque | `site/fonts/` | SIL OFL 1.1, `site/fonts/OFL.txt` |
+
+Only the icon artwork is used. The icon project's own site code (under a different licence, with a Commons Clause) and
+its brand logos are not used. Not on the verify path.
+
 ## How this is kept honest
 - `tools/license-check.mjs` (CI-gated) fails the build if any authored source file lacks the `SPDX-License-Identifier:
   Apache-2.0 OR MIT` header.
