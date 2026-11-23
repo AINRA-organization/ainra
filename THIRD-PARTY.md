@@ -80,6 +80,7 @@ The verifier kit (`kits/verifier`) and middleware (`packages/middleware`) add **
 | What | Where | License |
 |------|-------|---------|
 | Rune Icons, outline style: the "copy" icon, unmodified, from the npm package `runeicons` 0.1.0 ([runeicons.com](https://runeicons.com), © 2026 Rune Icons Team) | `site/css/living.css` (as a CSS mask on copy buttons) | Apache-2.0, full text in `site/third-party/runeicons/LICENSE` |
+| Rune Icons, outline style: 31 icons, unmodified, from the npm package `runeicons` 0.1.0 ([runeicons.com](https://runeicons.com), © 2026 Rune Icons Team) | `site/js/icons.mjs` | Apache-2.0, full text in `site/third-party/runeicons/LICENSE` |
 | Inter, Noto Sans Mono, B612 Mono, Bricolage Grotesque | `site/fonts/` | SIL OFL 1.1, `site/fonts/OFL.txt` |
 
 Only the icon artwork is used. The icon project's own site code (under a different licence, with a Commons Clause) and
