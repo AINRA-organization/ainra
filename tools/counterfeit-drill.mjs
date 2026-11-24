@@ -9,7 +9,8 @@
 //   · a passport not (yet) in the log: no inclusion proof, a leaf past the signed checkpoint, an unsigned checkpoint;
 //   · outside its time: after expiry, before validity, kept alive by an old, re-dated or edited status list;
 //   · a counterfeit root: the directory checked against another root's halves, or with a registrar renamed.
-// Each trick is pinned to the ONE reason its own defence gives, so a removed check cannot hide behind another one.
+// Each trick that ends in a reason is pinned to the ONE reason its own defence gives, and each root trick keeps every
+// other rule satisfied so only the root's signature can refuse it: a removed check cannot hide behind another one.
 // It runs offline and changes nothing.
 //
 // WITNESS (the negative control): every genuine passport must first give its published verdict, so a verifier that
@@ -102,8 +103,9 @@ function drill(modeName) {
   rootTrick("the directory checked against another root's Ed25519 half", forge(roots.root_ed25519), roots.root_slh);
   rootTrick("the directory checked against another root's SLH-DSA half", roots.root_ed25519, forge(roots.root_slh));
   rootTrick("the directory checked against another root (both halves)", forge(roots.root_ed25519), forge(roots.root_slh));
-  rootTrick("a directory with one registrar renamed", roots.root_ed25519, roots.root_slh,
-    JSON.parse(JSON.stringify(directory).replace(/"registrar-07"/, '"registrar-7a"')));
+  // registrar-08 keeps the directory's sort order (07 < 08 < 11), so no rule but the root's signature can object.
+  rootTrick("a directory with one registrar renamed (the order kept)", roots.root_ed25519, roots.root_slh,
+    JSON.parse(JSON.stringify(directory).split("registrar-07").join("registrar-08")));
 
   for (const reg of registry.registrars) {
     for (const { record: rec, verdict: pub } of reg.records) {
@@ -148,7 +150,9 @@ function drill(modeName) {
       trick(`${name}: shown one second after it expired`, () => run(b, c0.exp + 1), "expired");
       trick(`${name}: shown one second before it was valid`, () => run(b, c0.nbf - 1), "not_yet_valid");
       trick(`${name}: its status list replayed a day and a second later (F3)`, () => run(b, b.status_issued_at + 86400 + 1), "stale_status");
-      trick(`${name}: its status list re-dated to look fresh`, () => run({ ...b, status_issued_at: NOW }), "stale_status");
+      trick(`${name}: a status list past its window re-dated to look fresh`, () => { const late = b.status_issued_at + 86400 + 1; return run({ ...b, status_issued_at: late }, late); }, "stale_status");
+      trick(`${name}: its status list's Ed25519 signature forged (the ML-DSA half kept)`, () => run({ ...b, status_sig_ed25519: forge(b.status_sig_ed25519) }), "stale_status");
+      trick(`${name}: its status list's ML-DSA signature forged (the Ed25519 half kept)`, () => run({ ...b, status_sig_mldsa65: forge(b.status_sig_mldsa65) }), "stale_status");
     }
   }
   return out;
