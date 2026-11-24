@@ -147,11 +147,11 @@ may age before that verifier stops trusting it: F1 30 seconds, F2 five minutes, 
 publishes the revocation, every verifier refuses that passport within its own class. A verifier that cannot get
 status that fresh refuses the passport as well.
 
-Nothing reaches back. A request a verifier accepted before the revocation stays accepted: a payment already
-authorised or a booking already made is for the business that accepted it to unwind, under its own terms. What AINRA
-adds is evidence of when. The status list carries one bit per passport, and the first signed list that sets a
-passport's bit is dated. For a key linked to a passport and reported stolen, `suspect_since` ([LINKS.md](LINKS.md))
-marks the moment from which its actions stopped being the operator's.
+Nothing reaches back. A request a verifier accepted before the revocation stays accepted: a payment already authorised
+or a booking already made is for the business that accepted it to unwind, under its own terms. What AINRA adds is
+evidence of when. The first signed status list that sets the passport's revocation bit is dated. For a key linked to a
+passport and reported stolen, `suspect_since` ([LINKS.md](LINKS.md)) marks the moment from which its actions stopped
+being the operator's.
 
 So for work that runs over time, check the passport at every step that matters: each request, each payment, each
 hand-over.

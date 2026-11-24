@@ -586,7 +586,7 @@ root-dark-drill: sdk-build mirror ## every service unreachable: does an issued c
 outage-drill: sdk-build ## a registrar goes dark: agents verify until each class's window, then stale_status; revoked never passes
 	@node tools/outage-drill.mjs && node tools/outage-drill.mjs --negative
 
-counterfeit-drill: sdk-build ## the tricks of a counterfeit payment on real passports: lookalikes, forged issuers, unlogged, stale or replayed records all refused
+counterfeit-drill: sdk-build ## forged, lookalike, self-certified, unlogged and replayed passports: each refused with its own reason; --witness catches broken verifiers
 	@node tools/counterfeit-drill.mjs && node tools/counterfeit-drill.mjs --witness
 
 mirror-sufficiency: mirror ## what a mirror must carry, and what it costs per day (measured + method shown)

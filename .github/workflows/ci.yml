@@ -198,7 +198,7 @@ jobs:
         run: node tools/leak-ledger.mjs && node tools/leak-ledger.mjs --negative
       - name: the outage drill — a registrar goes dark; agents verify until each freshness window, then fail closed
         run: node tools/outage-drill.mjs && node tools/outage-drill.mjs --negative
-      - name: the counterfeit drill — lookalike names, forged issuers, unlogged passports, stale or replayed records, all refused
+      - name: the counterfeit drill — forged, lookalike, self-certified, unlogged and replayed passports, each refused with its own reason
         run: node tools/counterfeit-drill.mjs && node tools/counterfeit-drill.mjs --witness
       # These two ran in `make preflight` but not here, so a public claim could be wrong on main with CI green: the
       # M37 commit overstated how many implementations share the request-signature layer (it is three), and only a local

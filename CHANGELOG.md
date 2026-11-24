@@ -18,6 +18,44 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
   when. The section advises a check at every step that matters, and ends with `make outage-drill`, which shows each
   class's window and that a revoked passport never passes.
 
+### Added — the counterfeit drill: forged, lookalike, self-certified, unlogged and replayed passports, all refused
+
+- `make counterfeit-drill` takes every passport in the published record and the verifier that ships, and tries on
+  each one the ways a counterfeit passes for the real thing:
+  - **the real name from another issuer:** forged signatures (both halves, either half), the post-quantum half
+    dropped, the whole passport issued in the name of a registrar nobody accredited;
+  - **lookalike names:** a Cyrillic letter, capitals, a zero-width space or a trailing hyphen in the operator's
+    name;
+  - **a verdict the presenter writes itself:** `"verified": true` or a wider capability in the claims, `"verdict":
+    "valid"` beside a revoked passport;
+  - **not in the log:** no inclusion proof, a leaf past the signed checkpoint, a checkpoint the registrar never
+    signed;
+  - **outside its time:** after expiry, before validity, a status list replayed past its window or re-dated, a
+    revoked passport's bit cleared inside the list;
+  - **a counterfeit root:** the directory checked against another root (either half, or both), or with a registrar
+    renamed.
+- Each trick is pinned to the one reason its own defence gives. A removed check therefore cannot hide behind another
+  one.
+- **Measured on 24 Nov:** all 15 published passports gave their published verdicts (9 valid, 6 revoked), and 178 of
+  178 tricks were refused with their own reason.
+- **Its witness:** a verifier that accepts everything is caught on all 178 tricks, and one that refuses with the
+  wrong reason on all 174 that end in a reason.
+- **Mutants caught:** copies of the SDK each with one defence removed were caught: the status-list signature, the
+  name rule, the checkpoint signature, the expiry and not-before checks, and the root's SLH-DSA half.
+- It runs in `make preflight` and in CI.
+- **What it cannot test:** a verifier given the wrong root by whoever runs it.
+  - Today `ainra ctl status` prints the root's fingerprint, the control room computes it from the roots it reads,
+    and D-125 records it (`6677b9d45a0990ae`), for comparison out of band.
+  - After the root ceremony, the SDK carries the production root itself (ADR-012).
+
+### Added — what a revocation does to work already under way (docs)
+
+- A new section of `docs/IDENTITY.md` explains it. A verifier's answer is about one request, and a revocation reaches
+  every verifier within the freshness class that verifier chose. Nothing reaches back into work already accepted:
+  that is for the business that accepted it to unwind. The signed, dated status list and `suspect_since` say from
+  when. The section advises a check at every step that matters, and ends with `make outage-drill`, which shows each
+  class's window and that a revoked passport never passes.
+
 ### Added — the counterfeit drill: the tricks of a fake payment, tried on real passports
 
 - `make counterfeit-drill` takes every passport in the published record and the verifier that ships, and tries on each

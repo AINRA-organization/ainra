@@ -1,29 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-// make counterfeit-drill — the tricks of a counterfeit payment, tried on real passports.
+// make counterfeit-drill — forged, lookalike, self-certified, unlogged and replayed passports, tried on real ones.
 //
-// A fake token can carry the real token's name. A wallet can show a balance that never arrived. A transfer can sit
-// "pending" and vanish. Each trick has a twin against an identity: a passport issued by someone else under the same
-// name, a presenter that writes its own "verified", a passport never written to the log, a stale or replayed record.
 // This drill takes every passport in the published record (`site/net/`) and the verifier that ships
-// (`packages/sdk-ts/dist`), and tries each trick on each valid passport. Every attempt must be refused, and refused
-// for its own reason. It runs offline and changes nothing.
+// (`packages/sdk-ts/dist`), and tries on each one the ways a counterfeit passes for the real thing:
+//   · the real name from another issuer: forged signatures, a dropped post-quantum half, a registrar nobody accredited;
+//   · lookalike names: a letter from another alphabet, capitals, an invisible character, a stray hyphen;
+//   · a verdict the presenter writes itself: "verified", a wider capability, "valid" beside a revoked passport;
+//   · a passport not (yet) in the log: no inclusion proof, a leaf past the signed checkpoint, an unsigned checkpoint;
+//   · outside its time: after expiry, before validity, kept alive by an old, re-dated or edited status list;
+//   · a counterfeit root: the directory checked against another root's halves, or with a registrar renamed.
+// Each trick is pinned to the ONE reason its own defence gives, so a removed check cannot hide behind another one.
+// It runs offline and changes nothing.
 //
 // WITNESS (the negative control): every genuine passport must first give its published verdict, so a verifier that
-// refuses everything fails this drill. `--witness` then swaps in a verifier that
-// accepts everything and demands that the drill catch it: it must report every trick as getting through.
+// refuses everything fails. `--witness` then runs the whole drill twice against deliberately broken verifiers and
+// demands that the drill catch them on every trick: one that accepts everything (root checks included), and one that
+// refuses with the wrong reason.
 import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { inflateSync, deflateSync } from "node:zlib";
 import { Verifier } from "../packages/sdk-ts/dist/index.js";
 
 const NET = process.env.AINRA_NET_DIR || new URL("../site/net/", import.meta.url).pathname;
-const WITNESS = process.argv.includes("--witness");
 const read = (f) => JSON.parse(readFileSync(NET + f, "utf8"));
 const directory = read("directory.json"), roots = read("roots.json"), registry = read("registry.json");
+const NOW = registry.generated_window.verified_at;
 
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 const unb64 = (s) => Buffer.from(s, "base64url");
-// A signature of the right length that the registrar never made: the "token someone else minted".
-const forge = (s) => b64u(randomBytes(unb64(s).length));
+const forge = (s) => b64u(randomBytes(unb64(s).length));   // the right length, made by someone else
 
 function bundle(rec, st) {
   return {
@@ -38,113 +43,138 @@ function bundle(rec, st) {
     ...(rec.chain_parties?.length ? { chain_parties: rec.chain_parties } : {}),
   };
 }
-const claimsOf = (b) => JSON.parse(unb64(b.claims).toString("utf8"));
-// Every trick must really change the passport; a trick that changed nothing would "pass" for the wrong reason.
-const withClaims = (b, edit) => {
-  const before = JSON.stringify(claimsOf(b)), c = claimsOf(b); edit(c); const after = JSON.stringify(c);
+const claimsText = (b) => unb64(b.claims).toString("utf8");
+// Every trick must really change what it says it changes; one that changed nothing would pass for the wrong reason.
+const withClaimsText = (b, edit) => {
+  const before = claimsText(b), after = edit(before);
   if (after === before) throw new Error("drill bug: the trick changed nothing");
   return { ...b, claims: b64u(Buffer.from(after, "utf8")) };
 };
-// The operator label of an issuer name (did:ainra:<registrar>:<operator>:<lineage>), rewritten by `f`.
-const editOperator = (c, f) => { const p = c.iss.split(":"); p[3] = f(p[3]); c.iss = p.join(":"); };
-// Cyrillic letters that look exactly like Latin ones, and an invisible character, written as code points.
+const withClaims = (b, edit) => withClaimsText(b, (t) => { const c = JSON.parse(t); edit(c); return JSON.stringify(c); });
+// The operator label, rewritten in every name that carries it (iss and sub), so only the name rule can refuse it.
+const editOperator = (c, f) => {
+  const op = c.iss.split(":")[3], to = f(op);
+  c.iss = c.iss.split(":").map((p, i) => (i === 3 ? to : p)).join(":");
+  c.sub = c.sub.split(":").map((p, i) => (i === 2 ? to : p)).join(":");
+};
 const LOOK = { a: 0x430, o: 0x43e, e: 0x435, c: 0x441, p: 0x440 }, ZWSP = String.fromCodePoint(0x200b);
-const setBit = (list64, idx, on) => {   // rewrite one bit of a status list (gzip/zlib inside is the registrar's business:
-  const u = unb64(list64);              // the signature covers the list as published, so any rewrite must fail)
-  const v = Buffer.from(u); const i = Math.min(v.length - 1, idx >> 3); v[i] = on ? v[i] | (1 << (idx & 7)) : v[i] & ~(1 << (idx & 7));
-  if (Buffer.compare(v, u) === 0) v[v.length - 1] ^= 1;   // make sure the bytes really changed
-  return b64u(v);
+// Clear one passport's bit inside the compressed status list (LSB-first), then compress again: the list now says the
+// passport is not revoked, and only the registrar's signature over the list can tell.
+const clearBit = (list64, idx) => {
+  const bits = Buffer.from(inflateSync(unb64(list64))), byte = idx >> 3, mask = 1 << (idx & 7);
+  if (!(bits[byte] & mask)) throw new Error(`drill bug: bit ${idx} is not set in the published list`);
+  bits[byte] &= ~mask;
+  return b64u(deflateSync(bits));
 };
 
-// The pinned roots are the "official contract address". A directory signed by any other root is refused.
-const verifier = WITNESS ? { verify: () => ({ verdict: "valid" }) } : Verifier.fromDirectoryB64(directory, roots.root_ed25519, roots.root_slh, "F3");
-if (!verifier) { console.error("✗ the published directory does not verify under the published roots"); process.exit(1); }
-const NOW = registry.generated_window.verified_at;
-
-let failed = 0, passed = 0;
-const say = (ok, line) => { ok ? passed++ : failed++; if (!ok || process.env.VERBOSE) console.log(`  ${ok ? "ok  " : "FAIL"} ${line}`); };
-const refused = (name, v, allowed) => {
-  const ok = v.verdict !== "valid" && (!allowed || allowed.includes(v.reason));
-  say(ok, `${name} → ${v.verdict}${v.reason ? ` (${v.reason})` : ""}${ok ? "" : allowed ? `, wanted one of ${allowed.join("/")}` : ""}`);
+// The verifiers the drill runs against: the shipped one, and (for --witness) two that are broken on purpose.
+const MODES = {
+  shipped: { fromDirectory: (d, ed, slh) => Verifier.fromDirectoryB64(d, ed, slh, "F3"), wrap: (v) => v },
+  "accepts everything": { fromDirectory: () => ({ verify: () => ({ verdict: "valid" }) }), wrap: (v) => v },
+  "wrong reasons": {
+    fromDirectory: (d, ed, slh) => Verifier.fromDirectoryB64(d, ed, slh, "F3"),
+    wrap: (v) => v && { verify: (b, t) => { const r = v.verify(b, t); return r.verdict === "valid" ? r : { ...r, reason: r.reason === "expired" ? "revoked" : "expired" }; } },
+  },
 };
-const run = (b, at = NOW) => { try { return verifier.verify(b, at); } catch (e) { return { verdict: "invalid", reason: `threw: ${e.message}` }; } };
 
-console.log(`AINRA counterfeit drill · ${NET} · ${WITNESS ? "WITNESS RUN (a verifier that accepts everything)" : "the shipped verifier"}\n`);
+function drill(modeName) {
+  const mode = MODES[modeName], quiet = modeName !== "shipped";
+  const out = { genuineOk: 0, genuineFail: 0, tricks: 0, tricksRefused: 0, rootTricks: 0, valid: 0, revoked: 0, lines: [] };
+  const log = (ok, line) => { if (!ok || process.env.VERBOSE) out.lines.push(`  ${ok ? "ok  " : "FAIL"} ${line}`); };
+  const verifier = mode.wrap(mode.fromDirectory(directory, roots.root_ed25519, roots.root_slh));
+  if (!verifier) { out.lines.push("  FAIL the published directory does not verify under the published roots"); out.genuineFail++; return out; }
+  const run = (b, at = NOW) => { try { return verifier.verify(b, at); } catch (e) { return { verdict: "invalid", reason: `threw: ${e.message}` }; } };
+  const trick = (name, f, want) => {
+    out.tricks++;
+    let v; try { v = f(); } catch (e) { log(false, `${name}: ${e.message}`); return; }
+    const ok = v.verdict !== "valid" && v.reason === want;
+    if (ok) out.tricksRefused++;
+    log(ok, `${name} → ${v.verdict}${v.reason ? ` (${v.reason})` : ""}${ok ? "" : `, wanted ${want}`}`);
+  };
+  const rootTrick = (name, ed, slh, dir = directory) => {
+    out.tricks++; out.rootTricks++;
+    const ok = mode.fromDirectory(dir, ed, slh) === null;
+    if (ok) out.tricksRefused++;
+    log(ok, `${name} → ${ok ? "refused" : "ACCEPTED"}`);
+  };
 
-// 1 · The pinned root is the contract address: anything signed under another root, or a tampered directory, is refused.
-if (!WITNESS) {
-  const fakeRoot = Verifier.fromDirectoryB64(directory, b64u(randomBytes(unb64(roots.root_ed25519).length)), roots.root_slh, "F3");
-  say(fakeRoot === null, `the real directory checked against an attacker's root → ${fakeRoot === null ? "refused" : "ACCEPTED"}`);
-  const tampered = structuredClone(directory); const s = JSON.stringify(tampered).replace(/"registrar-07"/, '"registrar-7a"');
-  const t2 = Verifier.fromDirectoryB64(JSON.parse(s), roots.root_ed25519, roots.root_slh, "F3");
-  say(t2 === null, `a directory with one registrar renamed → ${t2 === null ? "refused" : "ACCEPTED"}`);
-}
+  // A counterfeit root: the directory checked against another root, half by half, or edited.
+  rootTrick("the directory checked against another root's Ed25519 half", forge(roots.root_ed25519), roots.root_slh);
+  rootTrick("the directory checked against another root's SLH-DSA half", roots.root_ed25519, forge(roots.root_slh));
+  rootTrick("the directory checked against another root (both halves)", forge(roots.root_ed25519), forge(roots.root_slh));
+  rootTrick("a directory with one registrar renamed", roots.root_ed25519, roots.root_slh,
+    JSON.parse(JSON.stringify(directory).replace(/"registrar-07"/, '"registrar-7a"')));
 
-let genuine = 0, published = { valid: 0, revoked: 0 };
-for (const reg of registry.registrars) {
-  for (const { record: rec, verdict: pub } of reg.records) {
-    const b = bundle(rec, reg.status_list), name = rec.sub.replace(/^ainra:/, "");
-    // The control: the genuine passport gives exactly its published verdict.
-    if (!WITNESS) {
-      const v = run(b);
-      const ok = v.verdict === pub.verdict && (pub.verdict === "valid" || v.reason === pub.reason);
-      say(ok, `genuine ${name} → ${v.verdict}${v.reason ? ` (${v.reason})` : ""} (published: ${pub.verdict}${pub.reason ? ` ${pub.reason}` : ""})`);
-      genuine++; pub.verdict === "valid" ? published.valid++ : published.revoked++;
+  for (const reg of registry.registrars) {
+    for (const { record: rec, verdict: pub } of reg.records) {
+      const b = bundle(rec, reg.status_list), name = rec.sub.replace(/^ainra:/, "");
+      const g = run(b);   // the control: the genuine passport gives exactly its published verdict
+      const gok = g.verdict === pub.verdict && (pub.verdict === "valid" || g.reason === pub.reason);
+      gok ? out.genuineOk++ : out.genuineFail++;
+      log(gok, `genuine ${name} → ${g.verdict}${g.reason ? ` (${g.reason})` : ""} (published: ${pub.verdict}${pub.reason ? ` ${pub.reason}` : ""})`);
+      pub.verdict === "valid" ? out.valid++ : out.revoked++;
+
+      if (pub.verdict !== "valid") {
+        trick(`${name}: revoked, its bit cleared inside the status list`, () => run({ ...b, status_list: clearBit(b.status_list, rec.status_idx) }), "stale_status");
+        trick(`${name}: revoked, the presenter adds "revoked": false and "verdict": "valid"`, () => run({ ...b, revoked: false, verdict: "valid" }), "revoked");
+        continue;
+      }
+      // The real name from another issuer.
+      trick(`${name}: signed by another key (both halves)`, () => run({ ...b, issuer_sig: { ed25519: forge(b.issuer_sig.ed25519), mldsa65: forge(b.issuer_sig.mldsa65) } }), "sig_invalid");
+      trick(`${name}: the Ed25519 half kept, the ML-DSA half forged`, () => run({ ...b, issuer_sig: { ...b.issuer_sig, mldsa65: forge(b.issuer_sig.mldsa65) } }), "sig_invalid");
+      trick(`${name}: the ML-DSA half kept, the Ed25519 half forged`, () => run({ ...b, issuer_sig: { ...b.issuer_sig, ed25519: forge(b.issuer_sig.ed25519) } }), "sig_invalid");
+      trick(`${name}: the post-quantum half dropped`, () => run({ ...b, issuer_sig: { ed25519: b.issuer_sig.ed25519 } }), "schema_violation");
+      // The whole passport rewritten to a registrar the directory does not name, every mention of it.
+      trick(`${name}: issued in the name of a registrar nobody accredited`, () => {
+        const r = JSON.parse(claimsText(b)).iss.split(":")[2];
+        return run(withClaimsText(b, (t) => t.split(r).join("registrar-99")));
+      }, "unknown_registrar");
+      // Lookalike names, in iss and sub alike, so only the name rule can refuse them.
+      for (const [why, f] of [["one Latin letter swapped for its Cyrillic twin", (o) => o.replace(/[aoecp]/, (x) => String.fromCodePoint(LOOK[x]))],
+                              ["capital letters", (o) => o.toUpperCase()],
+                              ["a zero-width space inside", (o) => o.slice(0, 1) + ZWSP + o.slice(1)],
+                              ["a trailing hyphen", (o) => o + "-"]]) {
+        trick(`${name}: lookalike operator name (${why})`, () => run(withClaims(b, (c) => editOperator(c, f))), "name_malformed");
+      }
+      // A verdict the presenter writes itself.
+      trick(`${name}: "verified": true written into the claims`, () => run(withClaims(b, (c) => { c.verified = true; })), "schema_violation");
+      trick(`${name}: a wider capability written into the claims`, () => run(withClaims(b, (c) => { c.capabilities = [...(c.capabilities || []), "pay:any"]; })), "sig_invalid");
+      // Not (yet) in the log.
+      trick(`${name}: no inclusion proof`, () => run({ ...b, inclusion_proof: [] }), "not_logged");
+      trick(`${name}: a leaf past the signed checkpoint (still pending)`, () => run({ ...b, leaf_index: b.checkpoint.size + 5 }), "not_logged");
+      trick(`${name}: a checkpoint root the registrar never signed`, () => run({ ...b, checkpoint: { ...b.checkpoint, root: forge(b.checkpoint.root) } }), "checkpoint_invalid");
+      // Outside its time.
+      const c0 = JSON.parse(claimsText(b));
+      trick(`${name}: shown one second after it expired`, () => run(b, c0.exp + 1), "expired");
+      trick(`${name}: shown one second before it was valid`, () => run(b, c0.nbf - 1), "not_yet_valid");
+      trick(`${name}: its status list replayed a day and a second later (F3)`, () => run(b, b.status_issued_at + 86400 + 1), "stale_status");
+      trick(`${name}: its status list re-dated to look fresh`, () => run({ ...b, status_issued_at: NOW }), "stale_status");
     }
-    if (pub.verdict !== "valid") {
-      // A revoked passport made to look clear: its bit unset in the list, the list's signature now false.
-      const st = reg.status_list;
-      refused(`${name}: revoked, its status bit cleared by hand`, run({ ...b, status_list: setBit(st.status_list_b64, rec.status_idx, false) }), ["sig_invalid", "stale_status"]);
-      refused(`${name}: revoked, the presenter adds "revoked": false and "verdict": "valid"`, run({ ...b, revoked: false, verdict: "valid" }), ["revoked", "schema_violation"]);
-      continue;
-    }
-    // 2 · The same name, minted by someone else.
-    refused(`${name}: signed by another key (both halves)`, run({ ...b, issuer_sig: { ed25519: forge(b.issuer_sig.ed25519), mldsa65: forge(b.issuer_sig.mldsa65) } }), ["sig_invalid"]);
-    refused(`${name}: the classical half kept, the post-quantum half forged`, run({ ...b, issuer_sig: { ...b.issuer_sig, mldsa65: forge(b.issuer_sig.mldsa65) } }), ["sig_invalid", "alg_downgrade"]);
-    refused(`${name}: the post-quantum half dropped`, run({ ...b, issuer_sig: { ed25519: b.issuer_sig.ed25519 } }), ["alg_downgrade", "schema_violation", "sig_invalid"]);
-    // The whole passport rewritten, consistently, to a registrar the directory does not name (every field that
-    // carries the registrar: iss, sub, the log checkpoint, the status URI), as a counterfeit issuer would.
-    const ghost = (b2) => withClaims(b2, (c) => {
-      const r = c.iss.split(":")[2], to = (s) => s.split(r).join("registrar-99");
-      c.iss = to(c.iss); c.sub = to(c.sub);
-      if (c.log?.checkpoint) c.log.checkpoint = to(c.log.checkpoint);
-      if (c.status?.status_list?.uri) c.status.status_list.uri = to(c.status.status_list.uri);
-    });
-    // A delegated passport's chain still names the real registrar's passports, so the rewrite is malformed before
-    // the registrar is even looked up: refused either way.
-    refused(`${name}: claimed by a registrar the directory does not name`, run(ghost(b)), rec.hops?.length ? ["unknown_registrar", "schema_violation"] : ["unknown_registrar"]);
-    // 3 · Lookalike names, in the operator's own label: a letter from another alphabet, capitals, an invisible
-    //     character, a stray hyphen.
-    for (const [why, f] of [["one Latin letter swapped for its Cyrillic twin", (o) => o.replace(/[aoecp]/, (x) => String.fromCodePoint(LOOK[x]))],
-                            ["capital letters", (o) => o.toUpperCase()],
-                            ["a zero-width space inside", (o) => o.slice(0, 1) + ZWSP + o.slice(1)],
-                            ["a trailing hyphen", (o) => o + "-"]]) {
-      let t; try { t = run(withClaims(b, (c) => editOperator(c, f))); } catch (e) { say(false, `${name}: lookalike name (${why}): ${e.message}`); continue; }
-      refused(`${name}: lookalike operator name (${why})`, t, ["name_malformed", "schema_violation", "sig_invalid"]);
-    }
-    // 4 · The display that lies: the presenter writes its own verdict or status into the passport.
-    refused(`${name}: "verified": true written into the signed claims`, run(withClaims(b, (c) => { c.verified = true; })), ["schema_violation", "sig_invalid"]);
-    refused(`${name}: a wider capability written into the claims`, run(withClaims(b, (c) => { c.capabilities = [...(c.capabilities || []), "pay:any"]; })), ["sig_invalid", "ceiling_exceeded", "schema_violation"]);
-    // 5 · The transfer that never confirms: not in the log, or "in" a log the registrar never signed.
-    refused(`${name}: no inclusion proof (never logged)`, run({ ...b, inclusion_proof: [] }), ["not_logged", "checkpoint_invalid"]);
-    refused(`${name}: a leaf past the signed checkpoint (still pending)`, run({ ...b, leaf_index: b.checkpoint.size + 5 }), ["not_logged", "checkpoint_invalid", "schema_violation"]);
-    refused(`${name}: a checkpoint root the registrar never signed`, run({ ...b, checkpoint: { ...b.checkpoint, root: forge(b.checkpoint.root) } }), ["checkpoint_invalid", "not_logged"]);
-    // 6 · Money that vanishes: out of its window, or kept alive by an old status list.
-    const exp = claimsOf(b).exp, nbf = claimsOf(b).nbf;
-    refused(`${name}: shown one second after it expired`, run(b, exp + 1), ["expired", "stale_status"]);
-    refused(`${name}: shown one second before it was valid`, run(b, nbf - 1), ["not_yet_valid", "stale_status"]);
-    refused(`${name}: its status list replayed a day and a second later (F3)`, run(b, b.status_issued_at + 86400 + 1), ["stale_status"]);
-    refused(`${name}: its status list re-dated to look fresh`, run({ ...b, status_issued_at: NOW }), ["sig_invalid", "stale_status"]);
   }
+  return out;
 }
 
-console.log(`\n  ${passed} ok · ${failed} failed`);
-if (WITNESS) {
-  // The witness run passes only if the drill caught the accept-everything verifier on every trick.
-  if (failed > 0 && passed === 0) { console.log(`WITNESS OK: a verifier that accepts everything let all ${failed} tricks through, and the drill said so`); process.exit(0); }
-  console.log("WITNESS FAILED: the drill did not catch a verifier that accepts everything"); process.exit(1);
+const report = (o) => { for (const l of o.lines) console.log(l); console.log(`\n  ${o.genuineOk} genuine passports as published (${o.valid} valid, ${o.revoked} revoked) · ${o.tricksRefused} of ${o.tricks} tricks refused with their own reason`); };
+
+if (process.argv.includes("--witness")) {
+  // Each broken verifier must be caught on every trick it can affect: the one that accepts everything on all of them
+  // (root checks included); the one that gives wrong reasons on every trick that ends in a reason (a refused root
+  // gives no reason, so those are the first broken verifier's to catch).
+  let bad = 0;
+  for (const m of ["accepts everything", "wrong reasons"]) {
+    const o = drill(m), caught = o.tricks - o.tricksRefused, owed = m === "wrong reasons" ? o.tricks - o.rootTricks : o.tricks;
+    const ok = owed > 0 && caught === owed;
+    console.log(`  ${ok ? "ok  " : "FAIL"} a verifier that ${m === "accepts everything" ? "accepts everything" : "refuses with the wrong reason"}: caught on ${caught} of ${owed} tricks`);
+    if (!ok) bad++;
+  }
+  if (bad) { console.log("WITNESS FAILED: the drill missed a broken verifier"); process.exit(1); }
+  console.log("WITNESS OK: both broken verifiers were caught on every trick they could affect");
+  process.exit(0);
 }
-if (!published.valid || !published.revoked) { console.log(`✗ the record must hold a valid and a revoked passport to test both; found ${published.valid} valid, ${published.revoked} revoked`); process.exit(1); }
-console.log(`  ${genuine} published passports: ${published.valid} valid, ${published.revoked} revoked`);
-if (failed) { console.log("COUNTERFEIT-DRILL FAILED: a trick got through, or a genuine passport lost its verdict"); process.exit(1); }
-console.log("COUNTERFEIT-DRILL OK — every genuine passport gave its published verdict; every counterfeit, lookalike, self-written verdict, unlogged passport and stale or replayed record was refused");
+
+console.log(`AINRA counterfeit drill · ${NET} · the shipped verifier\n`);
+const o = drill("shipped");
+report(o);
+if (!o.valid || !o.revoked) { console.log("✗ the record must hold a valid and a revoked passport to test both"); process.exit(1); }
+if (o.genuineFail || o.tricksRefused !== o.tricks) { console.log("COUNTERFEIT-DRILL FAILED: a trick got through or was refused for another reason, or a genuine passport lost its verdict"); process.exit(1); }
+console.log("COUNTERFEIT-DRILL OK — every genuine passport gave its published verdict, and every trick was refused with the reason its own defence gives");
