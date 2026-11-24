@@ -29,21 +29,30 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
   - **a verdict the presenter writes itself:** `"verified": true` or a wider capability in the claims, `"verdict":
     "valid"` beside a revoked passport;
   - **not in the log:** no inclusion proof, a leaf past the signed checkpoint, a checkpoint the registrar never
-    signed;
+    signed, another passport's genuine log entry presented as its own;
   - **outside its time:** after expiry, before validity, a status list replayed past its window, an old list
-    re-dated to look fresh, either half of a status list's signature forged, a revoked passport's bit cleared inside
-    the list;
+    re-dated to look fresh, either half of a status list's signature forged, another registrar's genuine status list
+    presented as its own, a revoked passport's bit cleared inside the list;
   - **a counterfeit root:** the directory checked against another root (either half, or both), or with a registrar
     renamed in an order the directory accepts.
 - Each trick that ends in a reason is pinned to the one reason its own defence gives, and each root trick must be
-  refused by the root's signature alone. A removed check therefore cannot hide behind another one.
-- **Measured on 24 Nov:** all 15 published passports gave their published verdicts (9 valid, 6 revoked), and 196 of
-  196 tricks were refused with their own reason.
-- **Its witness:** a verifier that accepts everything is caught on all 196 tricks, and one that refuses with the
-  wrong reason on all 192 that end in a reason.
+  refused by the root's signature alone. Where a trick meets one defence, a removed check cannot hide behind
+  another.
+- **Measured on 24 Nov:** all 15 published passports gave their published verdicts (9 valid, 6 revoked), and 214 of
+  214 tricks were refused with their own reason.
+- **Its witness:** a verifier that accepts everything is caught on all 214 tricks, and one that refuses with the
+  wrong reason on all 210 that end in a reason.
 - **Mutants caught:** copies of the SDK with one defence removed each fail the drill. These cover the status-list
-  signature (and each half), the name rule, the checkpoint signature, the expiry and not-before checks, and the root
-  signature (and each half).
+  signature (and each half), the name rule, the checkpoint signature, the expiry and not-before checks, the root
+  signature (and each half), and an inclusion check that skips the root comparison.
+- **Some tricks meet two checks, each on its own.** Examples are a key forged in both halves, or another registrar's
+  genuine status list, which is refused by the list's signature and by the check that a status list sits under this
+  registrar's own status URI. For these two, each check is also met alone: the signature halves by the one-half
+  tricks, the status-URI check by the conformance vector `l18`.
+- **Another passport's genuine log entry** is refused by the inclusion proof, because the passport's own claims still
+  name its own entry. Testing the separate check that a logged entry is this passport's own needs a passport whose
+  signed claims name another entry in the log, and no published passport has one. The 24 `not-logged-binding`
+  conformance vectors, built with test keys, test it.
 - It runs in `make preflight` and in CI.
 - **What it cannot test:** a verifier given the wrong root by whoever runs it.
   - Today `ainra ctl status` prints the root's fingerprint, the control room computes it from the roots it reads,

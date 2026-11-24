@@ -6,11 +6,16 @@
 //   · the real name from another issuer: forged signatures, a dropped post-quantum half, a registrar nobody accredited;
 //   · lookalike names: a letter from another alphabet, capitals, an invisible character, a stray hyphen;
 //   · a verdict the presenter writes itself: "verified", a wider capability, "valid" beside a revoked passport;
-//   · a passport not (yet) in the log: no inclusion proof, a leaf past the signed checkpoint, an unsigned checkpoint;
-//   · outside its time: after expiry, before validity, kept alive by an old, re-dated or edited status list;
+//   · a passport not (yet) in the log: no inclusion proof, a leaf past the signed checkpoint, an unsigned checkpoint,
+//     another passport's genuine log entry;
+//   · outside its time: after expiry, before validity, kept alive by an old, re-dated or edited status list, or by
+//     another registrar's genuine list;
 //   · a counterfeit root: the directory checked against another root's halves, or with a registrar renamed.
 // Each trick that ends in a reason is pinned to the ONE reason its own defence gives, and each root trick keeps every
-// other rule satisfied so only the root's signature can refuse it: a removed check cannot hide behind another one.
+// other rule satisfied so only the root's signature can refuse it. Where a trick meets one defence, a removed check
+// cannot hide behind another. Some tricks meet two checks, each on its own. For two of them (a key forged in both
+// halves, another registrar's status list) each check is also met alone, by a one-half trick or by a conformance
+// vector.
 // It runs offline and changes nothing.
 //
 // WITNESS (the negative control): every genuine passport must first give its published verdict, so a verifier that
@@ -52,7 +57,8 @@ const withClaimsText = (b, edit) => {
   return { ...b, claims: b64u(Buffer.from(after, "utf8")) };
 };
 const withClaims = (b, edit) => withClaimsText(b, (t) => { const c = JSON.parse(t); edit(c); return JSON.stringify(c); });
-// The operator label, rewritten in every name that carries it (iss and sub), so only the name rule can refuse it.
+// The operator label, rewritten in iss and sub (a delegated passport's chain still names it), so the name rule is
+// the first to refuse it.
 const editOperator = (c, f) => {
   const op = c.iss.split(":")[3], to = f(op);
   c.iss = c.iss.split(":").map((p, i) => (i === 3 ? to : p)).join(":");
@@ -131,7 +137,9 @@ function drill(modeName) {
         const r = JSON.parse(claimsText(b)).iss.split(":")[2];
         return run(withClaimsText(b, (t) => t.split(r).join("registrar-99")));
       }, "unknown_registrar");
-      // Lookalike names, in iss and sub alike, so only the name rule can refuse them.
+      // Lookalike names, in iss and sub alike, so the name rule is the first to refuse them. Without it the issuer's
+      // signature would refuse them for every passport (and the chain first, for a delegated one); the drill pins the
+      // name rule.
       for (const [why, f] of [["one Latin letter swapped for its Cyrillic twin", (o) => o.replace(/[aoecp]/, (x) => String.fromCodePoint(LOOK[x]))],
                               ["capital letters", (o) => o.toUpperCase()],
                               ["a zero-width space inside", (o) => o.slice(0, 1) + ZWSP + o.slice(1)],
@@ -145,6 +153,12 @@ function drill(modeName) {
       trick(`${name}: no inclusion proof`, () => run({ ...b, inclusion_proof: [] }), "not_logged");
       trick(`${name}: a leaf past the signed checkpoint (still pending)`, () => run({ ...b, leaf_index: b.checkpoint.size + 5 }), "not_logged");
       trick(`${name}: a checkpoint root the registrar never signed`, () => run({ ...b, checkpoint: { ...b.checkpoint, root: forge(b.checkpoint.root) } }), "checkpoint_invalid");
+      // Someone else's genuine proof: another passport's real leaf index and inclusion proof in the same signed log.
+      // The passport's own claims still name its own log entry, so the inclusion proof is what refuses it: the proof
+      // does not lead from this passport's entry to the signed checkpoint.
+      const sibling = reg.records.map((x) => x.record).find((r) => r.leaf_index !== rec.leaf_index && r.checkpoint_size === rec.checkpoint_size);
+      if (sibling) trick(`${name}: another passport's genuine log entry presented as its own`, () => run({ ...b, leaf_index: sibling.leaf_index, inclusion_proof: sibling.inclusion_proof }), "not_logged");
+      else out.lines.push(`  NOTE ${name}: no other passport in the same checkpoint to borrow a log entry from`);
       // Outside its time.
       const c0 = JSON.parse(claimsText(b));
       trick(`${name}: shown one second after it expired`, () => run(b, c0.exp + 1), "expired");
@@ -153,6 +167,12 @@ function drill(modeName) {
       trick(`${name}: a status list past its window re-dated to look fresh`, () => { const late = b.status_issued_at + 86400 + 1; return run({ ...b, status_issued_at: late }, late); }, "stale_status");
       trick(`${name}: its status list's Ed25519 signature forged (the ML-DSA half kept)`, () => run({ ...b, status_sig_ed25519: forge(b.status_sig_ed25519) }), "stale_status");
       trick(`${name}: its status list's ML-DSA signature forged (the Ed25519 half kept)`, () => run({ ...b, status_sig_mldsa65: forge(b.status_sig_mldsa65) }), "stale_status");
+      // Someone else's genuine status list: another registrar's real, signed list, presented as this passport's. Two
+      // checks refuse it, each alone: the list's signature (made with the other registrar's key) and the check that a
+      // list sits under this registrar's own status URI. The URI check alone is tested by conformance vector l18.
+      const other = registry.registrars.find((r) => r !== reg)?.status_list;
+      if (!other) out.lines.push(`  NOTE ${name}: only one registrar in the record, so no other status list to borrow`);
+      else trick(`${name}: another registrar's genuine status list presented as its own`, () => run({ ...b, status_uri: other.uri, status_list: other.status_list_b64, status_len: other.bit_len, status_issued_at: other.issued_at, status_sig_ed25519: other.sig_ed25519, status_sig_mldsa65: other.sig_mldsa65 }), "stale_status");
     }
   }
   return out;
