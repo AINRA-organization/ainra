@@ -10,6 +10,30 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — the counterfeit drill: the tricks of a fake payment, tried on real passports
+
+- `make counterfeit-drill` takes every passport in the published record and the verifier that ships, and tries on each
+  valid one the tricks used to pass off a fake payment as real:
+  - **the same name from another issuer:** a forged signature, a forged post-quantum half, a dropped half, the whole
+    passport rewritten to a registrar the directory does not name;
+  - **lookalike names:** a Cyrillic letter, capitals, a zero-width space, a stray hyphen in the operator's name;
+  - **a self-written verdict:** `"verified": true` or a wider capability written into the claims, or `"verdict":
+    "valid"` added beside a revoked passport;
+  - **a transfer that never confirms:** no inclusion proof, a leaf past the signed checkpoint, a checkpoint the
+    registrar never signed;
+  - **money that vanishes:** shown after expiry or before validity, a status list replayed past its window or
+    re-dated, a revoked passport's bit cleared by hand;
+  - **a counterfeit root:** the directory checked against another root, or with one registrar renamed.
+- **Measured on 24 Nov:** 182 checks. All 15 published passports gave their published verdicts (9 valid, 6 revoked),
+  and every trick was refused, each for its own reason.
+- **Its witness:** a verifier that accepts everything lets all 165 tricks through, and the drill says so.
+- It runs in `make preflight` and in CI.
+- **What it cannot test:** a verifier given the wrong root by whoever runs it, the twin of trusting a fake token's
+  contract address.
+  - Today the root's fingerprint is printed by `ainra ctl status` and published on the site and in the repository,
+    to be compared out of band.
+  - After the root ceremony, the SDK carries the production root itself (ADR-012).
+
 ### Changed — the published test network keeps real time (D-125)
 
 - Moved on 23 November 2026. The directory was signed again as epoch 3, dated that day. The root, the registrars'

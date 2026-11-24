@@ -134,6 +134,7 @@ run "epoch log"          "witness refuses a split view"    make -s epoch-log-dri
 run "steward's desk"     "drafts the stop, holds no key"   make -s desk-drill
 run "remote ceremony"    "offline custodians, frames only" make -s remote-ceremony-drill
 run "outage drill"       "registrar dark, held to F1/F2/F3" make -s outage-drill
+run "counterfeit drill"  "lookalike, forged, unlogged: refused" make -s counterfeit-drill
 run "doc freeze"         "normative docs unchanged"     make check-freeze
 run "MCP fidelity"       "ainra_verify ≡ SDK on vectors" make mcp-test
 run "presentation shape" "CLI≡middleware≡MCP event"     make presentation-diff
