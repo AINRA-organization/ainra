@@ -139,6 +139,30 @@ credential proves, to everyone outside them, which agent that process is a copy 
 
 ---
 
+## What a revocation does to work already under way
+
+A verifier checks a passport each time it is shown, so each answer is about one request. A revocation reaches the
+verifier through the registrar's signed status list. Each verifier chooses a freshness class, the most a status list
+may age before that verifier stops trusting it: F1 30 seconds, F2 five minutes, F3 one day. Once the registrar
+publishes the revocation, every verifier refuses that passport within its own class. A verifier that cannot get
+status that fresh refuses the passport as well.
+
+Nothing reaches back. A request a verifier accepted before the revocation stays accepted: a payment already
+authorised or a booking already made is for the business that accepted it to unwind, under its own terms. What AINRA
+adds is evidence of when. The status list carries one bit per passport, and the first signed list that sets a
+passport's bit is dated. For a key linked to a passport and reported stolen, `suspect_since` ([LINKS.md](LINKS.md))
+marks the moment from which its actions stopped being the operator's.
+
+So for work that runs over time, check the passport at every step that matters: each request, each payment, each
+hand-over.
+
+```sh
+make outage-drill
+# a registrar goes dark: passports verify until each class's window ends, then stale_status; a revoked one never passes
+```
+
+---
+
 ## What this is not
 
 - **Not a guardrail.** It never judges what an agent says or does. What an agent is permitted to attempt is the

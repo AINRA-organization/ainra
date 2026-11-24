@@ -10,6 +10,14 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — what a revocation does to work already under way (docs)
+
+- A new section of `docs/IDENTITY.md` explains it. A verifier's answer is about one request, and a revocation reaches
+  every verifier within the freshness class that verifier chose. Nothing reaches back into work already accepted:
+  that is for the business that accepted it to unwind. The signed, dated status list and `suspect_since` say from
+  when. The section advises a check at every step that matters, and ends with `make outage-drill`, which shows each
+  class's window and that a revoked passport never passes.
+
 ### Added — the counterfeit drill: the tricks of a fake payment, tried on real passports
 
 - `make counterfeit-drill` takes every passport in the published record and the verifier that ships, and tries on each
