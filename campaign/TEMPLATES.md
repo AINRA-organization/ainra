@@ -32,7 +32,7 @@ message carries no attachment and asks only a question; the material travels onl
 >
 > I've built AINRA — an identity layer for AI agents: passports an agent can prove, revocation that fails
 > closed, all verifiable offline with no call home, on a neutral, non-profit root. The code and the whole record are public:
-> https://github.com/JacobJandon/ainra
+> https://github.com/AINRA-organization/ainra
 >
 > What it cannot give itself is independent verification. Would you be willing to run the verifier kit and tell me
 > what you find? It is roughly an afternoon. If you say yes I'll send the material; if it fails, I want that public

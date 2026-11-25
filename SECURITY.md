@@ -42,7 +42,7 @@ a fixed release. Every release, and how a change becomes one, is described in
 address on either side, which matches our no-PII stance (D-036: the root collects no personal data, and that
 includes yours):
 
-> **[Report a vulnerability privately](https://github.com/JacobJandon/ainra/security/advisories/new)**
+> **[Report a vulnerability privately](https://github.com/AINRA-organization/ainra/security/advisories/new)**
 > (repository → Security → Advisories → *Report a vulnerability*)
 
 If you cannot use GitHub, write to **info@ainra.org** with "security" in the subject and nothing sensitive in the
@@ -117,8 +117,8 @@ verdicts. Three new vectors (`duplicate-key-0000` to `-0002`) pin the rule in ev
 removed, they verify again. Decision: [D-118](docs/DECISIONS.md).
 
 **What you should do.** Upgrade every AINRA package to **0.10.1**, or **0.9.1** if you stay on the 0.9 line
-(advisory [GHSA-mjqm-fr4p-r3cr](https://github.com/JacobJandon/ainra/security/advisories/GHSA-mjqm-fr4p-r3cr)). If you
-verify with your own code, require the signed claim bytes to be canonical before you read a field.
+(advisory [GHSA-mjqm-fr4p-r3cr](https://github.com/AINRA-organization/ainra/security/advisories/GHSA-mjqm-fr4p-r3cr)).
+If you verify with your own code, require the signed claim bytes to be canonical before you read a field.
 
 **The order we did it in, and what we would do again.** The fix went to main a few hours before the packages: for
 those hours the public source described a fault the published packages still had. D-106's post-mortem said a fix and
@@ -287,8 +287,8 @@ emitter. Both header writes use it, and so does `examples/gate-http-service.mjs`
 `http.ServerResponse`; it fails 2 of 3 on the previous code. Decision: [D-106](docs/DECISIONS.md).
 
 **What you should do.** Upgrade to `@ainra/middleware` 0.8.1 (advisory
-[GHSA-mqg2-c2cv-g8fx](https://github.com/JacobJandon/ainra/security/advisories/GHSA-mqg2-c2cv-g8fx)). If you write `serializeVerdictEvent` into a header
-yourself, use `verdictHeaderValue` instead.
+[GHSA-mqg2-c2cv-g8fx](https://github.com/AINRA-organization/ainra/security/advisories/GHSA-mqg2-c2cv-g8fx)).
+If you write `serializeVerdictEvent` into a header yourself, use `verdictHeaderValue` instead.
 
 **The order we did it in, and what we would do again.** The fix was on main on 12 November and the patched package
 on 13 November: for a day the public source described a fault the published package still had. A fix and its

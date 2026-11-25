@@ -12,7 +12,7 @@ npm audit signatures        # optional: verify where it was built before you tru
 
 From this repository the sample files are in `kits/verifier/sample-artifacts/`. From an empty folder, fetch them
 first: `for f in roots.json directory.json bundle-valid.json bundle-revoked.json meta.json; do curl -sLO
-https://github.com/JacobJandon/ainra/raw/main/kits/verifier/sample-artifacts/$f; done`, and read them from `./`.
+https://github.com/AINRA-organization/ainra/raw/main/kits/verifier/sample-artifacts/$f; done`, and read them from `./`.
 
 ```js
 // verify.mjs — run with: node verify.mjs

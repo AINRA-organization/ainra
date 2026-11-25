@@ -1,6 +1,6 @@
 [Unit]
 Description=Probe the AINRA staging contract every minute
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/systemd/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/systemd/README.md
 
 [Timer]
 # One minute after boot, then every minute. A wedged door should not outlive a coffee break.

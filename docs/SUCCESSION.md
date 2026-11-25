@@ -15,9 +15,9 @@ intended audience, and nothing here assumes you ever spoke to them.
 
 | | What it is | Where it is | Form |
 |---|---|---|---|
-| **The repository** | everything — code, corpus, docs, gates, this file | `github.com/JacobJandon/ainra` | public git |
+| **The repository** | everything — code, corpus, docs, gates, this file | `github.com/AINRA-organization/ainra` | public git |
 | **The published record** | the site and the agent-readable surface | `ainra.org` | static, rebuilt from the repo |
-| **The site deploy path** | a *second* repo the host watches | `github.com/JacobJandon/ainra-website` | push-to-deploy |
+| **The site deploy path** | a *second* repo the host watches | `github.com/AINRA-organization/ainra-website` | push-to-deploy |
 | **The release path** | signed tags + release artifacts | `make release` → `scripts/release.sh` | git tags, GitHub releases |
 | **The reproducibility proof** | every published artifact, hashed | `MANIFEST.sha256` | in-repo, `make repro` regenerates |
 | **The network** | a local, self-contained instance | `make genesis-local` | ephemeral, no external state |

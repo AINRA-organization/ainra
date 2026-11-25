@@ -6,7 +6,7 @@ real verifier, the public record, and — only if you point it at a registrar yo
 renew, and revoke.
 
 > **On npm as `@ainra/mcp`**, published from signed tags with provenance; the source is `packages/mcp/` in
-> [github.com/JacobJandon/ainra](https://github.com/JacobJandon/ainra).
+> [github.com/AINRA-organization/ainra](https://github.com/AINRA-organization/ainra).
 
 ## Configure
 

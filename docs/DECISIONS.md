@@ -4278,3 +4278,41 @@ until both registrars answer. The second attempt is the one recorded above.
 *Not changed:* the root, the registrars' keys, any crate, verdict, vector or wire format.
 
 *Status:* ACCEPTED 2026-11-23, on the operator's word of that day to do the move; the move run by the operator.
+
+## D-126 — The repository's home moves to an organisation
+
+*Problem:* the repositories lived under the maintainer's personal GitHub account. A standard meant to have one neutral
+root should not have its source, issue tracker and private advisory form at one person's address, and every link that
+names a person has to change again the day the project's home changes.
+
+*Decision (operations; no wire format, directory field, verifier rule, verdict or vector changes):*
+
+- **The home is the `AINRA-organization` organisation,** created on 25 November 2026 on GitHub's free plan; the name
+  is the maintainer's choice (`docs/ORG-MOVE.md`, "The name"). The maintainer transfers `ainra` and `ainra-website`;
+  GitHub redirects the old URLs, git and web, for as long as no new repository takes an old name.
+- **Every current reference points there in one change,** pushed after the transfer: the site's pages, the deploy
+  units, the package manifests (at the next release), `SECURITY.md`, `security.txt`, the issue templates, the docs and
+  the tools that name the repository.
+- **What keeps the old owner, each for a stated reason** (`docs/ORG-MOVE.md`): the historical records, the transfer
+  source in the click-path, the trusted-publisher settings until the maintainer re-points them, the MCP registry name
+  until the next release, and the maintainer's own handle.
+- **Any later move uses `tools/org-rename.sh`.** It reads the current owner from the CI badge in `README.md`, rewrites
+  every current repository link and leaves the records alone; the organisation's name in `MAINTAINERS.md` is edited
+  by hand. The link check accepts every owner the repository has had, because the records keep their links.
+
+*Held to:* replayed on the commit before this change, the tool reproduces every link rewrite in it; run again on the
+change itself toward a made-up owner, it rewrites the same files, and `make site-check` and the operator report's
+check still pass; `git grep` finds the old owner only in the stated exceptions.
+
+*Limits, stated plainly:*
+- **The redirects are GitHub's.** If a new repository ever takes an old name under the old owner, those old links
+  break; the records would then need a note, not a rewrite.
+- **Publishing breaks until the maintainer acts:** npm and PyPI trust a workflow by its owner, so the next release
+  fails to publish until both trusted publishers name the organisation.
+- **One person still owns the organisation** (`MAINTAINERS.md`). This moves the address, not the control; more
+  owners come with the founding entity.
+
+*Not changed:* the root, any key, crate, verdict, vector or wire format.
+
+*Status:* ACCEPTED 2026-11-25, on the maintainer's request of that day and the maintainer's choice of name. The
+maintainer transferred the repositories on 25 November 2026; this change is pushed after that.

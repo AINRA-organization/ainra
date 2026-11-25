@@ -1,6 +1,6 @@
 [Unit]
 Description=AINRA witness round, every hour (it submits only a grown log, or once a day)
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/home-node/README.md
 
 [Timer]
 OnBootSec=10min

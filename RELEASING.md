@@ -179,7 +179,7 @@ ssh-keygen -Y verify -f allowed_signers -I release@ainra.org -n file -s SHA256SU
 sha256sum --check SHA256SUMS
 
 # 3. the conformance corpus rebuilds byte-for-byte from the tagged source (the strong check)
-git clone --branch v0.2.0 https://github.com/JacobJandon/ainra && cd ainra
+git clone --branch v0.2.0 https://github.com/AINRA-organization/ainra && cd ainra
 make repro                                   # regenerates MANIFEST.sha256 from source
 tar -xzf /path/to/ainra-vectors-v0.2.0.tar.gz  # the released corpus
 diff <(sort MANIFEST.sha256) <(sort ./MANIFEST.sha256)   # released manifest == rebuilt-from-source manifest

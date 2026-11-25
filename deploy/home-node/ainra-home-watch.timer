@@ -1,6 +1,6 @@
 [Unit]
 Description=AINRA home watch, every five minutes
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/home-node/README.md
 
 [Timer]
 OnBootSec=3min

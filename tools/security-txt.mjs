@@ -31,7 +31,7 @@ export function problems(text, now = Date.now()) {
   }
   const contacts = fields.contact ?? [];
   if (!contacts.length) out.push("no Contact");
-  if (!contacts.some((c) => c.startsWith("https://github.com/JacobJandon/ainra/security/advisories"))) out.push("no Contact for the private advisory form");
+  if (!contacts.some((c) => c.startsWith("https://github.com/AINRA-organization/ainra/security/advisories"))) out.push("no Contact for the private advisory form");
   if (!contacts.some((c) => c === "mailto:info@ainra.org")) out.push("no Contact for the public mailbox");
   if (contacts.some((c) => !/^(https:\/\/|mailto:)/.test(c))) out.push("a Contact that is neither https nor mailto");
   const exp = fields.expires ?? [];
@@ -45,7 +45,7 @@ export function problems(text, now = Date.now()) {
   }
   if ((fields.canonical ?? []).join() !== CANONICAL) out.push(`Canonical must be ${CANONICAL}`);
   const policy = (fields.policy ?? [])[0] ?? "";
-  if (policy !== "https://github.com/JacobJandon/ainra/blob/main/SECURITY.md" || !existsSync(ROOT + "SECURITY.md")) out.push("Policy must point at this repository's SECURITY.md");
+  if (policy !== "https://github.com/AINRA-organization/ainra/blob/main/SECURITY.md" || !existsSync(ROOT + "SECURITY.md")) out.push("Policy must point at this repository's SECURITY.md");
   return out;
 }
 

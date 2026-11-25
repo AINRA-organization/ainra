@@ -12,7 +12,8 @@ body:
         act on, and both end as a permanent vector in the CC0 corpus.
 
         **If the divergence lets something invalid verify as VALID, stop** — that is a security finding. Report it
-        privately: [Security → Report a vulnerability](https://github.com/JacobJandon/ainra/security/advisories/new).
+        privately:
+        [Security → Report a vulnerability](https://github.com/AINRA-organization/ainra/security/advisories/new).
         A divergence in the *reason string*, or one that fails closed on both sides, belongs here in the open.
   - type: input
     id: implementations

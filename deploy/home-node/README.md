@@ -38,7 +38,7 @@ a wired network, and a 64-bit Debian-based system with systemd. On it, once:
 
 ```sh
 sudo apt install -y git curl rsync nodejs        # no compiler: the programs are built on the operator's machine
-git clone https://github.com/JacobJandon/ainra.git && cd ainra
+git clone https://github.com/AINRA-organization/ainra.git && cd ainra
 git checkout <the same commit as the operator's machine>
 ```
 

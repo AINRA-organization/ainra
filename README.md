@@ -1,11 +1,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
 # AINRA — the identity layer of the internet for AI agents
 
-<!-- The org name appears ONLY here (both spots on the next line); `tools/org-rename.sh` moves it everywhere else.
+<!-- The repository's owner appears in many links; `tools/org-rename.sh <new-owner>` moves every current repository
+     link and leaves the records alone (docs/ORG-MOVE.md).
      The repository is public and the badge resolves; the historical pre-publication audit is docs/_archive/PUBLISH-AUDIT.md. -->
-[![CI](https://github.com/JacobJandon/ainra/actions/workflows/ci.yml/badge.svg)](https://github.com/JacobJandon/ainra/actions/workflows/ci.yml)
+[![CI](https://github.com/AINRA-organization/ainra/actions/workflows/ci.yml/badge.svg)](https://github.com/AINRA-organization/ainra/actions/workflows/ci.yml)
 
-**Live site:** https://ainra.org/ · **Source & releases:** https://github.com/JacobJandon/ainra · **[Roadmap](ROADMAP.md)** · **[Governance](GOVERNANCE.md)**
+**Live site:** https://ainra.org/ · **Source & releases:** https://github.com/AINRA-organization/ainra · **[Roadmap](ROADMAP.md)** · **[Governance](GOVERNANCE.md)**
 
 AINRA is a global network for **Web4**, the web in which software acts on people's behalf: one shared root, many
 registrars that issue, anyone who checks. No token, no coin. [What we mean by Web4, and where the word stops](docs/WEB4.md).

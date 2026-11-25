@@ -21,7 +21,7 @@ directory and root keys they verify against):
 ```sh
 npm i @ainra/sdk
 for f in roots.json directory.json bundle-valid.json bundle-revoked.json meta.json; do
-  curl -sLO https://github.com/JacobJandon/ainra/raw/main/kits/verifier/sample-artifacts/$f
+  curl -sLO https://github.com/AINRA-organization/ainra/raw/main/kits/verifier/sample-artifacts/$f
 done
 ```
 
@@ -44,7 +44,7 @@ console.log(verifier.verify(j("bundle-revoked.json"), now));  // { verdict: 'inv
 ```
 
 `reason` is one of the frozen strings in the `Reason` type this package exports. The same list, with a plain-words
-gloss for each, is [`docs/reasons.json`](https://github.com/JacobJandon/ainra/blob/main/docs/reasons.json) in the
+gloss for each, is [`docs/reasons.json`](https://github.com/AINRA-organization/ainra/blob/main/docs/reasons.json) in the
 repository, and `make reasons-check` fails the build if that file and this type ever differ. A closed set, so you can
 branch on it. So far every new reason has arrived in a minor release, never in a patch.
 
@@ -106,7 +106,7 @@ verdict *and* reason (`make diff`); the CLI is held to them on canonical encodin
 is language-agnostic, so you can build a fifth and check us:
 
 ```sh
-git clone https://github.com/JacobJandon/ainra && cd ainra && make conformance
+git clone https://github.com/AINRA-organization/ainra && cd ainra && make conformance
 ```
 
 The root's honest status — including what has **not** happened yet — is at

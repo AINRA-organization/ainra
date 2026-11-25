@@ -2,7 +2,7 @@
 # D-117. Installed on the OPERATOR's machine by move-to-node.sh, which writes the node in place of @NODE@. The network
 # runs on the node; this keeps it at its usual loopback ports here, so every local tool and drill works unchanged.
 Description=AINRA test network on the home node, reachable here on its usual ports (ssh tunnel to @NODE@)
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/home-node/README.md
 After=network-online.target
 StartLimitIntervalSec=0
 

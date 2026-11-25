@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Rebuild the site and push it to the dedicated static website repo (JacobJandon/ainra-website), which Vercel
+# Rebuild the site and push it to the dedicated static website repo (AINRA-organization/ainra-website), which Vercel
 # auto-deploys. Source of truth stays THIS monorepo; the website repo is a generated static export.
 #   bash tools/export-site.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-REPO_URL="https://github.com/JacobJandon/ainra-website.git"
+REPO_URL="https://github.com/AINRA-organization/ainra-website.git"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 echo "== rebuild site =="

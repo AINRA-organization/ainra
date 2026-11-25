@@ -9,39 +9,27 @@ nothing silently breaks afterwards.
 Two reasons, one of them structural:
 
 1. **A neutral root under a personal account undercuts its own claim.** The first thing a sceptical reader checks is
-   whether the thing calling itself neutral is one person's project. Today the URL answers *yes* before they read a
-   line of code. Moving costs nothing and removes the cheapest objection anyone can make.
+   whether the thing calling itself neutral is one person's project. Under a personal account the URL answered *yes*
+   before they read a line of code. Moving cost nothing and removed the cheapest objection anyone could make.
 2. **Fiscal hosting requires it.** Open Source Collective's acceptance criteria state the project must be *"hosted
    under an organizational repository, not a personal account"* — so the money path is gated on this, not on
    incorporating (see [`campaign/FREE-INFRASTRUCTURE.md`](../campaign/FREE-INFRASTRUCTURE.md)).
 
-## The name — recommendation: **`ainra-root`**
+## The name — **`AINRA-organization`** (the maintainer's choice, 25 Nov 2026)
 
-Checked live, 2026-08-05:
-
-| Candidate | State |
-|---|---|
-| `ainra` | **taken** — a dormant *user* account created 2015, 0 public repos, unrelated bio |
-| `ainra-org` | **taken** — an empty *organization* named "AINRA", created 2017, 0 repos, not ours |
-| `agent-identity` | **taken** — empty organization, created 2026 |
-| **`ainra-root`** | **available** ✓ |
-| `ainra-project` · `ainra-standard` · `theainra` | available |
-
-**Take `ainra-root`.** It is short, it is not a personal handle, and it says exactly what the organization *is* —
-the root — which is the project's entire identity. `github.com/ainra-root/ainra` reads as an institution rather than
-a person's side project, which is the whole point of the move.
-
-The bare `ainra` name is a dormant account; there is a name-release process for inactive accounts and squatted
-organization names, but it is slow, discretionary, and not worth blocking on. Revisit it only if a trademark exists.
+The August recommendation was `ainra-root`. On 25 Nov 2026 the maintainer created and chose `AINRA-organization`.
+The bare `ainra` and `ainra-org` are taken (a dormant user account since 2015, an empty organization since 2017),
+and so is `ainrahq` (2021). None of them is ours.
 
 ## The click-path
 
-1. **Create the organization** — github.com → your avatar → *Your organizations* → **New organization** → the
-   **Free** plan → name `ainra-root` → contact email → skip the invite step.
-2. **Transfer the repository** — `github.com/JacobJandon/ainra` → **Settings** → scroll to *Danger Zone* →
-   **Transfer ownership** → new owner `ainra-root` → type `ainra` to confirm.
-3. **Immediately re-check the settings that do NOT survive a transfer** (see below).
-4. **Run the propagation command** (below), review the diff, commit, push.
+1. **Create the organization.** Done 25 Nov 2026: `AINRA-organization`, Free plan.
+2. **Transfer each repository.** Done 25 Nov 2026, by the maintainer. The path: `github.com/JacobJandon/ainra` (and
+   `ainra-website`) → **Settings** → *Danger Zone* → **Transfer ownership** → new owner `AINRA-organization` → type
+   `JacobJandon/ainra` (or `JacobJandon/ainra-website`) to confirm.
+3. **Immediately re-check the settings that do NOT survive a transfer** (see below), and reconnect the website's
+   host to the new owner.
+4. **Push the propagation** (below), prepared before the move so the references change the moment it is done.
 
 ### What the platform carries over, and what it does not
 
@@ -61,40 +49,40 @@ with the repository, so published artifacts and their signatures are unaffected.
   fails — see the propagation command.
 - **Codeowners, environments, rulesets**, and any org-level required workflows.
 
-## Post-move propagation — one command
+## Post-move propagation
 
-```sh
-bash tools/org-rename.sh ainra-root      # dry run: prints every change it would make
-bash tools/org-rename.sh ainra-root --apply
-```
+Prepared before the move as one change: every **current** reference to the old owner in a tracked file is pointed at
+`AINRA-organization`. That covers the site's pages and includes, the deploy units' `Documentation=` lines, the package
+manifests, `SECURITY.md`, `security.txt` and its generator, the issue templates, the docs, and the tools that name the
+repository.
 
-It rewrites the owner in **tracked, hand-authored** files only, then regenerates everything derived and re-runs the
-gates. What it deliberately does *not* touch: `_archive/plans/PLAN-L1.md`, `_archive/plans/PLAN-L2.md`, `CHANGELOG.md`, and
-`docs/releases/*` — those are **historical records**, and a record that silently rewrites itself is not a record.
-Their old URLs still resolve through the redirect.
+`bash tools/org-rename.sh <new-owner>` moves the repository links for any later move: a dry run lists every file it
+would change, then `--apply` writes them, adds the new owner to the link check (every earlier owner stays accepted,
+because the records below still link to them), regenerates the site and the month's operator report (which carries
+a digest of a package manifest), and runs the checks of both. It leaves alone everything in the list below. It
+reads the current owner from the CI badge in `README.md`; `AINRA_OLD_OWNER` names another. One line is edited by
+hand after it: `MAINTAINERS.md` names the organisation's account, a link with no repository in it, which the tool
+does not touch.
 
-### The inventory it works from
+### What keeps the old owner, and why
 
-**Hand-authored — rewritten by the command:**
-
-`README.md` · `ROADMAP.md` · `SECURITY.md` · `RELEASING.md` · `RELEASE-VERIFY.md` · `MAINTAINERS.md` ·
-`skills.md` · `site/llms.txt` · `evidence/README.md` · `campaign/TEMPLATES.md` · `_archive/PUBLISH-AUDIT.md` ·
-`.github/ISSUE_TEMPLATE/config.yml` · `.github/ISSUE_TEMPLATE/verifier_divergence.yml` ·
-`packages/{sdk-ts,middleware,mcp}/package.json` · `packages/sdk-py/pyproject.toml` ·
-`packages/{sdk-ts,mcp}/README.md` · `site/_includes/{header,footer}.html` · `tools/export-site.sh` ·
-`tools/link-check.mjs`
-
-**Generated — never hand-edited, regenerated by `make site`:**
-
-`site/*.html` (from `site/_includes/`) · `site/skills.md` · `site/standard.md` · `site/verify.md` ·
-`site/foundations.md` · `site/status.md` · `site/openapi/*`
-
-**Historical — deliberately left alone:** `CHANGELOG.md` · `docs/PLAN-L*.md` · `docs/releases/*`
+- **Historical records:** the entries of `CHANGELOG.md` before this move and the compare links of released versions
+  (its `[Unreleased]` link moves), `docs/releases/*`, `docs/_archive/*`, and the published news entries (in
+  `site/news.json`, `news.xml`, and inside the news block of `news.html`). A record that silently rewrites itself is
+  not a record, and their old URLs still resolve through the redirect.
+- **The maintainer's own handle** in `MAINTAINERS.md`: a person, not the repository's home.
+- **The transfer source,** in the click-path above.
+- **The trusted-publisher settings** described in `.github/workflows/publish.yml` and `docs/PUBLISHING.md`. They
+  describe what npm and PyPI hold today; they change when the maintainer re-points them there.
+- **The MCP registry name** `io.github.JacobJandon/ainra` (`packages/mcp/package.json`, `server.json`). It must match
+  the namespace the publisher is authorised for, and it moves at the next release.
+- **The link check** accepts every owner the repository has had, while their URLs redirect.
 
 ## After the move — the checklist
 
 - [ ] `git remote -v` still resolves; `git ls-remote origin main` succeeds
-- [ ] `bash tools/org-rename.sh ainra-root --apply` run, diff reviewed, committed
+- [ ] the prepared propagation pushed (after the transfer), CI green
+- [ ] the website's host reconnected to `AINRA-organization`; a deploy goes through
 - [ ] `make preflight` ALL GREEN from a **clean clone of the new URL** (not the old checkout)
 - [ ] `make site && make site-check` green; the CI badge in `README.md` resolves
 - [ ] branch protection on `main` restored

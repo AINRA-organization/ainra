@@ -1,7 +1,7 @@
 [Unit]
 # D-117. Installed by deploy/home-node/install.sh, which writes the checkout's path in place of @REPO@.
 Description=AINRA home watch: the published record and every registrar's log, checked (reads only)
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/home-node/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/home-node/README.md
 After=network-online.target ainra-stage.target
 
 [Service]

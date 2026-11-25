@@ -25,7 +25,7 @@ only signature-checked evidence. A green CI comment means "well-formed", never "
 answers you cannot precompute — verify it with the published tooling, and send back the signed result.
 
 ```sh
-git clone https://github.com/JacobJandon/ainra && cd ainra
+git clone https://github.com/AINRA-organization/ainra && cd ainra
 make verify-as-external CHALLENGE=/path/to/your/challenge   # writes verifier-attestation.json
 node tools/intake-check.mjs verifier-attestation.json       # the same checks CI will run
 ```

@@ -8,7 +8,7 @@ StartLimitIntervalSec=0
 #   systemctl --user start ainra-registrar@registrar-07
 # The address per instance comes from deploy/systemd/env/<id>.env, written by tools/stage-install.sh.
 Description=AINRA staging registrar door (%i)
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/systemd/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/systemd/README.md
 PartOf=ainra-stage.target
 After=network-online.target
 

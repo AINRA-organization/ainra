@@ -164,7 +164,7 @@ async function j5() {
   else {
     // Against the real published tags, not against our own repo state: this runs where a stranger stands.
     try {
-      const rel = await get("https://api.github.com/repos/JacobJandon/ainra/releases", { json: true });
+      const rel = await get("https://api.github.com/repos/AINRA-organization/ainra/releases", { json: true });
       const newest = rel.filter((r) => !r.draft).map((r) => r.tag_name)[0];
       if (newest && newest !== cur[1]) siteFail("agent-arrival", `llms.txt says current: ${cur[1]}, newest public release is ${newest}`);
       else if (newest) notes.push(`llms.txt names the newest public release — ${newest}`);

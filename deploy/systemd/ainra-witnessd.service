@@ -2,7 +2,7 @@
 # systemd parses StartLimitIntervalSec in [Unit], not [Service]; it was ignored on every start since M27.
 StartLimitIntervalSec=0
 Description=AINRA staging witness (cosigns log checkpoints)
-Documentation=https://github.com/JacobJandon/ainra/blob/main/deploy/systemd/README.md
+Documentation=https://github.com/AINRA-organization/ainra/blob/main/deploy/systemd/README.md
 PartOf=ainra-stage.target
 After=network-online.target
 

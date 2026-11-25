@@ -10,6 +10,19 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Changed — the repository's home is the AINRA-organization GitHub organisation (D-126)
+
+- The repositories move from a personal account to the `AINRA-organization` organisation. The old URLs redirect.
+- Every current link points there: the site, `security.txt`, `SECURITY.md` (including the private advisory form),
+  the issue templates, the deploy units, the docs, and the `repository` field of every package (at the next release).
+- **Unchanged until the next release:** the MCP registry name `io.github.JacobJandon/ainra`. The trusted-publisher
+  settings at npm and PyPI change when the maintainer re-points them, before the next release.
+- `tools/org-rename.sh` moves the repository links for any later move and regenerates the site and the month's
+  operator report; the link check keeps accepting every earlier owner. The organisation named in `MAINTAINERS.md`
+  is edited by hand.
+- Historical records keep the links they were written with.
+- `MAINTAINERS.md` names the maintainer and the organisation the maintainer owns.
+
 ### Added — what a revocation does to work already under way (docs)
 
 - A new section of `docs/IDENTITY.md` explains it. A verifier's answer is about one request, and a revocation reaches
@@ -1619,7 +1632,7 @@ A recorded 5-of-9 ceremony · ≥3 independent external verifiers · a 14-day/3-
 witnesses on separate infra. The machinery for all four is built and smoke-proven; `make genesis-status` shows the
 honest count (**7/11** today). See `GENESIS-CHECKLIST.md` and `outreach/`.
 
-[Unreleased]: https://github.com/JacobJandon/ainra/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/AINRA-organization/ainra/compare/v0.10.1...HEAD
 [0.10.1]: https://github.com/JacobJandon/ainra/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/JacobJandon/ainra/compare/v0.9.0...v0.10.0
 [0.9.1]: https://github.com/JacobJandon/ainra/compare/v0.9.0...v0.9.1

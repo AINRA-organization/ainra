@@ -27,7 +27,7 @@ for (const p of pages) {
   //         (href="https://www.youtube.com" exactly) — a deeper link to the video host still fails the gate. Any other external URL, including any other
   //         video, still fails this gate.
   for (const m of s.matchAll(/(?:src|href)="(https?:)?\/\/[^"]+"/g))
-    if (!/(localhost|127\.|ainra\.org|ainra\.vercel\.app|schema\.org|github\.com\/JacobJandon\/ainra|youtube(?:-nocookie)?\.com\/embed\/ZlHlpMpu8ug|href="https:\/\/(www\.youtube|i\.ytimg)\.com")/.test(m[0])) bad(`${p}: external request ${m[0].slice(0, 80)}`);
+    if (!/(localhost|127\.|ainra\.org|ainra\.vercel\.app|schema\.org|github\.com\/(?:AINRA-organization|JacobJandon)\/ainra|youtube(?:-nocookie)?\.com\/embed\/ZlHlpMpu8ug|href="https:\/\/(www\.youtube|i\.ytimg)\.com")/.test(m[0])) bad(`${p}: external request ${m[0].slice(0, 80)}`);
   // 2. internal links resolve; anchors exist in the target file
   for (const m of s.matchAll(/href="([^"#][^"]*?)(?:#([^"]+))?"/g)) {
     const [, file, anchor] = m;

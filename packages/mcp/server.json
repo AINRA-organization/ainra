@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.JacobJandon/ainra",
   "description": "Verify an AI agent's identity offline: run the real AINRA verifier over a presentation bundle and get a verdict plus a named reason. Read-only tools need no credentials; write tools require explicit confirmation and a registrar you control.",
-  "repository": { "url": "https://github.com/JacobJandon/ainra", "source": "github" },
+  "repository": { "url": "https://github.com/AINRA-organization/ainra", "source": "github" },
   "version": "0.3.0",
   "packages": [
     {

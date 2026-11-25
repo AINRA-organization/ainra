@@ -5,7 +5,7 @@
 
 | Role | Handle | Scope |
 |---|---|---|
-| Maintainer | [@JacobJandon](https://github.com/JacobJandon) | everything: merges, releases, the offline signing key, the roadmap |
+| Maintainer | [@JacobJandon](https://github.com/JacobJandon), owner of the [AINRA-organization](https://github.com/AINRA-organization) account | everything: merges, releases, the offline signing key, the roadmap |
 
 That is the honest list: **one maintainer**, pre-institution. See [GOVERNANCE.md](GOVERNANCE.md) for what that means
 and how it changes at the genesis ceremony (custodians) and after it (member constituencies).
