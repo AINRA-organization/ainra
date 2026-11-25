@@ -47,7 +47,7 @@ p256 = { version = "0.14", default-features = false, features = ["ecdsa", "sha25
 # already in the tree through k256 and p256 above.
 rsa = { version = "0.10", default-features = false, features = ["pkcs1v15"] }
 signature = { version = "2", default-features = false }
-rand_core = { version = "0.6", default-features = false }
+rand_core = { version = "0.10", default-features = false }
 # Encoding
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
