@@ -30,7 +30,7 @@ ed25519-dalek = { version = "2", default-features = false, features = ["alloc", 
 # used either. DECISIONS D-006. FIPS 204 / FIPS 205 (RustCrypto).
 ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"] }
 slh-dsa = { version = "0.0.3" }
-sha2 = { version = "0.10", default-features = false }
+sha2 = { version = "0.11", default-features = false }
 # secp256k1 for ES256K link keys (D-082): RustCrypto k256. NCC Group reviewed its 0.13 line in 2023 (two high findings,
 # fixed before release). We use 0.14, that line's successor from the same maintainers, because 0.13 depends on
 # crypto-bigint 0.5, which carries RUSTSEC-2026-0387 (timing variability) with a fix only in crypto-bigint >= 0.7.6.
