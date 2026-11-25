@@ -113,7 +113,7 @@ jobs:
       # built HERE, from the tagged source, with the same pinned toolchain and wasm-bindgen as CI, and the package's
       # own tests run against that exact build before it is published. A tarball without the engine cannot be
       # published: the pack check below refuses it.
-      - uses: dtolnay/rust-toolchain@1.96.1
+      - uses: dtolnay/rust-toolchain@1.120.0
         if: inputs.target == 'npm-edge'
         with:
           targets: wasm32-unknown-unknown
