@@ -20,7 +20,7 @@ out float vA; out float vShape; out float vTone; out float vPx;
 void main(){
   vec3 pos = aPos; float shown = 1.0;
   if (uGlobe.w > 0.0) {                                     // a globe turns about its own axis, and its points are written in from the first
-    vec3 r = aPos - uGlobe.xyz; float c = cos(uSpin), q = sin(uSpin); pos = uGlobe.xyz + vec3(c * r.x + q * r.z, r.y, -q * r.x + c * r.z);
+    float c = cos(uSpin), q = sin(uSpin); pos = uGlobe.xyz + vec3(c * aPos.x + q * aPos.z, aPos.y, -q * aPos.x + c * aPos.z);   // its points are measured from its centre
     shown = clamp((uReveal - float(gl_VertexID) / uCount) * 9.0, 0.0, 1.0);
   }
   vec4 p = uVP * vec4(pos, 1.0); gl_Position = p; float w = max(p.w, 1.0);

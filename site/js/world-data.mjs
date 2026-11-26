@@ -86,7 +86,7 @@ const TAU = Math.PI * 2, GOLD = 2.399963229728653;
 const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
 
 // Layout, in world units, y up. The root is the centre, like a sun. The current directory epoch is the orbit the
-// registrars stand on. Each registrar is a globe: its status list, one dot per bit, wound from the top (bit 0) to
+// registrars move along. Each registrar is a globe: its status list, one dot per bit, wound from the top (bit 0) to
 // the bottom. Around the globe runs its log as a ring of entries in log order, like moons on one orbit; the signed
 // head closes the ring.
 export function buildWorld(R) {
@@ -108,23 +108,24 @@ export function buildWorld(R) {
   const nReg = registry.registrars.length;
   registry.registrars.forEach((G, ri) => {
     const id = G.registrar, recs = G.records.map((x) => x.record), Li = lists[id];
-    const ang = (ri / nReg) * TAU + (nReg === 2 ? 0 : -Math.PI / 2), out = [Math.cos(ang), 0, Math.sin(ang)], side = [-out[2], 0, out[0]];
-    const pos = [out[0] * RING, 0, out[2] * RING];
+    // A registrar moves along the orbit, slowly; `ang` is where it stands now, and place() puts it and all it carries there.
+    const ang = (ri / nReg) * TAU + (nReg === 2 ? 0 : -Math.PI / 2);
+    const pos = [Math.cos(ang) * RING, 0, Math.sin(ang) * RING];
     const size = Math.max(...recs.map((r) => r.checkpoint_size || 0)), n = Li.list.bit_len;
     const globeR = 84 + Math.sqrt(recs.length) * 15, centre = pos;
     // the status list: bit i always sits at the same place on the globe, winding down from the top
     const bitPos = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { const y = 1 - ((i + 0.5) / n) * 2, rr = Math.sqrt(1 - y * y), th = i * GOLD; bitPos[i * 3] = centre[0] + Math.cos(th) * rr * globeR; bitPos[i * 3 + 1] = centre[1] + y * globeR; bitPos[i * 3 + 2] = centre[2] + Math.sin(th) * rr * globeR; }
+    for (let i = 0; i < n; i++) { const y = 1 - ((i + 0.5) / n) * 2, rr = Math.sqrt(1 - y * y), th = i * GOLD; bitPos[i * 3] = Math.cos(th) * rr * globeR; bitPos[i * 3 + 1] = y * globeR; bitPos[i * 3 + 2] = Math.sin(th) * rr * globeR; }   // measured from the globe's centre
     // the log: a ring around the globe, tilted like a moon's orbit. Entry k of `size` always sits at the same place,
     // in log order; a passport is the moon at its own entry.
     // Every ring leans the same way (its near side lower), so from the front each one opens toward the reader.
-    const ringR = globeR + 62, tilt = 0.6, e1 = out, e2 = [0, -Math.sin(tilt), Math.cos(tilt)];
+    const ringR = globeR + 62, tilt = 0.6, e1 = [1, 0, 0], e2 = [0, -Math.sin(tilt), Math.cos(tilt)];
     // entries run clockwise from the top, like a clock face
-    const ringAt = (k) => { const a = -Math.PI / 2 + ((k + 0.5) / (size + 1)) * TAU; return [centre[0] + ringR * (Math.cos(a) * e1[0] + Math.sin(a) * e2[0]), centre[1] + ringR * (Math.cos(a) * e1[1] + Math.sin(a) * e2[1]), centre[2] + ringR * (Math.cos(a) * e1[2] + Math.sin(a) * e2[2])]; };
+    const ringAt = (k, into) => { const a = -Math.PI / 2 + ((k + 0.5) / (size + 1)) * TAU + reg.phase, o = into || [0, 0, 0]; for (let d = 0; d < 3; d++) o[d] = centre[d] + ringR * (Math.cos(a) * e1[d] + Math.sin(a) * e2[d]); return o; };
     const reg = P(id, "registrar", pos, 11, id, { k: "REGISTRAR · ACCREDITED IN THE DIRECTORY", t: id, rows: [
       ["Issuer key", `Ed25519 ${cut(G.accreditation.issuer_key.ed25519, 20)} + ML-DSA-65`], ["Log", `${G.accreditation.log_origin}, ${size} entries`],
       ["Status list", `${n.toLocaleString("en")} bits, change ${G.status_seq}`], ["Passports", `${recs.length} issued, ${recs.filter((r) => Li.bits[r.status_idx]).length} switched off`]] },
-      { out, side, centre, globeR, ringR, ringAt, size, recs, bitPos, labelAt: [centre[0], centre[1] - globeR - 22, centre[2] + ringR * 0.8], labelCentre: true,
+      { ang, phase: 0, centre, globeR, ringR, ringAt, size, recs, bitPos, labelAt: [centre[0], centre[1] - globeR - 22, centre[2] + ringR * 0.8], labelCentre: true,
         list: Li.list, deltas: Li.deltas, bitsFinal: Li.bits, bits: new Uint8Array(Li.bits), used: new Map(recs.map((r) => [r.status_idx, r])), dim: false });
     regs.push(reg);
     P(`list:${id}`, "list", centre, 7, "", { k: "STATUS LIST · SIGNED BY THE REGISTRAR", t: `${id}'s status list`, rows: [["Bits", n.toLocaleString("en")], ["Set now", `${Li.bits.reduce((a, b) => a + b, 0)} (each is a passport switched off)`], ["Issued", day(Li.list.issued_at)], ["Signed", "Ed25519 + ML-DSA-65"], ["Reads as", "bit 0 at the top, later bits winding down"]] }, { reg: id });
@@ -135,13 +136,20 @@ export function buildWorld(R) {
           ["Name", rec.sub], ["Registrar", id], ["Operator", rec.operator], ["Class", `${rec.auth_class}, tier ${rec.tier ?? "–"}`], ["May", (rec.capabilities || []).join(", ")],
           ["Issued", day(rec.issued_at)], ["Log entry", `${rec.leaf_index} of ${rec.checkpoint_size}`], ["Status bit", String(rec.status_idx)],
           ...((rec.chain_keys || []).length ? [["Acts through", `a chain of ${rec.chain_keys.length} earlier keys`]] : [])] },
-          { rec, reg: id, leaf: k, verdict: null, off: false, bit: [bitPos[rec.status_idx * 3], bitPos[rec.status_idx * 3 + 1], bitPos[rec.status_idx * 3 + 2]] });
+          { rec, reg: id, leaf: k, verdict: null, off: false, });
         byId[nid] = byId[`pp:${rec.sub}`];
       } else P(nid, "leaf", ringAt(k), 2.2, "", { k: `LOG ENTRY ${k}`, t: `Entry ${k}`, rows: [["Log", G.accreditation.log_origin], ["Holds", "another entry, not a passport in this record"]] }, { reg: id, leaf: k });
     }
     // the signed head closes the ring, where the next entry will go
     P(`head:${id}`, "head", ringAt(size), 3.6, "log head", { k: "LOG HEAD · SIGNED CHECKPOINT", t: `${id}'s log, ${size} entries`, rows: [["Log", G.accreditation.log_origin], ["Size", `${size} entries`], ["Signed by", "the registrar's delegate, cosigned by the witness"], ["Means", "one hash stands for every entry on the ring; nothing can be changed or removed unseen"]] }, { reg: id, leaf: size });
     reg.headId = `head:${id}`;
+    // Everything a registrar carries follows it: its entries on the ring, its name, its globe.
+    reg.place = () => {
+      centre[0] = Math.cos(reg.ang) * RING; centre[2] = Math.sin(reg.ang) * RING;
+      reg.labelAt[0] = centre[0]; reg.labelAt[1] = centre[1] - globeR - 22; reg.labelAt[2] = centre[2] + ringR * 0.8;
+      for (const n of reg.carried) ringAt(n.leaf, n.pos);
+    };
+    reg.carried = parts.filter((n) => n.reg === id && (n.kind === "passport" || n.kind === "leaf" || n.kind === "head"));
   });
 
   const w = registry.witnesses[0];
@@ -167,7 +175,7 @@ export function buildWorld(R) {
   const pathOf = (p) => {
     const r = byId[p.reg], n = p.rec.checkpoint_size, m = p.rec.leaf_index, sib = auditPath(m, n);
     const ok = sib.length === p.rec.inclusion_proof.length && n === r.size;
-    return { sib: ok ? sib.map(([lo, hi], i) => ({ lo, hi, hash: p.rec.inclusion_proof[i] })) : [], bit: p.bit, reg: r.pos, root: byId.root.pos, head: byId[r.headId].pos };
+    return { sib: ok ? sib.map(([lo, hi], i) => ({ lo, hi, hash: p.rec.inclusion_proof[i] })) : [], reg: r.pos, root: byId.root.pos, head: byId[r.headId].pos };
   };
   return { parts, byId, links, regs, events, CUR, pathOf, RING, INNER };
 }

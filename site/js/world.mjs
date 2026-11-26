@@ -161,7 +161,7 @@ function fillBits(r) {
   }
 }
 // Where bit i of a registrar's list is now: its fixed place on the globe, turned by the globe's slow spin.
-function bitAt(r, i) { const o = i * 3, x = r.bitPos[o] - r.centre[0], z = r.bitPos[o + 2] - r.centre[2], c = Math.cos(r.spin), q = Math.sin(r.spin); return [r.centre[0] + c * x + q * z, r.bitPos[o + 1], r.centre[2] - q * x + c * z]; }
+function bitAt(r, i) { const o = i * 3, x = r.bitPos[o], z = r.bitPos[o + 2], c = Math.cos(r.spin), q = Math.sin(r.spin); return [r.centre[0] + c * x + q * z, r.centre[1] + r.bitPos[o + 1], r.centre[2] - q * x + c * z]; }
 function sayNow() {
   const el = $("#now");
   if (live()) { el.innerHTML = `<b>The record as it stands.</b> Copy taken ${dayText(R.published.published_at)}.`; return; }
@@ -210,7 +210,7 @@ const along = (th, f) => { let d = f * th.total; for (let i = 0; i < th.lens.len
 // while it is pointed at, and, for a passport, how far it has turned from in service to switched off. A globe's dots
 // are written in from the top, the way its list is counted, and the globe turns slowly. Under reduced motion each of
 // these jumps to its end and nothing turns.
-let clock = 0;
+let clock = 0, motion = 0;
 const ease = (x, to, rate, dt) => (RM.matches ? to : x + (to - x) * (1 - Math.exp(-rate * dt)));
 const outBack = (t) => { const u = t - 1; return 1 + 2.70158 * u * u * u + 1.70158 * u * u; };          // arrives a little past, then settles
 const bitOf = (p) => bitAt(W.byId[p.reg], p.rec.status_idx);
@@ -224,7 +224,12 @@ function scene(dt) {
   // a run of entries on a registrar's ring, drawn heavier: one hash of a proof stands for all of them
   const run = (r, lo, hi, alpha, tone, grow = 1) => { const a0 = lo - 0.32, a1 = a0 + (hi - 1 + 0.32 - a0) * grow; arc(r.ringAt, a0, a1, alpha, 3.2, tone, Math.max(2, Math.ceil((a1 - a0) * 3))); };
   const subject = [sel, hover, mark].find((n) => n && (n.kind === "witness" || n.kind === "open" || n.kind === "head"));
+  // The world is alive while you only look: registrars travel along the orbit and each log's entries circle their
+  // globe, slowly. The moment you choose something, come close, filter or take the walk, it holds still for you.
+  const resting = !sel && !mark && !tour.on && !listOpen && !drag && !pinch && regFilter === "all" && cam.dist.x > 1150 && !cam.dist.on;
+  motion = ease(motion, resting && !RM.matches ? 1 : 0, 1.6, dt); if (RM.matches) motion = 0;
   for (const r of W.regs) {                                             // each globe turns, and its dots are written in from the top
+    r.ang += dt * 0.021 * motion; r.phase += dt * 0.06 * motion; r.place(); r.set.globe[0] = r.centre[0]; r.set.globe[1] = r.centre[1]; r.set.globe[2] = r.centre[2];
     if (!RM.matches) r.spin += dt * 0.028;
     const want = r.shown && clock >= r.born ? 1.12 : 0;
     r.reveal = RM.matches ? want : want > r.reveal ? Math.min(want, r.reveal + dt * 0.62) : Math.max(want, r.reveal - dt * 2.4);
@@ -239,7 +244,7 @@ function scene(dt) {
     if (n.kind === "epoch") { arc(circle(n.r), 0.25 - 0.5 * k, 0.25 + 0.5 * k, ((n.cur ? 0.55 : 0.2) + f * 0.4) * Math.min(1, k * 2), 1, 0, 96); continue; }      // an orbit draws itself from the front
     if (n.kind === "registrar") arc(n.ringAt, 0, (n.size + 1) * k, 0.2 * dim + f * 0.3, 1, 0, 80);                                                              // its log's ring
     if (n.kind === "list") { const r = W.byId[n.reg]; if (r.spot) { r.spot.t -= dt * 0.5; if (r.spot.t <= 0) r.spot = null; else put(bitAt(r, r.spot.ix), 3 + (1 - r.spot.t) * 26, r.spot.t * 0.8, 1); } continue; }
-    if (n.kind === "root") { put(n.pos, n.r * grow, k, 3); put(n.pos, (n.r + 9) * grow, 0.4 * k, 1); }
+    if (n.kind === "root") { const br = RM.matches ? 0 : Math.sin(clock * 0.85); put(n.pos, n.r * grow, k, 3); put(n.pos, (n.r + 9 + br * 1.4) * grow, (0.4 + br * 0.08) * k, 1); }   // the root breathes, barely
     else if (n.kind === "registrar") put(n.pos, n.r * grow, dim * k, 3);
     else if (n.kind === "passport") {
       n.offA = ease(n.offA, n.off ? 1 : 0, 6, dt);                      // a moon closes into a ring as it is switched off
@@ -252,7 +257,8 @@ function scene(dt) {
     else if (n.kind === "head") put(n.pos, (n.r + n.hv) * grow, 0.7 * dim * k, 1);
     else if (n.kind === "witness") put(n.pos, (n.r + n.hv) * grow, k, 3);
     else if (n.kind === "open") { if (subject) put(n.pos, n.r * grow, 0.8 * k, 1); }
-    else if (n.kind === "you") { put(n.pos, n.r * grow, k, 0, 1); put(n.pos, (n.r + 6 + f * 10) * grow, 0.45 * k, 1, 1); }
+    else if (n.kind === "you") { put(n.pos, n.r * grow, k, 0, 1); put(n.pos, (n.r + 6 + f * 10) * grow, 0.45 * k, 1, 1);
+      if (!RM.matches) { const ph = (clock % 3.2) / 3.2; put(n.pos, n.r + 6 + ph * 30, (1 - ph) * (1 - ph) * 0.3 * k, 1, 1); } }   // a slow beacon: you are listening
     if (f > 0.02) put(n.pos, n.r + 5 + (1 - f) * 22, f * 0.5, 1, n.kind === "you" ? 1 : 0);
     if (n.hv > 0.02 && n.kind !== "you") put(n.pos, n.r + 3 + n.hv * 2.5, 0.9 * n.hv, 1);
   }
@@ -397,7 +403,7 @@ function physics(dt) {
     if (cam.vyaw || cam.vpitch) {                                       // momentum, decaying like a scroll
       cam.yaw.jump(cam.yaw.x + cam.vyaw * dt); const k = Math.pow(0.05, dt); cam.vyaw *= k; if (Math.abs(cam.vyaw) < 0.01) cam.vyaw = 0;
       if (cam.vpitch) { const p = cam.pitch.x + cam.vpitch * dt; cam.vpitch *= k; if (p < PITCH[0] || p > PITCH[1] || Math.abs(cam.vpitch) < 0.01) { cam.vpitch = 0; cam.pitch.set(0.5, 0.8).go(clamp(p, PITCH[0], PITCH[1])); } else cam.pitch.jump(p); }
-    } else if (!RM.matches && !tour.on && !sel && !listOpen && performance.now() > idleAt && !cam.yaw.on) cam.yaw.jump(cam.yaw.x + dt * 0.022);   // a slow turn when left alone
+    }
   }
   for (const s of SPR) s.step(dt);
 }
@@ -431,11 +437,9 @@ function fillSheet(n, keepAction) {
   if (pp && !keepAction) setAct("idle");
 }
 function select(n) { sel = n; fillSheet(n); openSheet(); poke(); if (n.kind === "passport" && live() && !n.verdict) check(n); }
-// The side a registrar's log is read from: across its row of entries, on whichever side the camera already is.
-function faceYaw(r) { const a = Math.atan2(r.side[0], r.side[2]), b = a + Math.PI; const d = (x) => Math.abs(((x - cam.yaw.x) % TAU + TAU + Math.PI) % TAU - Math.PI); return d(a) <= d(b) ? a : b; }
 function focusOn(n) {
-  const r = n.reg ? W.byId[n.reg] : n.kind === "registrar" ? n : null, yaw = r ? faceYaw(r) + 0.28 : undefined;
-  flyTo(r ? r.centre : n.pos, n.kind === "root" ? 560 : n.kind === "you" ? 900 : r ? fit(r.ringR) : 560, { yaw: r ? 0.16 : yaw, pitch: 0.32 });   // a registrar and its whole ring, from the front
+  const r = n.reg ? W.byId[n.reg] : n.kind === "registrar" ? n : null;
+  flyTo(r ? r.centre : n.pos, n.kind === "root" ? 560 : n.kind === "you" ? 900 : r ? fit(r.ringR) : 560, { yaw: r ? 0.16 : undefined, pitch: 0.32 });   // a registrar and its whole ring, from the front
 }
 $("#sheetX").addEventListener("click", () => closeSheet());
 $("#shFocus").addEventListener("click", () => sel && focusOn(sel));
@@ -502,8 +506,8 @@ function makeSeg(box, opts, start, onChoose) {
   set(start); addEventListener("resize", () => set(opts[btns.findIndex((b) => b.getAttribute("aria-pressed") === "true")].id)); document.fonts?.ready.then(() => set(opts[btns.findIndex((b) => b.getAttribute("aria-pressed") === "true")].id));
   return { set };
 }
-let regSeg = null;
-function setReg(id) { for (const r of W.regs) r.dim = id !== "all" && r.id !== id; for (const r of W.regs) fillBits(r); regSeg.set(id); stats(); if (sel && sel.reg && W.byId[sel.reg].dim) closeSheet(); if (id !== "all") { const r = W.byId[id]; flyTo(r.centre, fit(r.ringR) * 1.1, { yaw: 0.2, pitch: 0.3 }); } else resetView(); }
+let regSeg = null, regFilter = "all";
+function setReg(id) { regFilter = id; for (const r of W.regs) r.dim = id !== "all" && r.id !== id; for (const r of W.regs) fillBits(r); regSeg.set(id); stats(); if (sel && sel.reg && W.byId[sel.reg].dim) closeSheet(); if (id !== "all") { const r = W.byId[id]; flyTo(r.centre, fit(r.ringR) * 1.1, { yaw: 0.2, pitch: 0.3 }); } else resetView(); }
 
 // ---------- the list: the same record as a table, checked for real ----------
 let listRun = 0;
@@ -601,7 +605,7 @@ async function start() {
         // measured, not assumed: if frames are slow, the extra pixels go
         if (!FIXED && ms > 30 && ++slow >= 2) { slow = 0; if (dprCap > 1) { dprCap = 1; resize(); } stat.dpr = dprCap; } else if (ms <= 30) slow = 0; }
       if (playing) { playT += dt; if (playT > (RM.matches ? 0.9 : 0.5)) { playT = 0; applyStep(step + 1); if (live()) setPlaying(false); } }
-      if (now >= nextCheck && live() && !tour.on && !listOpen && !playing && order.length) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 3000 : 1700); }
+      if (now >= nextCheck && live() && !tour.on && !listOpen && !playing && order.length) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 3000 : 1100 + Math.random() * 1500); }   // an uneven beat, like real traffic
       physics(dt); lift.step(dt); capShift.step(dt); sheetPos.step(dt); placeSheet(); matrices(); scene(dt); labels(dt);
       eng.frame(look(), sets());
     }
