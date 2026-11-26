@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>AINRA World — the test network, live</title>
-<meta name="description" content="Every part of the AINRA test network, from its published record: the root, the directory, the registrars, their logs and status lists, the witness and every passport. Each check runs in your browser.">
+<meta name="description" content="Every part of the AINRA test network, from its published record: the root, the directory, the registrars, their logs and status lists, the witness and every passport. Each check runs in your browser, and you can watch the proof it follows.">
 <link rel="canonical" href="https://ainra.org/world.html">
 <meta property="og:title" content="AINRA World — the test network, live">
 <meta property="og:url" content="https://ainra.org/world.html">
@@ -28,16 +28,16 @@
   </g>
 </defs></svg>
 
-<!-- Loading: determinate, with the real step named, shown from the first paint (before any script runs). -->
+<!-- Loading: determinate, each real step named, on screen from the first paint (before any script runs). -->
 <div class="boot" id="boot" role="progressbar" aria-label="Loading the network" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
   <div class="boot__in">
-    <svg class="boot__mark" id="bootMark" viewBox="0 0 112 112" aria-hidden="true"><use href="#mark"/></svg><pre class="boot__art" id="bootArt" aria-hidden="true" hidden></pre>
+    <div class="boot__mark"><svg id="bootMark" viewBox="0 0 112 112" aria-hidden="true"><use href="#mark"/></svg><canvas id="bootMetal" width="224" height="224" aria-hidden="true" hidden></canvas></div>
     <div class="boot__title">AINRA WORLD</div>
     <div class="boot__bar"><i id="bootBar"></i></div>
     <div class="boot__step" id="bootStep">Reading the published record</div>
     <ol class="boot__list" id="bootList" aria-hidden="true">
       <li data-s="record">The published record</li>
-      <li data-s="lists">Two signed status lists, 8,192 bits</li>
+      <li data-s="lists">The signed status lists</li>
       <li data-s="verifier">The directory, checked against the root</li>
       <li data-s="world">Placing every part</li>
     </ol>
@@ -45,7 +45,8 @@
 </div>
 
 <canvas id="world" aria-describedby="srDesc"></canvas>
-<p class="sr" id="srDesc">A map of the AINRA test network you can turn. The list of checks and the details panel say in words what it shows.</p>
+<canvas id="labels" aria-hidden="true"></canvas>
+<p class="sr" id="srDesc">A map of the AINRA test network that you can turn. The List button shows the same passports and checks as a table.</p>
 
 <header class="top">
   <a class="brand" href="index.html"><svg viewBox="0 0 112 112" aria-hidden="true"><use href="#mark"/></svg><span>AINRA</span></a>
@@ -55,72 +56,58 @@
       <span class="find__ic" data-icon="search"></span><input id="find" type="search" placeholder="Find a passport" aria-label="Find a passport" autocomplete="off" spellcheck="false">
       <ul id="findList" role="listbox" aria-label="Matching passports"></ul>
     </div>
-    <button class="btn" id="tourBtn" type="button" data-icon="compass">Walk through</button>
+    <button class="btn" id="tourBtn" type="button" aria-pressed="false" data-icon="compass"><span class="btn__t">Walk through</span></button>
+    <button class="btn" id="listBtn" type="button" aria-expanded="false" aria-controls="list" data-icon="log"><span class="btn__t">List</span></button>
     <button class="btn btn--icon" id="aboutBtn" type="button" aria-expanded="false" aria-controls="about" aria-label="About this world" data-icon="info"></button>
   </div>
 </header>
 
-<section class="about" id="about" aria-label="About this world" hidden>
+<nav class="seg" id="regSeg" aria-label="Show one registrar"></nav>
+
+<section class="about" id="about" aria-label="About this world" hidden><div class="about__in">
   <h2>The test network, as its record states&nbsp;it</h2>
-  <p><b>Nothing here is invented.</b> The root, its directory, the registrars, their logs and every passport come from the record the test network published. The dust around each registrar is its signed status list, one point per bit, 4,096 each. A dark point is a passport its registrar switched off.</p>
-  <p><b>You are the verifier.</b> This tab holds the directory, checked against the root's two keys. Each thread that leaves you is a real check of one passport, run here by the verifier the site ships. It contacts nobody while it checks.</p>
-  <p><b>The timeline replays the record</b> in its own order: each registrar's log, entry by entry, then each change to its status list. It shows order, not dates: the test network kept one fixed test date until 23 November 2026, when it moved to real time.</p>
-  <p class="about__keys">Drag to turn · scroll or pinch to zoom · click any part · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>+</kbd><kbd>−</kbd> zoom · <kbd>0</kbd> reset · <kbd>Space</kbd> replay</p>
-</section>
+  <p><b>Every part comes from the record.</b> The root, its directory, the registrars and every passport are the ones the test network published. Each flat spiral is a registrar's signed status list, one point per bit, 4,096 each: bit 0 at the centre. A dark point is a passport its registrar switched off.</p>
+  <p><b>The tree above each list is that registrar's log,</b> in the shape a log of that size has. Every pair of entries is hashed into the node above it, up to one signed head. A passport's proof is its own short path up that tree.</p>
+  <p><b>You are the verifier.</b> This tab holds the directory, checked against the root's two keys. Each blue thread is a real check of one passport, run here by the verifier the site ships, along that passport's own proof. It contacts nobody while it checks.</p>
+  <p><b>The timeline replays the record in its own order,</b> with the dates the record carries. Until 23 November 2026 the test network kept a fixed test date, so its early entries share two days in April.</p>
+  <p><b>Drawn by us:</b> where things sit in space, the slow turn, and the ink, which marks a check or a <span class="nw">switch-off</span> and then fades.</p>
+  <p class="about__links"><a href="https://github.com/AINRA-organization/ainra/blob/main/kits/witness/README.md">Run a witness</a><a href="https://github.com/AINRA-organization/ainra/blob/main/kits/registrar/README.md">Become a registrar</a><a href="net/registry.json">The record itself</a></p>
+  <p class="about__keys">Drag to turn · scroll or pinch to zoom · click any part · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>+</kbd><kbd>−</kbd> zoom · <kbd>0</kbd> reset · <kbd>Space</kbd> replay · <kbd>L</kbd> list</p>
+</div></section>
 
 <aside class="feed" id="feed" aria-label="Checks in this tab">
+  <dl class="stats" id="stats">
+    <div><dt>In service</dt><dd id="stIn">–</dd></div>
+    <div><dt>Switched off</dt><dd id="stOff">–</dd></div>
+    <div><dt>One check</dt><dd id="stMs">–</dd></div>
+  </dl>
   <div class="feed__h"><span>Checks in this tab</span><button class="link" id="feedToggle" type="button" aria-expanded="true">Hide</button></div>
   <ol id="checks" aria-live="off"></ol>
   <p class="feed__note" id="feedNote">Starting the verifier…</p>
 </aside>
 
-<div class="zoom" role="group" aria-label="View">
-  <button class="btn btn--icon" id="zIn" type="button" aria-label="Zoom in" data-icon="plus"></button>
-  <button class="btn btn--icon" id="zOut" type="button" aria-label="Zoom out" data-icon="minus"></button>
-  <button class="btn btn--icon" id="zReset" type="button" aria-label="Reset the view" data-icon="reset"></button>
-</div>
-
-<section class="dock">
-  <div class="dock__row">
-    <div class="stats" aria-label="The network in numbers">
-      <div class="stat"><b id="sIn">–</b><span>in service</span></div>
-      <div class="stat"><b id="sOff">–</b><span>switched off</span></div>
-      <div class="stat"><b id="sChk">0</b><span>checks here</span></div>
-      <div class="stat"><b id="sMs">–</b><span>median check</span></div>
-    </div>
-    <div class="dock__right"><div class="seg" id="viewSeg" role="radiogroup" aria-label="How the world is drawn"><span class="seg__pill" aria-hidden="true"></span></div><div class="seg" id="filters" role="radiogroup" aria-label="Show registrars"><span class="seg__pill" id="segPill" aria-hidden="true"></span></div></div>
-  </div>
-  <div class="timeline">
-    <button class="play" id="play" type="button" aria-label="Replay the record" aria-pressed="false"><span class="swap" id="playIc"></span></button>
-    <div class="track" id="track" role="slider" tabindex="0" aria-label="Position in the record" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="Now">
-      <div class="rail"></div><div class="fill" id="fill"></div><div class="ticks" id="ticks"></div><div class="knob" id="knob"></div>
-    </div>
-    <div class="now" id="now" aria-live="polite">–</div>
-  </div>
+<section class="list" id="list" aria-label="Every passport, as a table" hidden>
+  <div class="list__h"><h2>Every passport in the&nbsp;record</h2><button class="btn btn--icon" id="listX" type="button" aria-label="Close the list" data-icon="close"></button></div>
+  <p class="list__note" id="listNote">Each line is checked in this tab by the verifier the site ships.</p>
+  <div class="list__scroll"><table>
+    <thead><tr><th scope="col">Passport</th><th scope="col">Registrar</th><th scope="col">Operator</th><th scope="col">Log entry</th><th scope="col">Status bit</th><th scope="col">Checked here</th></tr></thead>
+    <tbody id="listBody"></tbody>
+  </table></div>
 </section>
-
-<div class="caption" id="caption" hidden role="dialog" aria-label="Walk through">
-  <div class="caption__top"><div class="caption__n" id="capN"></div><div class="ladder" id="ladder" role="group" aria-label="Stops of the walk-through"></div></div>
-  <h3 id="capT"></h3>
-  <p id="capP"></p>
-  <div class="caption__b">
-    <button class="btn" id="capBack" type="button">Back</button>
-    <button class="btn btn--fill" id="capNext" type="button">Next</button>
-    <button class="link" id="capExit" type="button">Leave the <span class="nw">walk-through</span></button>
-  </div>
-</div>
-
-<div class="pill" id="youPill" aria-hidden="true"><span>YOU ARE HERE · THE VERIFIER</span><i></i></div>
-<div class="pill pill--hover" id="hoverPill" aria-hidden="true" hidden><span id="hoverTxt"></span><i></i></div>
 
 <aside class="sheet" id="sheet" aria-label="Details" aria-hidden="true">
   <div class="sheet__grab" id="sheetGrab" aria-hidden="true"></div>
   <button class="btn btn--icon sheet__x" id="sheetX" type="button" aria-label="Close the details" data-icon="close"></button>
+  <div class="sheet__in" id="sheetIn">
   <div class="sheet__k"><span id="shIc"></span><span id="shK"></span></div>
   <h3 id="shT"></h3>
   <div id="shV"></div>
   <dl id="shD"></dl>
-  <div class="copyf" id="shCopy" hidden><code id="shCopyTxt"></code><button class="copyf__b" id="shCopyBtn" type="button" aria-label="Copy the passport's name"><span class="swap" id="shCopyIc"></span></button><span class="sr" id="shCopyLive" aria-live="polite"></span></div>
+  <div class="proof" id="shProof" hidden>
+    <div class="proof__h">The proof this check follows</div>
+    <ol id="shSteps"></ol>
+  </div>
+  <div class="copyf" id="shCopy" hidden><code id="shCopyTxt"></code><button class="copyf__b" id="shCopyBtn" type="button" aria-label="Copy the passport's name"><span class="swap" id="shCopyIc"></span></button><span class="sr" id="shCopyLive" role="status" aria-live="polite"></span></div>
   <div class="sheet__b">
     <button class="act" id="shCheck" type="button" hidden data-state="idle">
       <span class="act__s" data-s="idle"><span data-icon="shield"></span>Check this passport now</span>
@@ -130,9 +117,39 @@
     <button class="btn" id="shFocus" type="button" data-icon="pin">Fly to it</button>
   </div>
   <span class="sr" id="actLive" role="status" aria-live="polite"></span>
+  </div>
 </aside>
 
-<noscript><p class="nos">This world needs scripts. The record it draws is published as plain files: <a href="net/registry.json">registry.json</a>, <a href="net/directory.json">directory.json</a>.</p><style>.boot{display:none}</style></noscript>
+<div class="caption" id="caption" hidden>
+  <div class="caption__n" id="capN"></div>
+  <h3 id="capT"></h3>
+  <p id="capP"></p>
+  <ol class="ladder" id="ladder" aria-label="Stops"></ol>
+  <div class="caption__b"><button class="btn" id="capPrev" type="button">Back</button><button class="btn btn--fill" id="capNext" type="button">Next</button><button class="link" id="capEnd" type="button">End the walk</button></div>
+</div>
+
+<div class="tools" id="tools">
+  <div class="seg seg--view" id="viewSeg" role="group" aria-label="How the world is drawn"></div>
+  <button class="btn" id="inkBtn" type="button" aria-pressed="true">Ink</button>
+  <button class="btn" id="stillBtn" type="button">Save a still</button>
+  <span class="tools__z">
+    <button class="btn btn--icon" id="zIn" type="button" aria-label="Zoom in" data-icon="plus"></button>
+    <button class="btn btn--icon" id="zOut" type="button" aria-label="Zoom out" data-icon="minus"></button>
+    <button class="btn btn--icon" id="zReset" type="button" aria-label="Reset the view" data-icon="reset"></button>
+  </span>
+</div>
+
+<footer class="time" id="time">
+  <button class="btn btn--icon" id="play" type="button" aria-label="Replay the record"><span class="swap" id="playIc"></span></button>
+  <div class="time__m">
+    <div class="time__now" id="now" aria-live="polite"></div>
+    <div class="track" id="track" role="slider" tabindex="0" aria-label="Position in the record" aria-valuemin="0" aria-valuemax="1" aria-valuenow="1">
+      <div class="track__line"><i id="fill"></i></div><div id="ticks"></div><div id="dates"></div><b id="knob"></b>
+    </div>
+  </div>
+</footer>
+
+<noscript><p class="nojs">AINRA World needs JavaScript: it runs the verifier in your browser. The record it reads is <a href="net/registry.json">net/registry.json</a>.</p></noscript>
 <script type="module" src="js/world.mjs"></script>
 </body>
 </html>

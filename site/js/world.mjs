@@ -1,740 +1,587 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-// AINRA World. The test network as a world you can turn, replay, walk through and check.
+// AINRA World. The test network as a place you can turn, replay, walk through and check.
 //
-// Real: every node, count, status-list bit, log position and verdict.
-//   nodes, counts      net/index.json, net/directory.json, net/epochs.json, net/registry.json
-//   dust               each registrar's signed status list (status/current.json), one point per bit
-//   replay             each registrar's log positions, then its status changes in order (status/deltas.json)
-//   checks             vendor/ainra-sdk.js in this tab, against the published directory and roots, at the record's time
-// Drawn (and the About panel says so): positions in space, the turning, the travelling threads.
+// Real (js/world-data.mjs): every part, count, status bit, log position, date, proof path and verdict.
+// Drawn (and the About panel says so): where things sit in space, the slow turn, and the ink.
 //
-// Motion: respond on press; drag 1:1; release velocity becomes momentum; the camera and the
-// sheet move on springs (damping 1.0 by default, 0.8 only after a flick), always from their current value, so anything
-// can be grabbed mid-flight; soft resistance past every limit; under reduced motion nothing travels or turns by itself.
+// Motion: respond on press; drag 1:1; a flick's speed becomes momentum; the camera and the sheet move on springs
+// (no overshoot, except a little after a flick), always from where they are now, so anything can be grabbed
+// mid-flight; soft resistance past every limit. Under reduced motion nothing travels or turns by itself, the ink is
+// off, and a check shows its answer at once.
 
 import { icon } from "./icons.mjs";
+import { loadRecord, buildWorld, runCheck, short } from "./world-data.mjs";
+import { createEngine, perspective, lookAt, mul4 } from "./world-gl.mjs";
+
 const $ = (s) => document.querySelector(s);
-const cv = $("#world"), ctx = cv.getContext("2d");
-// Motion follows the site's one switch (js/motion.mjs, stored as "ainra-motion"), then the system's reduced-motion setting.
+const cv = $("#world"), lab = $("#labels"), lx = lab.getContext("2d");
 const RMQ = matchMedia("(prefers-reduced-motion: reduce)");
 const RM = { get matches() { let pref = null; try { pref = localStorage.getItem("ainra-motion"); } catch { /* storage unavailable */ } return pref === "off" || (pref !== "on" && RMQ.matches); } };
-const MONO = '"Noto Sans Mono", ui-monospace, monospace';
-const TAU = Math.PI * 2;
-
-// ---------- small tools ----------
-async function getJSON(url) {
-  const c = new AbortController(), t = setTimeout(() => c.abort(), 10000);
-  try { const r = await fetch(url, { signal: c.signal, cache: "no-cache" }); if (!r.ok) throw new Error(`${url} answered HTTP ${r.status}`); return await r.json(); }
-  catch (e) { throw new Error(e.name === "AbortError" ? `${url} did not answer within 10 seconds` : e.message); }
-  finally { clearTimeout(t); }
-}
-const b64u = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const cut = (s, n = 18) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
-const short = (sub) => sub.split(":").slice(3).join(":") || sub;
-const hash = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
-const norm = (a) => { const l = Math.hypot(...a) || 1; return mul(a, 1 / l); };
+const MONO = '"Noto Sans Mono", ui-monospace, monospace', TAU = Math.PI * 2;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-const rubber = (over, dim, c = 0.55) => (over * dim * c) / (dim + c * Math.abs(over));       // resistance past a limit
-const project = (v, d = 0.998) => (v / 1000) * d / (1 - d);                                  // where a flick comes to rest
-async function bitsOf(st) {
-  if (typeof DecompressionStream === "undefined") throw new Error("this browser cannot inflate the status list");
-  const b = st.status_list_b64.replace(/-/g, "+").replace(/_/g, "/");
-  const raw = Uint8Array.from(atob(b.padEnd(Math.ceil(b.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
-  const p = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
-  const out = new Uint8Array(st.bit_len); for (let i = 0; i < st.bit_len; i++) out[i] = (p[i >> 3] >> (i & 7)) & 1; return out;
-}
+const rubber = (over, dim, c = 0.55) => (over * dim * c) / (dim + c * Math.abs(over));        // resistance past a limit
+const coast = (v, d = 0.998) => (v / 1000) * d / (1 - d);                                     // where a flick comes to rest
+const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const dayText = (t, brief) => new Date(t * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(brief ? {} : { year: "numeric" }), timeZone: "UTC" });
+const msText = (ms) => `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
 
 // A spring in two terms: response (seconds) and damping ratio (1 = no overshoot).
 class Spring {
   constructor(x, response = 0.4, damping = 1) { this.x = x; this.v = 0; this.to = x; this.on = false; this.set(response, damping); }
-  set(response, damping) { this.k = (TAU / response) ** 2; this.c = (4 * Math.PI * damping) / response; return this; }
-  go(to, v) { this.to = to; this.on = true; if (v !== undefined) this.v = v; }
-  stop() { this.on = false; this.v = 0; }
+  set(response, damping = 1) { this.k = (TAU / response) ** 2; this.c = (4 * Math.PI * damping) / response; return this; }
+  go(to, v) { if (RM.matches) { this.x = this.to = to; this.v = 0; this.on = false; return; } this.to = to; this.on = true; if (v !== undefined) this.v = v; }
+  jump(to) { this.x = this.to = to; this.v = 0; this.on = false; }
   step(dt) {
     if (!this.on) return;
     for (let t = dt; t > 0; t -= 1 / 240) { const h = Math.min(t, 1 / 240), a = -this.k * (this.x - this.to) - this.c * this.v; this.v += a * h; this.x += this.v * h; }
-    if (Math.abs(this.x - this.to) < 1e-4 && Math.abs(this.v) < 1e-3) { this.x = this.to; this.on = false; }
+    if (Math.abs(this.x - this.to) < 1e-4 && Math.abs(this.v) < 1e-3) { this.x = this.to; this.v = 0; this.on = false; }
   }
 }
 
-// ---------- icons: painted once, swapped by turning out and in ----------
-function paintIcons() { for (const el of document.querySelectorAll("[data-icon]:not([data-painted])")) { el.dataset.painted = "1"; el.insertAdjacentHTML("afterbegin", icon(el.dataset.icon)); } }
+// ---------- icons: painted once; a changed icon turns out and in ----------
+function paintIcons(root = document) { for (const el of root.querySelectorAll("[data-icon]:not([data-painted])")) { el.dataset.painted = "1"; el.insertAdjacentHTML("afterbegin", icon(el.dataset.icon)); } }
 function swapIcon(el, name) {
-  const cur = el.querySelector(".ic:not(.out)"); if (cur && cur.dataset.n === name) return;
-  el.insertAdjacentHTML("beforeend", icon(name, RM.matches || !cur ? "ic" : "ic in")); el.lastElementChild.dataset.n = name;
-  if (cur) { if (RM.matches) cur.remove(); else { cur.classList.add("out"); setTimeout(() => cur.remove(), 200); } }
+  if (el.dataset.now === name) return; el.dataset.now = name;
+  const old = el.querySelector(".ic:not(.out)"); el.insertAdjacentHTML("beforeend", icon(name)); const neu = el.lastElementChild;
+  if (!old || RM.matches) { old?.remove(); return; }
+  old.classList.add("out"); neu.classList.add("in"); setTimeout(() => old.remove(), 220);
 }
+const KIND_ICON = { root: "root", epoch: "epoch", registrar: "registrar", list: "history", passport: "shield", leaf: "log", node: "log", head: "log", witness: "witness", open: "seat", you: "you", bit: "activity" };
 
-// ---------- appearance: follows the system ----------
-let INK = "#0b0b0b", PAPER = "#f5f5f3", rgb = [11, 11, 11];
+// ---------- colours: read from the page's tokens, so the drawing follows light and dark ----------
+let INK = [0, 0, 0], SIG = [0, 0, 1], inkCss = "#000", ink2Css = "#666", paperCss = "#fff", sigCss = "#00f";
 function readTheme() {
-  const cs = getComputedStyle(document.documentElement);
-  INK = cs.getPropertyValue("--ink").trim(); PAPER = cs.getPropertyValue("--paper").trim();
-  const h = INK.replace("#", ""); rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const cs = getComputedStyle(document.documentElement), hex = (v) => { const h = cs.getPropertyValue(v).trim().replace("#", ""); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255); };
+  INK = hex("--ink"); SIG = hex("--signal"); inkCss = cs.getPropertyValue("--ink").trim(); ink2Css = cs.getPropertyValue("--ink2").trim(); paperCss = cs.getPropertyValue("--paper").trim(); sigCss = cs.getPropertyValue("--signal").trim();
 }
-const ink = (a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readTheme);
 
-// ---------- loading: determinate, every step named ----------
+// ---------- loading: determinate, each real step named ----------
 const boot = $("#boot");
-function stepOn(s, label, pct) { const li = boot.querySelector(`li[data-s="${s}"]`); if (li) li.className = "on"; $("#bootStep").textContent = label; progress(pct); }
-function stepOk(s) { const li = boot.querySelector(`li[data-s="${s}"]`); if (li) li.className = "ok"; }
-function progress(p) { $("#bootBar").style.width = `${p}%`; boot.setAttribute("aria-valuenow", String(Math.round(p))); bootP = p; paintArt(); }
-// The loading mark, drawn in characters: the AINRA mark sampled into a small grid, each cell revealed as the real
-// loading passes its place (the bar and the steps say the same in words). Decoration only: aria-hidden.
-let bootP = 0, artCells = null;
-function bootArt() {
-  const g = document.getElementById("mark"); if (!g) return;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" width="448" height="448"><rect width="112" height="112" fill="#fff"/><g fill="none" stroke="#000" stroke-linecap="round">${g.innerHTML.replace(/currentColor/g, "#000")}</g></svg>`;
-  const im = new Image();
-  im.onload = () => {
-    const cols = 40, rows = 20, c = document.createElement("canvas"); c.width = cols; c.height = rows;
-    const x = c.getContext("2d", { willReadFrequently: true }); x.imageSmoothingQuality = "high"; x.drawImage(im, 0, 0, cols, rows);
-    const px = x.getImageData(0, 0, cols, rows).data, ramp = " .:-=+*#%@";
-    artCells = []; for (let i = 0; i < cols * rows; i++) {
-      const v = 1 - (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 765;
-      artCells.push({ ch: v < 0.05 ? " " : ramp[Math.min(ramp.length - 1, 1 + Math.floor(Math.sqrt(v) * (ramp.length - 1)))], at: hash(i * 3.1) * 100, eol: (i + 1) % cols === 0 });
-    }
-    $("#bootArt").hidden = false; const m = $("#bootMark"); if (m) m.style.display = "none"; paintArt();
-  };
-  im.src = "data:image/svg+xml," + encodeURIComponent(svg);
-}
-function paintArt() {
-  if (!artCells) return; let t = "";
-  for (const c of artCells) { t += c.ch !== " " && (c.at <= bootP || RM.matches) ? c.ch : c.ch !== " " ? "·" : " "; if (c.eol) t += "\n"; }
-  $("#bootArt").textContent = t;
+function bootStep(s, label, pct, ok) {
+  if (s) { const li = boot.querySelector(`li[data-s="${s}"]`); if (li) li.className = ok ? "ok" : "on"; }
+  if (label) $("#bootStep").textContent = label;
+  if (pct != null) { $("#bootBar").style.width = `${pct}%`; boot.setAttribute("aria-valuenow", String(Math.round(pct))); }
 }
 function bootFail(msg) {
   const on = boot.querySelector("li.on"); if (on) on.className = "bad";
-  $("#bootStep").textContent = "The world could not be built";
-  const p = document.createElement("div"); p.className = "boot__err";
-  p.innerHTML = `<b>What happened:</b> <span></span><br><b>What to do:</b> reload the page; if it happens again, the record is unreachable from here. The record itself is plain files: <a href="net/registry.json">net/registry.json</a>.`;
-  p.querySelector("span").textContent = msg; $(".boot__in").append(p);
-  boot.querySelector(".boot__mark").style.animation = "none";
+  $("#bootStep").textContent = "Could not load the network";
+  const p = document.createElement("p"); p.className = "boot__err";
+  p.innerHTML = `<b>What happened:</b> <span></span><br><b>What to do:</b> reload the page. If it happens again, the record is unreachable from here; it is published at <a href="net/registry.json">net/registry.json</a>.`;
+  p.querySelector("span").textContent = msg; boot.querySelector(".boot__in").append(p); boot.setAttribute("aria-label", "Loading failed");
 }
 
-// ---------- the world ----------
-const nodes = [], edges = [], byId = {}, regs = [];
-function N(id, kind, pos, r, label, info, extra = {}) { const n = { id, kind, pos, r, label, info, flash: 0, sx: 0, sy: 0, sr: 0, depth: 0, vis: false, ...extra }; nodes.push(n); byId[id] = n; return n; }
-function E(a, b, kind = "base") { const e = { a: byId[a], b: byId[b], kind, lit: 0 }; edges.push(e); return e; }
-const edgeOf = (a, b) => edges.find((e) => (e.a.id === a && e.b.id === b) || (e.a.id === b && e.b.id === a));
-let CUR = 0;
-
-function build({ roots, directory, epochs, registry, lists }) {
-  CUR = directory.epoch;
-  N("root", "root", [0, 0, 0], 22, "root", { k: "ROOT · TEST, BEFORE THE CEREMONY", t: "The root", rows: [["Ed25519", cut(roots.root_ed25519, 30)], ["SLH-DSA", cut(roots.root_slh, 30)], ["Signs", "one thing: the registrar directory"], ["Issues", "no passports, sees no traffic"]] });
-  epochs.epochs.forEach((ep, i) => {
-    const now = ep.epoch === CUR;
-    N(`epoch${ep.epoch}`, "epoch", [0, 0, 0], 52 + i * 14, `epoch ${ep.epoch}`, { k: `DIRECTORY EPOCH ${ep.epoch}`, t: now ? `Directory, epoch ${ep.epoch} (current)` : `Directory, epoch ${ep.epoch} (replaced)`, rows: [["Digest", cut(ep.digest, 30)], ["Names", now ? `${directory.entries.length} registrars` : "kept in the directory log"], ["Signed by", "both root keys"]] }, { ring: true, faded: !now, tilt: 0.5 + i * 0.35 });
-  });
-  const anchors = [[-270, 30, -40], [275, -30, 50], [0, -40, -300], [0, 60, 300]];
-  registry.registrars.forEach((R, ri) => {
-    const id = R.registrar, recs = R.records.map((r) => r.record), L = lists[id];
-    const pos = anchors[ri % anchors.length], out = norm(pos);
-    const shell = 95 + Math.sqrt(recs.length) * 16, size = Math.max(...recs.map((r) => r.checkpoint_size || 0));
-    const reg = N(id, "registrar", pos, 12 + Math.sqrt(recs.length) * 5, id, { k: "REGISTRAR · ACCREDITED IN THE DIRECTORY", t: id, rows: [
-      ["Issuer key", `Ed25519 ${cut(R.accreditation.issuer_key.ed25519, 22)} + ML-DSA-65`], ["Log", `${R.accreditation.log_origin}, ${size} entries`],
-      ["Status list", `${L.list.bit_len.toLocaleString("en")} bits, change ${R.status_seq}`], ["Passports", `${recs.length} issued, ${recs.filter((r) => L.bits[r.status_idx]).length} switched off`]] },
-      { shell, out, size, recs });
-    regs.push(reg); E(`epoch${CUR}`, id, "sign");
-    const n = L.list.bit_len, dust = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {                                     // bit i always sits at the same place
-      const y = 1 - ((i + 0.5) / n) * 2, rr = Math.sqrt(1 - y * y), th = i * 2.399963229728653, k = shell * (0.86 + hash(i + ri * 9973) * 0.28);
-      dust[i * 3] = pos[0] + Math.cos(th) * rr * k; dust[i * 3 + 1] = pos[1] + y * k; dust[i * 3 + 2] = pos[2] + Math.sin(th) * rr * k;
-    }
-    Object.assign(reg, { dust, bitsFinal: L.bits, bits: new Uint8Array(L.bits), list: L.list, deltas: L.deltas, used: new Map(recs.map((r) => [r.status_idx, r.sub])) });
-    const side = norm([out[2], 0.0001, -out[0]]); let mid = [0, 0, 0];
-    for (let k = 0; k < size; k++) {
-      const a = k * 0.85, base = add(pos, mul(out, 46));
-      const p = add(add(add(base, mul(side, Math.cos(a) * 15)), [0, -56 + k * (112 / Math.max(1, size - 1)), 0]), mul(out, Math.sin(a) * 15));
-      mid = add(mid, mul(p, 1 / size));
-      const rec = recs.find((r) => r.leaf_index === k);
-      N(`leaf:${id}:${k}`, "leaf", p, 2.7, "", { k: `LOG ENTRY ${k}`, t: rec ? short(rec.sub) : `Entry ${k}`, rows: [["Log", R.accreditation.log_origin], ["Entry", rec ? `the passport ${rec.sub}` : "another entry, not a passport in this record"]] }, { reg: id, leaf: k, rec });
-      if (k) E(`leaf:${id}:${k - 1}`, `leaf:${id}:${k}`, "chain");
-    }
-    reg.logMid = mid;
-    const ops = [...new Set(recs.map((r) => r.operator))];
-    ops.forEach((op, oi) => {
-      const a = (oi / ops.length) * TAU + ri, rad = shell * 0.55, op3 = add(pos, [Math.cos(a) * rad, (oi % 2 ? 1 : -1) * 22, Math.sin(a) * rad]);
-      const oid = `op:${id}:${op}`, mine = recs.filter((r) => r.operator === op);
-      N(oid, "operator", op3, 5.5, op, { k: "OPERATOR", t: op, rows: [["Registrar", id], ["Passports", String(mine.length)]] }, { reg: id });
-      E(id, oid);
-      mine.forEach((r, pi) => {
-        const m = mine.length, y = m === 1 ? 0 : 1 - (pi / (m - 1)) * 2, rr = Math.sqrt(Math.max(0, 1 - y * y)), th = pi * 2.4 + oi, k = 20 + m * 2.2;
-        const p3 = add(op3, [Math.cos(th) * rr * k, y * k * 0.8, Math.sin(th) * rr * k]);
-        N(`pp:${r.sub}`, "passport", p3, 4.3, short(r.sub).replace(/^smoke-(\d{4})\d*-\d+/, "smoke-$1…"), { k: "PASSPORT", t: short(r.sub), rows: [
-          ["Name", r.sub], ["Registrar", id], ["Operator", op], ["Class", `${r.auth_class}, tier ${r.tier ?? "–"}`], ["May", (r.capabilities || []).join(", ")],
-          ["Log entry", String(r.leaf_index)], ["Status bit", String(r.status_idx)], ...((r.chain_keys || []).length ? [["Acts through", `a chain of ${r.chain_keys.length} earlier keys`]] : [])] },
-          { rec: r, reg: id, op: oid, verdict: null });
-        E(oid, `pp:${r.sub}`); E(`pp:${r.sub}`, `leaf:${id}:${r.leaf_index}`, "faint");
-      });
-    });
-  });
-  const w = registry.witnesses[0];
-  N("wit", "witness", [0, 210, -10], 6, "witness", { k: "WITNESS · SELF-DECLARED", t: "The network's own witness", rows: [["Operator", w.operator], ["Ed25519", cut(w.ed25519, 30)], ["Does", "cosigns each log's checkpoints, so a log cannot show two histories"]] });
-  N("wit-open", "open", [72, 232, 30], 6, "open seat", { k: "OPEN SEAT", t: "An independent witness", rows: [["Needed for", "fork resistance: witnesses run by others"], ["Who", "anyone; the software is published"]] });
-  for (const r of regs) { E(`leaf:${r.id}:${r.size - 1}`, "wit", "sign"); E(`leaf:${r.id}:${r.size - 1}`, "wit-open", "dash"); }
-  N("you", "you", [0, -175, 360], 9, "", { k: "YOU · THIS TAB", t: "You, the verifier", rows: [["Holds", "the directory, checked against the root's two keys"], ["And", "each registrar's signed status list"], ["Contacts", "nobody while it checks"]] });
-}
+// ---------- state ----------
+let R = null, W = null, eng = null, nodeSet = null, lineSet = null;
+let vw = 0, vh = 0, dpr = 1, dprCap = 2, vp = new Array(16).fill(0), eye = [0, 0, 1], scaleCss = 1;
+let step = 0, playing = false, playT = 0, seenEpoch = 0;
+let sel = null, hover = null, mark = null, tags = [], threads = [], hits = [];   // mark: the part a walk-through stop points at
+const times = []; let nValid = 0, nRefused = 0, order = [], cursor = 0, idleAt = 0, listOpen = false;
+const live = () => step === W.events.length;
 
 // ---------- camera: an orbit around a target, every part a spring ----------
-const HOME = { yaw: 0.12, pitch: 0.26, dist: 1050 };
-const cam = { yaw: new Spring(-0.9, 0.9), pitch: new Spring(0.26, 0.5), dist: new Spring(2600, 0.9), tx: new Spring(0, 0.6), ty: new Spring(0, 0.6), tz: new Spring(0, 0.6), vyaw: 0, auto: 0 };
+const FOV = 0.66, PITCH = [-0.25, 1.45], DIST = [220, 3400];
+const cam = { yaw: new Spring(-0.7, 1.2), pitch: new Spring(0.42, 0.6), dist: new Spring(4200, 1.2), tx: new Spring(0, 0.7), ty: new Spring(60, 0.7), tz: new Spring(0, 0.7), vyaw: 0, vpitch: 0 };
 const SPR = [cam.yaw, cam.pitch, cam.dist, cam.tx, cam.ty, cam.tz];
-const PITCH = [-1.2, 1.2], DIST = [300, 1900];
-let W = 0, H = 0, S = 1, CX = 0, CY = 0, CY0 = 0, CX0 = 0; const lift = new Spring(0, 0.6, 1);
-function resize() {
-  const dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
-  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const wide = W > 900; S = (wide ? Math.min(W * 0.6, H) : Math.min(W * 0.8, H * 0.6)) * 1.55;
-  CX0 = W * (wide ? 0.46 : 0.5); CY0 = H * (wide ? 0.45 : 0.4);
+const lift = new Spring(0, 0.6), capShift = new Spring(0, 0.6), sheetPos = new Spring(1, 0.42);                               // sheet: 1 = away, 0 = open
+const feedW = () => (vw > 900 && !$("#feed").classList.contains("closed") ? 310 : 0);
+const home = () => { const a = (vw - feedW()) / Math.max(1, vh); return a < 0.9 ? { yaw: 0.78, pitch: 0.34, dist: clamp(1180 / a, 1500, 3200), t: [0, 70, 0] } : { yaw: 0.3, pitch: 0.36, dist: clamp(1780 / a, 1100, 2600), t: [0, 60, 0] }; };
+function flyTo(t, dist, { yaw, pitch } = {}) {                                                 // always from wherever the camera is now
+  for (const s of SPR) s.set(0.85, 1);
+  cam.tx.go(t[0]); cam.ty.go(t[1]); cam.tz.go(t[2]); cam.dist.go(clamp(dist, DIST[0], DIST[1])); cam.vyaw = cam.vpitch = 0;
+  if (pitch !== undefined) cam.pitch.go(pitch);
+  if (yaw !== undefined) { let d = (yaw - cam.yaw.x) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; cam.yaw.go(cam.yaw.x + d); }
+  poke();
 }
-let cy_, sy_, cp_, sp_, tx_, ty_, tz_, D_;
-function prep() { const wide = W > 900; CY = CY0 - (wide ? 0 : lift.x * H); CX = CX0 + (wide ? lift.x * 1.6 * W - (1 - clamp(sheetPos.x, 0, 1)) * Math.min(200, sheet.offsetWidth / 2) : 0); const y = cam.yaw.x, p = cam.pitch.x; cy_ = Math.cos(y); sy_ = Math.sin(y); cp_ = Math.cos(p); sp_ = Math.sin(p); tx_ = cam.tx.x; ty_ = cam.ty.x; tz_ = cam.tz.x; D_ = cam.dist.x; }
-function proj(x, y, z, out) {
-  x -= tx_; y -= ty_; z -= tz_;
-  const x1 = x * cy_ - z * sy_, z1 = x * sy_ + z * cy_, y2 = y * cp_ - z1 * sp_, z2 = y * sp_ + z1 * cp_, d = z2 + D_;
-  if (d < 30) return false; out[0] = CX + (x1 * S) / d; out[1] = CY - (y2 * S) / d; out[2] = d; return true;
+const resetView = () => { const h = home(); flyTo(h.t, h.dist, { yaw: h.yaw, pitch: h.pitch }); };
+const zoomBy = (f) => { cam.dist.set(0.35, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * f, DIST[0], DIST[1])); poke(); };
+const poke = () => { idleAt = performance.now() + 7000; };
+function matrices() {
+  const cp = Math.cos(cam.pitch.x), t = [cam.tx.x, cam.ty.x, cam.tz.x];
+  eye = [t[0] + cam.dist.x * cp * Math.sin(cam.yaw.x), t[1] + cam.dist.x * Math.sin(cam.pitch.x), t[2] + cam.dist.x * cp * Math.cos(cam.yaw.x)];
+  const m = mul4(perspective(FOV, vw / vh, 8, 9000), lookAt(eye, t));
+  // the world moves aside for the details panel (wide screens) or up for the caption and the sheet (phones)
+  const wide = vw > 760, open = 1 - clamp(sheetPos.x, 0, 1);
+  const sx = wide ? -Math.max(open * Math.min(210, vw * 0.16) * 2, feedW()) / vw + (vw > 900 ? capShift.x * 400 / vw : 0) : 0, sy = (wide ? 0 : open * 0.36) + lift.x + 0.06;
+  for (let c = 0; c < 4; c++) { m[c * 4] += sx * m[c * 4 + 3]; m[c * 4 + 1] += sy * m[c * 4 + 3]; }
+  vp = m; scaleCss = vh * 0.5 / Math.tan(FOV / 2);
 }
-const fog = (d) => clamp(1.35 - (d - D_ + 420) / 900, 0.12, 1);
-function flyTo(pos, dist, { pitch } = {}) {                              // always from wherever the camera is now
-  cam.vyaw = 0; cam.auto = 0; idleAt = performance.now() + 7000;
-  const r = RM.matches;
-  for (const [s, v] of [[cam.tx, pos[0]], [cam.ty, pos[1]], [cam.tz, pos[2]], [cam.dist, dist]]) r ? ((s.x = v), s.stop()) : s.set(0.75, 1).go(v);
-  if (pitch !== undefined) r ? ((cam.pitch.x = pitch), cam.pitch.stop()) : cam.pitch.set(0.75, 1).go(pitch);
+function proj(p) {
+  const x = vp[0] * p[0] + vp[4] * p[1] + vp[8] * p[2] + vp[12], y = vp[1] * p[0] + vp[5] * p[1] + vp[9] * p[2] + vp[13], w = vp[3] * p[0] + vp[7] * p[1] + vp[11] * p[2] + vp[15];
+  return { x: (x / w * 0.5 + 0.5) * vw, y: (1 - (y / w * 0.5 + 0.5)) * vh, w, ok: w > 8 };
 }
-const resetView = () => flyTo([0, 0, 0], HOME.dist, { pitch: HOME.pitch });
-const zoomBy = (f) => { const t = clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * f, DIST[0], DIST[1]); RM.matches ? (cam.dist.x = t) : cam.dist.set(0.35, 1).go(t); idleAt = performance.now() + 6000; };
 
-// ---------- timeline: the record's own order ----------
-const events = []; let step = 0, playing = false, playT = 0;
-function buildEvents() {
-  const lv = [], ch = [];
-  for (const r of regs) for (let k = 0; k < r.size; k++) lv.push({ type: "leaf", reg: r.id, leaf: k, key: k / r.size + regs.indexOf(r) * 1e-4 });
-  for (const r of regs) for (const d of r.deltas) ch.push({ type: "change", reg: r.id, seq: d.seq, idx: d.idx, on: d.new_status, key: d.seq + regs.indexOf(r) * 1e-4 });
-  lv.sort((a, b) => a.key - b.key); ch.sort((a, b) => a.key - b.key); events.push(...lv, ...ch); step = events.length;
+function resize() {
+  vw = innerWidth; vh = innerHeight; dpr = Math.min(devicePixelRatio || 1, dprCap);
+  eng.resize(Math.round(vw * dpr), Math.round(vh * dpr));
+  lab.width = Math.round(vw * dpr); lab.height = Math.round(vh * dpr);
 }
-const live = () => step === events.length;
-function applyStep(s) {
-  step = clamp(s, 0, events.length);
-  for (const r of regs) r.bits = live() ? new Uint8Array(r.bitsFinal) : new Uint8Array(r.list.bit_len);
-  const seen = new Set();
-  for (let i = 0; i < step; i++) { const e = events[i]; if (e.type === "leaf") seen.add(`${e.reg}:${e.leaf}`); else if (!live()) for (const ix of e.idx) byId[e.reg].bits[ix] = e.on ? 1 : 0; }
-  for (const n of nodes) {
-    if (n.kind === "leaf") n.shown = seen.has(`${n.reg}:${n.leaf}`);
-    if (n.kind === "passport") { n.shown = seen.has(`${n.reg}:${n.rec.leaf_index}`); n.off = byId[n.reg].bits[n.rec.status_idx] === 1; }
+
+// ---------- replay: the record up to a step ----------
+function applyStep(s, quiet) {
+  const prev = step; step = clamp(s, 0, W.events.length);
+  seenEpoch = 0; const seen = new Set();
+  for (const r of W.regs) r.bits = live() ? new Uint8Array(r.bitsFinal) : new Uint8Array(r.list.bit_len);
+  for (let i = 0; i < step; i++) {
+    const e = W.events[i];
+    if (e.type === "epoch") seenEpoch = Math.max(seenEpoch, e.epoch);
+    else if (e.type === "leaf") seen.add(`${e.reg}:${e.leaf}`);
+    else if (!live()) for (const ix of e.idx) W.byId[e.reg].bits[ix] = e.on ? 1 : 0;
+  }
+  const latest = live() ? W.CUR : seenEpoch;
+  for (const n of W.parts) {
+    if (n.kind === "epoch") { n.shown = n.epoch <= latest; n.cur = n.epoch === latest; n.r = n.cur ? W.RING : 70 + (n.epoch - 1) * 36; n.labelAt = [-n.r * 0.7071, 0, n.r * 0.7071]; n.label = `epoch ${n.epoch}`; }
+    else if (n.kind === "registrar" || n.kind === "list") n.shown = latest >= 1;
+    else if (n.kind === "passport") { n.shown = seen.has(`${n.reg}:${n.leaf}`); n.off = W.byId[n.reg].bits[n.rec.status_idx] === 1; if (!live()) n.verdict = null; }
+    else if (n.kind === "leaf" || n.kind === "node" || n.kind === "head") n.shown = seen.has(`${n.reg}:${n.hi - 1}`);
+  }
+  for (const r of W.regs) fillBits(r);
+  // one step forward leaves a mark: a new entry flashes, a switch-off spills ink at its bit
+  if (!quiet && step === prev + 1) {
+    const e = W.events[step - 1];
+    if (e.type === "leaf") { const n = W.byId[`t:${e.reg}:${e.leaf}:${e.leaf + 1}`]; if (n) n.flash = 1; }
+    if (e.type === "epoch") W.byId[`epoch${e.epoch}`].flash = 1;
+    if (e.type === "change") for (const ix of e.idx) spill(W.byId[e.reg], ix);
   }
   renderTrack(); sayNow(); stats();
   $("#feedNote").textContent = live() ? "Newest first. Each line is one passport checked in this tab, now." : "Checks pause while the record replays; they run on the record as it stands now.";
 }
+function fillBits(r) {
+  const set = r.set, n = r.list.bit_len, d = r.dim ? 0.14 : 1;
+  for (let i = 0; i < n; i++) {
+    const rec = r.used.get(i), there = rec && W.byId[`pp:${rec.sub}`].shown, o = i * 3;
+    if (r.bits[i]) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.5, d, 0);
+    else if (there) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.4, 0.9 * d, 1);
+    else set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 1.05, (seenEpoch || live() ? 0.3 : 0) * d, 0);
+  }
+}
+const bitAt = (r, i) => [r.bitPos[i * 3], r.bitPos[i * 3 + 1], r.bitPos[i * 3 + 2]];
+function spill(r, ix) {                                                 // ink where a passport was switched off
+  const p = proj(bitAt(r, ix)); r.spot = { ix, t: 1 };
+  if (!eng.inkOn || !eng.ink || RM.matches || !p.ok) return;
+  const x = p.x / vw, y = 1 - p.y / vh;
+  eng.ink.splat(x, y, 0, 0, 1.5, 0, 0.0009);
+  for (let k = 0; k < 6; k++) { const a = (k / 6) * TAU + ix; eng.ink.splat(x + Math.cos(a) * 0.012, y + Math.sin(a) * 0.012, Math.cos(a) * 260, Math.sin(a) * 260, 0.22, 0, 0.0006); }
+}
+function puff(pos, sig, amt) { const p = proj(pos); if (!eng.inkOn || !eng.ink || RM.matches || !p.ok) return; eng.ink.splat(p.x / vw, 1 - p.y / vh, 0, 46, sig ? 0 : amt, sig ? amt : 0, 0.0007); }
+
 function sayNow() {
-  const el = $("#now"); let txt;
-  if (live()) txt = "<b>Now</b> · the record as published · checks running";
-  else if (step === 0) txt = "<b>Before the first entry</b>";
-  else {
-    const e = events[step - 1];
-    if (e.type === "leaf") { const rec = byId[e.reg].recs.find((r) => r.leaf_index === e.leaf); txt = `<b>${e.reg} logs entry ${e.leaf}</b> · ${rec ? short(rec.sub) : "another entry"}`; }
-    else { const who = e.idx.map((i) => byId[e.reg].used.get(i)).filter(Boolean).map(short); txt = `<b>${e.reg}, change ${e.seq}</b> · bit ${e.idx.join(", ")} ${e.on ? "set" : "cleared"}${who.length ? " · " + who.join(", ") + (e.on ? " switched off" : " back in service") : ""}`; }
-  }
-  el.innerHTML = txt; $("#track").setAttribute("aria-valuetext", el.textContent);
-}
-
-// ---------- drawing ----------
-const P = [0, 0, 0], threads = [], labels = [];
-function sphere(x, y, r, a) {                                             // a shaded ink sphere, still monochrome
-  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
-  g.addColorStop(0, ink(0.6 * a)); g.addColorStop(0.55, ink(0.92 * a)); g.addColorStop(1, ink(a));
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
-}
-const hidden = (n) => (n.kind === "leaf" || n.kind === "passport") && !n.shown;
-function draw(dt) {
-  prep();
-  ctx.fillStyle = PAPER; ctx.fillRect(0, 0, W, H);
-  for (const r of regs) {                                                 // the status lists, bit by bit
-    const dim = r.dim ? 0.12 : 1, d = r.dust, bits = r.bits;
-    for (let i = 0, n = bits.length; i < n; i++) {
-      if (!proj(d[i * 3], d[i * 3 + 1], d[i * 3 + 2], P)) continue;
-      const f = fog(P[2]) * dim;
-      if (bits[i]) { ctx.fillStyle = ink(0.95 * f); ctx.beginPath(); ctx.arc(P[0], P[1], Math.max(1.9, 2.5 * (S / P[2])), 0, TAU); ctx.fill(); }
-      else { const u = r.used.has(i), s = u ? 1.9 : 1.15; ctx.fillStyle = ink((u ? 0.62 : 0.3) * f); ctx.fillRect(P[0] - s / 2, P[1] - s / 2, s, s); }
-    }
-  }
-  for (const n of nodes) {
-    n.vis = proj(n.pos[0], n.pos[1], n.pos[2], P); n.sx = P[0]; n.sy = P[1]; n.depth = P[2]; n.sr = (n.r * S) / P[2];
-    n.flash = Math.max(0, n.flash - dt / 0.9); n.dimmed = !!((n.reg && byId[n.reg].dim) || (n.kind === "registrar" && n.dim));
-  }
-  for (const n of nodes) if (n.ring) {                                    // directory epochs
-    ctx.beginPath(); let on = false;
-    for (let i = 0; i <= 120; i++) {
-      const a = (i / 120) * TAU, x = Math.cos(a) * n.r, z = Math.sin(a) * n.r;
-      if (!proj(x, z * Math.sin(n.tilt), z * Math.cos(n.tilt), P)) { on = false; continue; }
-      on ? ctx.lineTo(P[0], P[1]) : ctx.moveTo(P[0], P[1]); on = true;
-    }
-    ctx.strokeStyle = ink((n.faded ? 0.2 : 0.55) + n.flash * 0.4); ctx.lineWidth = 1 + n.flash; ctx.setLineDash(n.faded ? [2, 4] : []); ctx.stroke(); ctx.setLineDash([]);
-  }
-  for (const e of edges) {
-    e.lit = Math.max(0, e.lit - dt / 1.6);
-    if (!e.a.vis || !e.b.vis || hidden(e.a) || hidden(e.b)) continue;
-    const base = { faint: 0.05, chain: 0.42, dash: 0.3, sign: 0.22 }[e.kind] ?? 0.16;
-    const f = Math.min(fog(e.a.depth), fog(e.b.depth)) * (e.a.dimmed || e.b.dimmed ? 0.25 : 1);
-    ctx.strokeStyle = ink(Math.min(1, (base + e.lit * 0.9) * f)); ctx.lineWidth = 0.8 + e.lit * 1.8;
-    ctx.setLineDash(e.kind === "dash" ? [3, 4] : []); ctx.beginPath(); ctx.moveTo(e.a.sx, e.a.sy); ctx.lineTo(e.b.sx, e.b.sy); ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  for (let i = threads.length - 1; i >= 0; i--) {                         // a real check travelling from you
-    const t = threads[i]; t.t += dt / 0.65; const a = byId.you, b = t.p;
-    if (t.t >= 1) { threads.splice(i, 1); t.done(); continue; }
-    const k = 1 - Math.pow(1 - t.t, 3), x = a.sx + (b.sx - a.sx) * k, y = a.sy + (b.sy - a.sy) * k;
-    ctx.strokeStyle = ink(0.8); ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(x, y); ctx.stroke();
-    ctx.fillStyle = ink(1); ctx.beginPath(); ctx.arc(x, y, 3.2, 0, TAU); ctx.fill();
-  }
-  const order = nodes.filter((n) => n.vis && !n.ring && !hidden(n)).sort((a, b) => b.depth - a.depth);
-  for (const n of order) {
-    const f = fog(n.depth) * (n.dimmed ? 0.3 : 1), r = Math.max(n.kind === "leaf" ? 1.5 : 2.4, n.sr);
-    if (n.flash > 0.02) { ctx.strokeStyle = ink(n.flash * 0.75 * f); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(n.sx, n.sy, r + 3 + (1 - n.flash) * 18, 0, TAU); ctx.stroke(); }
-    ctx.lineWidth = 1.3; ctx.strokeStyle = ink(f);
-    if (n.kind === "root" || n.kind === "registrar") sphere(n.sx, n.sy, r, f);
-    else if (n.kind === "you") { ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(n.sx, n.sy, r + 3, 0, TAU); ctx.fill(); ctx.stroke(); ctx.fillStyle = ink(1); ctx.beginPath(); ctx.arc(n.sx, n.sy, Math.max(2.2, r * 0.45), 0, TAU); ctx.fill(); }
-    else if (n.kind === "open") { ctx.setLineDash([2, 3]); ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, TAU); ctx.fill(); ctx.stroke(); ctx.setLineDash([]); }
-    else if (n.kind === "passport") {
-      ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, TAU); ctx.fill(); ctx.stroke();
-      if (n.off) { ctx.beginPath(); ctx.moveTo(n.sx - r * 0.72, n.sy + r * 0.72); ctx.lineTo(n.sx + r * 0.72, n.sy - r * 0.72); ctx.stroke(); }
-      else { ctx.fillStyle = ink(f); ctx.beginPath(); ctx.arc(n.sx, n.sy, Math.max(1, r - 1.7), 0, TAU); ctx.fill(); }
-    } else if (n.kind === "leaf") { ctx.fillStyle = n.rec ? ink(f) : PAPER; ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, TAU); ctx.fill(); ctx.stroke(); }
-    else { ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, TAU); ctx.fill(); ctx.stroke(); }
-    if (n === sheetN || n === focusN) { ctx.strokeStyle = ink(0.9); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(n.sx, n.sy, r + 6, 0, TAU); ctx.stroke(); }
-    const pri = n === focusN || n === sheetN ? 0 : n === hoverN ? 1 : { root: 2, registrar: 2, witness: 3, open: 3, operator: 4, passport: 5 }[n.kind];
-    if (pri !== undefined && n.label && (n.kind !== "passport" || pri < 2 || n.sr > 7)) labels.push({ n, r, f, pri });
-  }
-  if (VIEW !== "points") charPass();
-  // labels: most important first; one that would overlap another is left out (the hover pill still names it)
-  labels.sort((a, b) => a.pri - b.pri || a.n.depth - b.n.depth); const placed = [];
-  ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  for (const L of labels) {
-    const n = L.n, big = n.kind === "registrar" || n.kind === "root";
-    ctx.font = `${big ? 12.5 : 12}px ${MONO}`;
-    const w = ctx.measureText(n.label).width, x = n.sx + L.r + 8, y = n.sy, box = [x - 2, y - 8, x + w + 2, y + 8];
-    if (placed.some((q) => box[0] < q[2] && box[2] > q[0] && box[1] < q[3] && box[3] > q[1])) continue;
-    placed.push(box); ctx.fillStyle = ink((n.kind === "operator" ? 0.64 : 0.92) * L.f); ctx.fillText(n.label, x, y);
-  }
-  labels.length = 0;
-  const you = byId.you, yp = $("#youPill"); yp.hidden = !you.vis || you.sx < -20 || you.sx > W + 20 || you.sy < 70 || you.sy > H - 150;
-  yp.style.transform = `translate(${clamp(you.sx, 120, W - 120)}px, ${you.sy - Math.max(9, you.sr) - 8}px) translate(-50%,-100%)`;
-  const hp = $("#hoverPill");
-  if (hoverN && hoverN.vis && !drag) { hp.hidden = false; hp.style.transform = `translate(${hoverN.sx}px, ${hoverN.sy - Math.max(6, hoverN.sr) - 8}px) translate(-50%,-100%)`; }
-  else hp.hidden = true;
-}
-
-// ---------- drawn in characters: the frame above, sampled into cells and redrawn as text, braille dots or 1-bit dither ----------
-let VIEW = "points";
-const small = document.createElement("canvas"), sctx = small.getContext("2d", { willReadFrequently: true });
-const charCv = document.createElement("canvas"), cctx = charCv.getContext("2d");   // the character layer, kept between frames
-const RAMP = " .,:;-~=+*o#%@";                                  // light to dense, for ink on paper
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
-let glyphW = null, dens = new Float32Array(0), charAt = 0, charKey = "";
-function sampleTo(sw, sh) {                                       // the live frame, averaged down to sw × sh: 0 paper … 1 ink
-  if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
-  if (dens.length !== sw * sh) dens = new Float32Array(sw * sh);
-  sctx.imageSmoothingEnabled = true; sctx.imageSmoothingQuality = "high";
-  sctx.drawImage(cv, 0, 0, cv.width, cv.height, 0, 0, sw, sh);
-  const px = sctx.getImageData(0, 0, sw, sh).data;
-  const pl = (parseInt(PAPER.slice(1, 3), 16) + parseInt(PAPER.slice(3, 5), 16) + parseInt(PAPER.slice(5, 7), 16)) / 3, il = (rgb[0] + rgb[1] + rgb[2]) / 3, k = 1 / (il - pl);
-  for (let i = 0, n = sw * sh; i < n; i++) { const v = ((px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / 3 - pl) * k; dens[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
-  return dens;
-}
-// Redrawn about twenty times a second (the camera and the checks still move at full rate underneath); in between the
-// kept layer is copied, which costs almost nothing. A change of view, size or appearance redraws it at once.
-function charPass() {
-  const now = performance.now(), key = `${VIEW}|${cv.width}x${cv.height}|${INK}|${PAPER}`;
-  if (key !== charKey || now - charAt > 50) { charKey = key; charAt = now; renderChars(); }
-  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(charCv, 0, 0); ctx.restore();
-}
-function renderChars() {
-  if (charCv.width !== cv.width || charCv.height !== cv.height) { charCv.width = cv.width; charCv.height = cv.height; }
-  const c = cctx, dpr = cv.width / Math.max(1, W); c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.fillStyle = PAPER; c.fillRect(0, 0, W, H);
-  if (VIEW === "text") {
-    const fs = W < 700 ? 10 : 12; c.font = `${fs}px ${MONO}`; if (!glyphW || glyphW.fs !== fs) glyphW = { fs, w: c.measureText("M").width };
-    const cw = glyphW.w, ch = Math.round(fs * 1.08), cols = Math.floor(W / cw), rows = Math.floor(H / ch), d = sampleTo(cols, rows);
-    c.fillStyle = ink(0.92); c.textBaseline = "top"; c.textAlign = "left";
-    for (let y = 0; y < rows; y++) {
-      let line = ""; for (let x = 0; x < cols; x++) { const v = d[y * cols + x]; line += RAMP[Math.min(RAMP.length - 1, Math.floor(Math.pow(v, 0.7) * RAMP.length * 1.15))]; }
-      c.fillText(line, 0, y * ch);
-    }
-  } else if (VIEW === "braille") {
-    const dx = W < 700 ? 2.6 : 3, cols = Math.floor(W / dx), rows = Math.floor(H / dx), d = sampleTo(cols, rows), dot = dx * 0.62;
-    c.fillStyle = ink(0.95); c.beginPath();
-    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-      if (d[y * cols + x] <= BAYER[(y & 3) * 4 + (x & 3)] * 0.9) continue;
-      c.rect(x * dx + (x % 2 ? 0.6 : 0), y * dx + (y % 4 === 3 ? 0.6 : 0), dot, dot);   // 2 × 4 cells, a hair apart
-    }
-    c.fill();
-  } else if (VIEW === "dither") {
-    const k = W < 700 ? 2 : 2.5, sw = Math.floor(W / k), sh = Math.floor(H / k), d = sampleTo(sw, sh);
-    const img = sctx.createImageData(sw, sh), P2 = [parseInt(PAPER.slice(1, 3), 16), parseInt(PAPER.slice(3, 5), 16), parseInt(PAPER.slice(5, 7), 16)];
-    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-      const i = y * sw + x, col = d[i] > BAYER[(y & 3) * 4 + (x & 3)] ? rgb : P2;
-      img.data[i * 4] = col[0]; img.data[i * 4 + 1] = col[1]; img.data[i * 4 + 2] = col[2]; img.data[i * 4 + 3] = 255;
-    }
-    sctx.putImageData(img, 0, 0); c.imageSmoothingEnabled = false; c.drawImage(small, 0, 0, sw, sh, 0, 0, W, H); c.imageSmoothingEnabled = true;
-  }
-}
-
-// ---------- checks (real) ----------
-let verifier = null, NOW = 0, cursor = 0, order = [];
-const times = []; let nValid = 0, nRefused = 0;
-function bundle(rec, st) {
-  return {
-    claims: b64u(rec.claims), issuer_sig: { ed25519: rec.issuer_sig_ed25519, mldsa65: rec.issuer_sig_mldsa65 }, chain_keys: rec.chain_keys, hop_proofs: rec.hop_proofs,
-    status_uri: st.uri, status_list: st.status_list_b64, status_len: st.bit_len, status_issued_at: st.issued_at, status_sig_ed25519: st.sig_ed25519, status_sig_mldsa65: st.sig_mldsa65,
-    checkpoint: { origin: rec.log_origin, size: rec.checkpoint_size, root: rec.checkpoint_root }, checkpoint_sig: rec.checkpoint_sig, leaf_index: rec.leaf_index, inclusion_proof: rec.inclusion_proof,
-    mandate_revocations: [], revoked_delegates: [],
-    ...(rec.chain_parties?.length ? { chain_parties: rec.chain_parties } : {}),           // a chain its registrar bound (D-113)
-  };
-}
-const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
-function check(p, then) {
-  if (!verifier || !live() || byId[p.reg].dim) return false;
-  const t0 = performance.now(); let v;
-  try { v = verifier.verify(bundle(p.rec, byId[p.reg].list), NOW); } catch { v = { verdict: "invalid", reason: "error" }; }
-  const ms = performance.now() - t0;
-  const reveal = () => {
-    const ok = v.verdict === "valid"; p.verdict = ok ? "valid" : v.reason; p.flash = 1; byId.you.flash = 0.8; byId.root.flash = 0.6; byId[`epoch${CUR}`].flash = 0.7;
-    for (const [a, b] of [[p.id, p.op], [p.op, p.reg], [`epoch${CUR}`, p.reg], [p.id, `leaf:${p.reg}:${p.rec.leaf_index}`]]) { const e = edgeOf(a, b); if (e) { e.lit = 1; e.a.flash = Math.max(e.a.flash, 0.5); e.b.flash = Math.max(e.b.flash, 0.5); } }
-    times.push(ms); if (times.length > 300) times.shift(); ok ? nValid++ : nRefused++;
-    const li = document.createElement("li"); if (!ok) li.className = "no";
-    li.innerHTML = `<span class="n"></span><span class="v"></span><span class="t"></span>`;
-    li.querySelector(".n").textContent = short(p.rec.sub);
-    const vb = li.querySelector(".v"); vb.innerHTML = icon(ok ? "valid" : "revoked"); vb.append(ok ? "valid" : v.reason === "revoked" ? "switched off" : v.reason || "refused");
-    li.querySelector(".t").textContent = `${p.reg} · ${new Date().toTimeString().slice(0, 8)} · ${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
-    const ol = $("#checks"); ol.prepend(li); while (ol.children.length > 5) ol.lastChild.remove();
-    stats(); if (sheetN === p) fillSheet(p, true); then && then(v, ms);
-  };
-  RM.matches ? reveal() : threads.push({ p, t: 0, done: reveal });
-  return true;
+  const el = $("#now");
+  if (live()) { el.innerHTML = `<b>The record as it stands.</b> Copy taken ${dayText(R.published.published_at)}.`; return; }
+  if (!step) { el.innerHTML = "<b>Before the first entry.</b> Only the root exists."; return; }
+  const e = W.events[step - 1], d = e.date ? dayText(e.date) : "undated";
+  let t;
+  if (e.type === "epoch") t = e.epoch === 1 ? "the root signs the first directory" : e.epoch === W.CUR ? `the root signs directory epoch ${e.epoch}: the network keeps real time from here` : `the root signs directory epoch ${e.epoch}`;
+  else if (e.type === "leaf") t = `${e.reg} logs entry ${e.leaf}: ${e.rec ? short(e.rec.sub) : "an entry that is not a passport in this record"}`;
+  else { const r = W.byId[e.reg], rec = r.used.get(e.idx[0]); t = `${e.reg} ${e.on ? "switches off" : "restores"} ${rec ? short(rec.sub) : `bit ${e.idx[0]}`} (list change ${e.seq})`; }
+  el.innerHTML = `<b>${d}</b> · ${t}`;
 }
 function stats() {
-  const pps = nodes.filter((n) => n.kind === "passport" && n.shown && !byId[n.reg].dim);
-  $("#sIn").textContent = pps.filter((n) => !n.off).length; $("#sOff").textContent = pps.filter((n) => n.off).length;
-  $("#sChk").textContent = nValid + nRefused; $("#sMs").textContent = times.length ? `${median(times).toFixed(1)} ms` : "–";
+  const ps = W.parts.filter((n) => n.kind === "passport" && n.shown && !W.byId[n.reg].dim);
+  $("#stIn").textContent = String(ps.filter((n) => !n.off).length); $("#stOff").textContent = String(ps.filter((n) => n.off).length);
+  const s = [...times].sort((a, b) => a - b); $("#stMs").textContent = s.length ? msText(s[Math.floor(s.length / 2)]) : "–";
 }
 
-// ---------- pointer: respond on press, 1:1 drag, momentum, rubber-band ----------
-let hoverN = null, focusN = null, sheetN = null, drag = null, idleAt = 0;
-const pointers = new Map();
-function pick(x, y) {
-  let best = null, bd = Infinity;
-  for (const n of nodes) {
-    if (!n.vis || n.ring || hidden(n)) continue;
-    const d = (n.sx - x) ** 2 + (n.sy - y) ** 2, reach = Math.max(16, n.sr + 6) ** 2;
-    if (d < reach && d < bd) { bd = d; best = n; }
-  }
-  return best;
+// ---------- one real check, drawn along the passport's own proof ----------
+function check(p, { quiet, then } = {}) {
+  if (!live() || W.byId[p.reg].dim || !p.shown) return false;
+  const res = runCheck(R, p.rec, W.byId[p.reg].list), path = W.pathOf(p), refusedAtBit = !res.ok && res.reason === "revoked";
+  const main = [W.byId.you.pos, p.pos, ...(refusedAtBit ? [] : [...path.up.slice(1), path.reg, path.root])];
+  const lens = main.slice(1).map((q, i) => dist3(main[i], q)), total = lens.reduce((a, b) => a + b, 0);
+  const reveal = () => {
+    p.verdict = res.ok ? "valid" : res.reason; p.flash = 1; W.byId.you.flash = 0.7;
+    if (res.ok) { W.byId.root.flash = 0.6; W.byId[p.reg].flash = 0.7; puff(p.pos, true, 0.5); } else if (refusedAtBit) { W.byId[p.reg].spot = { ix: p.rec.status_idx, t: 1 }; puff(p.bit, false, 0.55); }
+    times.push(res.ms); if (times.length > 300) times.shift(); res.ok ? nValid++ : nRefused++;
+    tags = tags.filter((t) => t.p !== p); tags.push({ p, text: res.ok ? `valid · ${msText(res.ms)}` : `${res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`, ok: res.ok, t: 3.2 });
+    if (!quiet) feedLine(p, res);
+    stats(); if (sel === p) fillSheet(p, true); then && then(res);
+  };
+  if (RM.matches) { reveal(); return true; }
+  threads.push({ p, main, lens, total, path, res, refusedAtBit, t: 0, dur: clamp(total / 1500, 0.7, 1.25), fade: 1, done: false, reveal });
+  return true;
 }
-const outOfPitch = () => cam.pitch.x < PITCH[0] || cam.pitch.x > PITCH[1];
-cv.addEventListener("pointerdown", (e) => {
-  try { cv.setPointerCapture(e.pointerId); } catch {} pointers.set(e.pointerId, [e.clientX, e.clientY]);
-  for (const s of SPR) s.stop();                                           // grab it mid-flight: it stays where it is
-  cam.vyaw = 0; cam.auto = 0; idleAt = performance.now() + 5000;
-  if (pointers.size === 1) { drag = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0, vx: 0, vy: 0, raw: cam.pitch.x }; cv.classList.add("grabbing"); }
-  else drag = null;
-});
-cv.addEventListener("pointermove", (e) => {
-  if (pointers.has(e.pointerId)) {
-    const prev = [...pointers.values()]; pointers.set(e.pointerId, [e.clientX, e.clientY]);
-    if (pointers.size === 2) {                                               // pinch, 1:1, soft past the limits
-      const now = [...pointers.values()], d0 = Math.hypot(prev[0][0] - prev[1][0], prev[0][1] - prev[1][1]), d1 = Math.hypot(now[0][0] - now[1][0], now[0][1] - now[1][1]);
-      if (d0 && d1) { const t = cam.dist.x * (d0 / d1); cam.dist.x = t < DIST[0] ? DIST[0] - rubber(DIST[0] - t, 200) : t > DIST[1] ? DIST[1] + rubber(t - DIST[1], 400) : t; }
-      return;
+function feedLine(p, res) {
+  const li = document.createElement("li"); li.innerHTML = `<span class="n"></span><span class="tag${res.ok ? "" : " no"}">${icon(res.ok ? "valid" : "revoked")}<span></span></span><span class="t"></span>`;
+  li.querySelector(".n").textContent = short(p.rec.sub); li.querySelector(".tag span").textContent = res.ok ? "valid" : res.reason === "revoked" ? "switched off" : res.reason;
+  li.querySelector(".t").textContent = `${p.reg} · ${new Date().toTimeString().slice(0, 8)} · ${msText(res.ms)}`;
+  const ol = $("#checks"); ol.prepend(li); while (ol.children.length > 5) ol.lastChild.remove();
+}
+const along = (th, f) => { let d = f * th.total; for (let i = 0; i < th.lens.length; i++) { if (d <= th.lens[i] || i === th.lens.length - 1) return { i, pos: mix3(th.main[i], th.main[i + 1], clamp(d / (th.lens[i] || 1), 0, 1)) }; d -= th.lens[i]; } return { i: 0, pos: th.main[0] }; };
+
+// ---------- the frame: what is drawn ----------
+function scene(dt) {
+  const L = lineSet, N = nodeSet; L.clear(); let ni = 0;
+  const put = (pos, size, ink, shape = 0, tone = 0) => { if (ni < N.n) N.set(ni++, pos[0], pos[1], pos[2], size, ink, shape, tone); };
+  const ring = (c, rad, alpha, dash = 0, seg = 96) => { let a = [c[0] + rad, c[1], c[2]]; for (let i = 1; i <= seg; i++) { const t = (i / seg) * TAU, b = [c[0] + Math.cos(t) * rad, c[1], c[2] + Math.sin(t) * rad]; L.add(a, b, alpha, 1, 0, dash); a = b; } };
+  const selPath = sel && sel.kind === "passport" ? W.pathOf(sel) : null;
+  for (const n of W.parts) {
+    n.flash = Math.max(0, n.flash - dt * 1.4);
+    if (!n.shown) continue;
+    const dim = n.reg && W.byId[n.reg]?.dim ? 0.16 : n.kind === "registrar" && n.dim ? 0.16 : 1, f = n.flash;
+    if (n.kind === "epoch") { ring([0, 0, 0], n.r, (n.cur ? 0.55 : 0.2) + f * 0.4); continue; }
+    if (n.kind === "list") { const r = W.byId[n.reg]; ring(r.centre, r.discR + 7, 0.2 * dim, 0, 72); if (r.spot) { r.spot.t -= dt * 0.5; if (r.spot.t <= 0) r.spot = null; else put(bitAt(r, r.spot.ix), 3 + (1 - r.spot.t) * 26, r.spot.t * 0.8, 1); } continue; }
+    const on = n === sel || n === hover || n === mark;
+    if (n.kind === "root") { put(n.pos, n.r, 1); put(n.pos, n.r + 7, 0.5, 1); }
+    else if (n.kind === "registrar") put(n.pos, n.r, dim);
+    else if (n.kind === "passport") { put(n.pos, n.r + (on ? 1.4 : 0), dim, n.off ? 1 : 0); L.add(n.pos, n.bit, (on ? 0.7 : 0.13) * dim, on ? 1.4 : 1); }
+    else if (n.kind === "leaf") put(n.pos, n.r, 0.5 * dim);
+    else if (n.kind === "node") put(n.pos, n.r, 0.5 * dim);
+    else if (n.kind === "head") put(n.pos, n.r, dim, 1);
+    else if (n.kind === "witness") put(n.pos, n.r, 1);
+    else if (n.kind === "open") put(n.pos, n.r, 0.8, 1);
+    else if (n.kind === "you") { put(n.pos, n.r, 1, 0, 1); put(n.pos, n.r + 6 + f * 10, 0.45, 1, 1); }
+    if (f > 0.02) put(n.pos, n.r + 5 + (1 - f) * 22, f * 0.5, 1, n.kind === "you" ? 1 : 0);
+    if (on && n.kind !== "you") put(n.pos, n.r + 5, 0.9, 1);
+  }
+  for (const l of W.links) {
+    if (!l.a.shown || !l.b.shown) continue;
+    const dim = (l.a.reg && W.byId[l.a.reg]?.dim) || l.a.dim || l.b.dim ? 0.16 : 1;
+    L.add(l.a.pos, l.b.pos, (l.kind === "tree" ? 0.34 : l.kind === "dash" ? 0.34 : 0.24) * dim, 1, 0, l.kind === "dash" ? 1 : 0);
+  }
+  if (selPath && sel.shown) {                                           // the chosen passport's proof, held in ink
+    const pts = [sel.pos, ...selPath.up.slice(1), selPath.reg, selPath.root];
+    for (let i = 1; i < pts.length; i++) L.add(pts[i - 1], pts[i], 0.85, 1.5);
+    for (const s of selPath.sib) put(s.pos, 5.5, 0.9, 1);
+  }
+  for (const th of threads) {                                           // a check in flight, in the signal colour
+    if (!th.done) { th.t += dt / th.dur; if (th.t >= 1) { th.t = 1; th.done = true; th.reveal(); } } else th.fade -= dt * 1.5;
+    const a = clamp(th.fade, 0, 1), head = along(th, th.t), tone = th.refusedAtBit && th.done ? 0 : 1;
+    for (let i = 0; i < head.i; i++) L.add(th.main[i], th.main[i + 1], 0.95 * a, 1.9, tone);
+    L.add(th.main[head.i], head.pos, 0.95 * a, 1.9, tone);
+    if (!th.done) { put(head.pos, 7, 0.9, 2, 1); put(head.pos, 2.6, 1, 0, 1); }
+    const leafAt = th.lens[0] / th.total;
+    if (th.t > leafAt) {                                                // from the entry down to its status bit, and the proof's siblings
+      const g = clamp((th.t - leafAt) / Math.max(0.001, th.refusedAtBit ? 1 - leafAt : 0.3), 0, 1), end = mix3(th.p.pos, th.path.bit, g);
+      L.add(th.p.pos, end, 0.95 * a, th.refusedAtBit ? 2.4 : 1.6, th.refusedAtBit ? 0 : 1);
+      if (!th.refusedAtBit) for (const s of th.path.sib) put(s.pos, 5, 0.85 * a, 1, 1);
     }
   }
-  if (drag) {
-    const now = performance.now(), dx = e.clientX - drag.x, dy = e.clientY - drag.y, dt = Math.max(1, now - drag.t), k = 0.0052;
-    drag.moved += Math.abs(dx) + Math.abs(dy);
-    if (drag.moved < 6) return;                                              // a little hysteresis before it counts as a drag
-    cam.yaw.x += dx * k; drag.raw += dy * k;
-    cam.pitch.x = drag.raw < PITCH[0] ? PITCH[0] - rubber(PITCH[0] - drag.raw, 1) : drag.raw > PITCH[1] ? PITCH[1] + rubber(drag.raw - PITCH[1], 1) : drag.raw;
-    drag.vx = 0.75 * ((dx * k) / dt) * 1000 + 0.25 * drag.vx; drag.vy = 0.75 * ((dy * k) / dt) * 1000 + 0.25 * drag.vy;
-    drag.x = e.clientX; drag.y = e.clientY; drag.t = now; hoverN = null; cv.classList.remove("point");
-  } else {
-    const n = pick(e.clientX, e.clientY); hoverN = n; cv.classList.toggle("point", !!n);
-    if (n) $("#hoverTxt").textContent = n.kind === "passport" ? `${n.label}${n.off ? " · switched off" : ""}` : n.info.t;
+  threads = threads.filter((th) => th.fade > 0);
+  N.count = ni; N.touch();
+}
+
+// ---------- labels: placed by priority, never overlapping; each is a click target ----------
+function labels(dt) {
+  const c = lx; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, vw, vh); hits = [];
+  const cand = [], zoomed = cam.dist.x < 1150;
+  for (const n of W.parts) {
+    if (!n.shown || !n.label && n.kind !== "you") continue;
+    const p = proj(n.labelAt || n.pos); if (!p.ok || p.x < -40 || p.x > vw + 40 || p.y < 0 || p.y > vh) continue;
+    const tag = tags.find((t) => t.p === n), on = n === sel || n === hover || n === mark;
+    let pri = { you: 100, root: 90, registrar: 80, witness: 60, open: 40, epoch: 50, list: 45, head: 42, passport: 20 }[n.kind] ?? 0;
+    if (n.kind === "epoch" && !n.cur) { if (!zoomed && !on) continue; pri = 8; }
+    if (n.kind === "passport" && !zoomed && !on && !tag) continue;
+    if (on) pri += 200; if (tag) pri += 150;
+    const dim = (n.reg && W.byId[n.reg]?.dim) || n.dim;
+    if (dim && !on) continue;
+    const rpx = n.labelAt ? 0 : (n.r + (n.kind === "root" ? 8 : 0)) * scaleCss / p.w;
+    cand.push({ n, p, pri, tag, on, rpx, text: n.kind === "you" ? "YOU ARE HERE" : n.kind === "passport" && n.off && !tag ? `${n.label} · off` : n.label });
   }
+  cand.sort((a, b) => b.pri - a.pri || a.p.w - b.p.w);
+  const boxes = [];
+  for (const k of cand) {
+    const pill = k.n.kind === "you" || k.tag; c.font = `${pill ? 600 : 400} ${pill ? 11 : 12}px ${MONO}`;
+    const text = k.tag ? `${k.text} · ${k.tag.text}` : k.text, w = c.measureText(text).width + (pill ? 20 : 0), h = pill ? 22 : 16;
+    const x = k.n.kind === "you" ? clamp(k.p.x - w / 2, 8, vw - w - 8) : pill ? Math.min(k.p.x + k.rpx + 8, vw - w - 8) : k.p.x + k.rpx + 8; let y = k.n.kind === "you" ? k.p.y - k.rpx - 34 : k.p.y - h / 2;
+    let b = [x - 3, y - 2, w + 6, h + 4];
+    const clash = () => boxes.some((o) => b[0] < o[0] + o[2] && b[0] + b[2] > o[0] && b[1] < o[1] + o[3] && b[1] + b[3] > o[1]);
+    if (k.tag) for (let t = 0; t < 5 && clash(); t++) { y += h + 4; b = [x - 3, y - 2, w + 6, h + 4]; }      // verdicts stack, they never hide each other
+    else if (!k.on && !pill && clash()) continue;
+    boxes.push(b); hits.push({ b, n: k.n });
+    if (pill) {
+      const sig = k.n.kind === "you", fillC = sig ? sigCss : k.tag.ok ? paperCss : inkCss, a = k.tag ? clamp(k.tag.t / 0.4, 0, 1) : 1;
+      c.globalAlpha = a; c.beginPath(); c.roundRect(x, y, w, h, 11); c.fillStyle = fillC; c.fill();
+      if (!sig && k.tag.ok) { c.strokeStyle = inkCss; c.lineWidth = 1; c.stroke(); }
+      c.fillStyle = sig || !k.tag.ok ? paperCss : inkCss; c.textBaseline = "middle"; c.fillText(text, x + 10, y + h / 2 + 0.5);
+      if (sig) { c.fillStyle = sigCss; c.fillRect(k.p.x - 0.5, y + h, 1, 12); }
+      c.globalAlpha = 1;
+    } else {
+      c.textBaseline = "middle"; c.lineWidth = 3; c.strokeStyle = paperCss; c.strokeText(text, x, y + h / 2 + 0.5);
+      c.fillStyle = k.on || k.n.kind === "root" || k.n.kind === "registrar" ? inkCss : ink2Css; c.fillText(text, x, y + h / 2 + 0.5);
+    }
+  }
+  for (const t of tags) t.t -= dt; tags = tags.filter((t) => t.t > 0);
+}
+
+// ---------- pointing: parts, then labels, then single status bits ----------
+function pick(x, y) {
+  let best = null, bd = 1e9;
+  for (const n of W.parts) {
+    if (!n.shown || n.kind === "epoch" || n.kind === "list" || (n.reg && W.byId[n.reg]?.dim)) continue;
+    const p = proj(n.pos); if (!p.ok) continue;
+    const d = Math.hypot(p.x - x, p.y - y), lim = Math.max(n.r * scaleCss / p.w + 5, n.kind === "node" ? 9 : 14);
+    if (d < lim && d < bd) { best = n; bd = d; }
+  }
+  if (best) return best;
+  for (const h of hits) if (x >= h.b[0] && x <= h.b[0] + h.b[2] && y >= h.b[1] && y <= h.b[1] + h.b[3]) return h.n;
+  for (const r of W.regs) {
+    if (r.dim || !r.shown) continue; let bi = -1; bd = 7;
+    for (let i = 0; i < r.list.bit_len; i++) { const p = proj(bitAt(r, i)); if (!p.ok) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; bi = i; } }
+    if (bi >= 0) {
+      const rec = r.used.get(bi), pp = rec && W.byId[`pp:${rec.sub}`];
+      return { id: `bit:${r.id}:${bi}`, kind: "bit", pos: bitAt(r, bi), r: 2.5, shown: true, flash: 0, reg: r.id, info: { k: `STATUS BIT ${bi} · ${r.id.toUpperCase()}`, t: r.bits[bi] ? `Bit ${bi}: set` : `Bit ${bi}: clear`,
+        rows: [["List", `${r.id}'s signed status list`], ["Belongs to", pp && pp.shown ? short(rec.sub) : "no passport in this record"], ["Means", r.bits[bi] ? "that passport is switched off; every verifier refuses it" : pp && pp.shown ? "that passport is in service" : "not in use yet"]] } };
+    }
+  }
+  return null;
+}
+
+const ptrs = new Map(); let drag = null, pinch = null, moved = 0, hist = [];
+cv.addEventListener("pointerdown", (e) => {
+  cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); poke();
+  for (const s of [cam.yaw, cam.pitch, cam.dist]) { s.on = false; s.v = 0; } cam.vyaw = cam.vpitch = 0;       // grab it mid-flight
+  if (ptrs.size === 1) { drag = { x: e.clientX, y: e.clientY, yaw: cam.yaw.x, pitch: cam.pitch.x }; moved = 0; hist = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }]; cv.classList.add("grabbing"); }
+  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: cam.dist.x }; drag = null; }
+});
+cv.addEventListener("pointermove", (e) => {
+  const was = ptrs.get(e.pointerId);
+  if (was && eng.inkOn && eng.ink && !RM.matches) eng.ink.splat(e.clientX / vw, 1 - e.clientY / vh, (e.clientX - was.x) * 7, -(e.clientY - was.y) * 7, 0, 0, 0.0016);
+  if (!was) {                                                           // hovering: stir the ink a little, name what is under the pointer
+    if (e.pointerType === "mouse") { if (eng.inkOn && eng.ink && !RM.matches && (e.movementX || e.movementY)) eng.ink.splat(e.clientX / vw, 1 - e.clientY / vh, e.movementX * 5, -e.movementY * 5, 0.012, 0, 0.0012);
+      const n = pick(e.clientX, e.clientY); hover = n && n.kind !== "bit" ? n : null; cv.classList.toggle("point", !!n); }
+    return;
+  }
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && ptrs.size === 2) { const [a, b] = [...ptrs.values()]; let d = pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)); if (d < DIST[0]) d = DIST[0] - rubber(DIST[0] - d, 300); if (d > DIST[1]) d = DIST[1] + rubber(d - DIST[1], 600); cam.dist.jump(d); poke(); return; }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; moved = Math.max(moved, Math.hypot(dx, dy));
+  if (moved < 6) return;                                                // a small threshold before a press becomes a drag
+  cam.yaw.jump(drag.yaw - dx * 0.0052); let p = drag.pitch + dy * 0.0042;
+  if (p < PITCH[0]) p = PITCH[0] - rubber(PITCH[0] - p, 0.5); if (p > PITCH[1]) p = PITCH[1] + rubber(p - PITCH[1], 0.5);
+  cam.pitch.jump(p); hist.push({ t: e.timeStamp, x: e.clientX, y: e.clientY }); if (hist.length > 6) hist.shift(); poke();
 });
 function release(e) {
-  pointers.delete(e.pointerId);
-  if (!drag) { if (cam.dist.x < DIST[0] || cam.dist.x > DIST[1]) cam.dist.set(0.4, 1).go(clamp(cam.dist.x, DIST[0], DIST[1])); return; }
-  cv.classList.remove("grabbing");
-  if (drag.moved < 6) { const n = pick(e.clientX, e.clientY); if (n) select(n); else if (sheetN) closeSheet(); }
-  else {
-    const still = performance.now() - drag.t > 80;                           // a finger that stopped hands over no velocity
-    if (!RM.matches && !still) cam.vyaw = drag.vx / 1000;                    // rad per ms, decays like a flick
-    if (outOfPitch()) RM.matches ? (cam.pitch.x = clamp(cam.pitch.x, PITCH[0], PITCH[1])) : cam.pitch.set(0.4, 1).go(clamp(cam.pitch.x, PITCH[0], PITCH[1]), still ? 0 : drag.vy);
-    else if (!RM.matches && !still && Math.abs(drag.vy) > 0.3) cam.pitch.set(0.5, 0.8).go(clamp(cam.pitch.x + project(drag.vy, 0.99) * 0.06, PITCH[0], PITCH[1]), drag.vy);
+  if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId); cv.classList.remove("grabbing");
+  if (pinch) { pinch = null; cam.dist.set(0.4, 1).go(clamp(cam.dist.x, DIST[0], DIST[1])); drag = null; return; }
+  if (!drag) return;
+  if (moved < 6) { const n = pick(e.clientX, e.clientY); n ? select(n) : closeSheet(); }
+  else if (!RM.matches && hist.length > 1) {                           // the flick's own speed carries on
+    const a = hist[0], b = hist[hist.length - 1], t = Math.max(1, b.t - a.t) / 1000;
+    cam.vyaw = -(b.x - a.x) / t * 0.0052; cam.vpitch = (b.y - a.y) / t * 0.0042;
   }
-  drag = null; idleAt = performance.now() + 5000;
+  if (cam.pitch.x < PITCH[0] || cam.pitch.x > PITCH[1]) { cam.vpitch = 0; cam.pitch.set(0.4, 1).go(clamp(cam.pitch.x, PITCH[0], PITCH[1])); }
+  drag = null;
 }
 cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", release);
-cv.addEventListener("pointerleave", () => { if (!drag) hoverN = null; });
-cv.addEventListener("wheel", (e) => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * 0.0012)); }, { passive: false });
+cv.addEventListener("pointerleave", () => { hover = null; cv.classList.remove("point"); });
+cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist.set(0.3, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * Math.exp(e.deltaY * 0.0012), DIST[0], DIST[1])); poke(); }, { passive: false });
 function physics(dt) {
+  if (!drag) {
+    if (cam.vyaw || cam.vpitch) {                                       // momentum, decaying like a scroll
+      cam.yaw.jump(cam.yaw.x + cam.vyaw * dt); const k = Math.pow(0.05, dt); cam.vyaw *= k; if (Math.abs(cam.vyaw) < 0.01) cam.vyaw = 0;
+      if (cam.vpitch) { const p = cam.pitch.x + cam.vpitch * dt; cam.vpitch *= k; if (p < PITCH[0] || p > PITCH[1] || Math.abs(cam.vpitch) < 0.01) { cam.vpitch = 0; cam.pitch.set(0.5, 0.8).go(clamp(p, PITCH[0], PITCH[1])); } else cam.pitch.jump(p); }
+    } else if (!RM.matches && !tour.on && !sel && !listOpen && performance.now() > idleAt && !cam.yaw.on) cam.yaw.jump(cam.yaw.x + dt * 0.022);   // a slow turn when left alone
+  }
   for (const s of SPR) s.step(dt);
-  if (!drag && !cam.yaw.on) {
-    cam.yaw.x += cam.vyaw * dt * 1000; cam.vyaw *= Math.pow(0.995, dt * 1000);         // momentum, decaying like a scroll
-    if (!RM.matches && !tour.on && !sheetN && performance.now() > idleAt) { cam.auto = Math.min(1, cam.auto + dt / 2.5); cam.yaw.x += 0.06 * dt * cam.auto; }
-  }
 }
 
-// ---------- details sheet: on a spring, and thrown away like a card ----------
-const sheet = $("#sheet"), sheetPos = new Spring(1, 0.42, 1);              // 0 = open, 1 = away
-const phone = () => matchMedia("(max-width: 760px)").matches;
-function placeSheet() {
-  const size = phone() ? sheet.offsetHeight + 24 : sheet.offsetWidth + 24;
-  sheet.style.transform = phone() ? `translateY(${sheetPos.x * size}px)` : `translateX(${sheetPos.x * size}px)`;
-  sheet.setAttribute("aria-hidden", String(sheetPos.x > 0.98));
-}
-function openSheet() { RM.matches ? ((sheetPos.x = 0), sheetPos.stop()) : sheetPos.set(0.42, 1).go(0); }
-function closeSheet(v) { RM.matches ? ((sheetPos.x = 1), sheetPos.stop()) : sheetPos.set(0.42, 1).go(1, v); sheetN = null; focusN = null; }
-const KIND_ICON = { root: "root", epoch: "epoch", registrar: "registrar", operator: "operator", leaf: "log", witness: "witness", open: "seat", you: "you" };
-function fillSheet(n, keepAction) {
-  $("#shK").textContent = n.info.k; $("#shT").textContent = n.info.t;
-  $("#shIc").innerHTML = icon(n.kind === "passport" ? (n.off ? "revoked" : "valid") : KIND_ICON[n.kind] || "info");
-  $("#shCopy").hidden = n.kind !== "passport"; if (n.kind === "passport") $("#shCopyTxt").textContent = n.rec.sub;
-  if (!keepAction) setAct("idle");
-  const dl = $("#shD"); dl.innerHTML = "";
-  for (const [k, v] of n.info.rows) { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; dl.append(dt, dd); }
-  const vbox = $("#shV"); vbox.innerHTML = "";
-  if (n.kind === "passport") {
-    const d = document.createElement("div"); d.className = "verdict" + (n.verdict && n.verdict !== "valid" ? " no" : "");
-    d.textContent = !n.verdict ? (live() ? "Not checked in this tab yet." : "Checks run on the record as it stands now: move the timeline to Now.")
-      : n.verdict === "valid" ? "Checked in this tab: valid. A service would let this agent in."
-      : n.verdict === "revoked" ? "Checked in this tab: switched off by its registrar. A service would refuse this agent." : `Checked in this tab: refused (${n.verdict}).`;
-    vbox.append(d);
-  }
-  $("#shCheck").hidden = n.kind !== "passport";
-}
-function select(n) { sheetN = n; focusN = n; fillSheet(n); openSheet(); if (n.kind === "passport") check(n); }
-$("#sheetX").addEventListener("click", () => closeSheet());
-// the action button: idle → checking (held at least 450 ms, so it never flickers) → the verifier's own verdict → idle
-const act = $("#shCheck"); let actTimer = 0;
+// ---------- details: a sheet (right on wide screens, a bottom sheet on phones) ----------
+const sheet = $("#sheet"), phone = () => matchMedia("(max-width: 760px)").matches;
+function placeSheet() { const v = sheetPos.x; sheet.style.transform = phone() ? `translateY(calc(${v * 100}% + ${v * 24}px))` : `translateX(calc(${v * 100}% + ${v * 24}px))`; sheet.setAttribute("aria-hidden", String(v > 0.98)); sheet.inert = v > 0.98; }
+function openSheet() { sheetPos.set(0.42, 1).go(0); }
+function closeSheet(v) { if (sheetPos.to === 1 && !sel) return; sheetPos.set(0.42, 1).go(1, v); sel = null; }
+const act = $("#shCheck");
 function setAct(state, ok) { act.dataset.state = state; if (ok !== undefined) act.dataset.ok = String(ok); for (const el of act.querySelectorAll(".act__s")) el.setAttribute("aria-hidden", String(el.dataset.s !== state)); }
-act.addEventListener("click", () => {
-  if (!sheetN || act.dataset.state === "busy") return;
-  const p = sheetN, until = performance.now() + (RM.matches ? 0 : 450); clearTimeout(actTimer); setAct("busy");
-  const show = (ok, ic, txt) => { $("#actIc").innerHTML = icon(ic); $("#actTxt").textContent = txt; setAct("done", ok); $("#actLive").textContent = txt; actTimer = setTimeout(() => sheetN === p && setAct("idle"), 2800); };
-  const ran = check(p, (v, ms) => setTimeout(() => {
-    if (sheetN !== p) return;
-    const t = `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
-    v.verdict === "valid" ? show(true, "valid", `Valid · let in · ${t}`) : show(false, "revoked", `${v.reason === "revoked" ? "Switched off" : "Refused (" + (v.reason || "invalid") + ")"} · ${t}`);
-  }, Math.max(0, until - performance.now())));
-  if (!ran) show(false, "alert", live() ? "This registrar is hidden: show it first" : "Checks run at Now: move the timeline");
-});
-// the copy field: the copy icon turns into a check, and back
-$("#shCopyBtn").addEventListener("click", async () => {
-  const txt = $("#shCopyTxt").textContent; let ok = false;
-  try { await navigator.clipboard.writeText(txt); ok = true; } catch { const r = document.createRange(); r.selectNodeContents($("#shCopyTxt")); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(r); ok = document.execCommand?.("copy") ?? false; sl.removeAllRanges(); }
-  swapIcon($("#shCopyIc"), ok ? "check" : "alert"); $("#shCopyLive").textContent = ok ? "Copied" : "Could not copy; select the name instead";
-  setTimeout(() => { swapIcon($("#shCopyIc"), "copy"); $("#shCopyLive").textContent = ""; }, 1600);
-});
-$("#shFocus").addEventListener("click", () => sheetN && flyTo(sheetN.kind === "registrar" && sheetN.logMid ? sheetN.pos : sheetN.pos, ["passport", "leaf", "operator"].includes(sheetN.kind) ? 360 : 640));
-let sd = null;
-sheet.addEventListener("pointerdown", (e) => {
-  if (e.target.closest("button,a,input")) return;
-  if (phone() && sheet.scrollTop > 0) return;
-  const p = phone() ? e.clientY : e.clientX;
-  sd = { id: e.pointerId, s: p, x0: sheetPos.x, t: performance.now(), v: 0, last: p, moved: 0 };
-  sheetPos.stop(); try { sheet.setPointerCapture(e.pointerId); } catch {}
-});
-sheet.addEventListener("pointermove", (e) => {
-  if (!sd || e.pointerId !== sd.id) return;
-  const p = phone() ? e.clientY : e.clientX, size = phone() ? sheet.offsetHeight + 24 : sheet.offsetWidth + 24, now = performance.now();
-  sd.moved += Math.abs(p - sd.last);
-  let x = sd.x0 + (p - sd.s) / size; if (x < 0) x = -rubber(-x, 1, 0.3);                    // resists past fully open
-  sd.v = 0.7 * ((p - sd.last) / size / Math.max(1, now - sd.t)) * 1000 + 0.3 * sd.v; sd.last = p; sd.t = now;
-  sheetPos.x = x;
-});
-const sheetUp = (e) => {
-  if (!sd || e.pointerId !== sd.id) return;
-  const rest = sheetPos.x + project(sd.v * 1000, 0.99) / 1000;                              // where the throw would land
-  if (sd.moved < 4) { RM.matches ? (sheetPos.x = 0) : sheetPos.set(0.42, 1).go(0); }
-  else if (rest > 0.45) closeSheet(sd.v);
-  else RM.matches ? (sheetPos.x = 0) : sheetPos.set(0.42, Math.abs(sd.v) > 0.5 ? 0.8 : 1).go(0, sd.v);
-  sd = null;
-};
-sheet.addEventListener("pointerup", sheetUp); sheet.addEventListener("pointercancel", sheetUp);
-
-// ---------- the walk-through ----------
-const tour = { on: false, i: 0, stops: [], timer: 0 };
-function makeTour() {
-  const r0 = regs[0], recs = r0.recs;
-  const off = nodes.find((n) => n.kind === "passport" && n.reg === r0.id && r0.bitsFinal[n.rec.status_idx]);
-  const good = nodes.find((n) => n.kind === "passport" && n.reg === r0.id && !r0.bitsFinal[n.rec.status_idx] && !(n.rec.chain_keys || []).length);
-  const offAll = nodes.filter((n) => n.kind === "passport" && byId[n.reg].bitsFinal[n.rec.status_idx]).length;
-  const later = (fn) => { clearTimeout(tour.timer); tour.timer = setTimeout(() => tour.on && fn(), RM.matches ? 0 : 950); };
-  tour.stops = [
-    { t: "The root", p: "A root signs one thing: the list of accredited registrars. It issues no passports and sees no traffic. This is the test root; the real one is made at the founding ceremony.", at: () => flyTo(byId.root.pos, 560, { pitch: 0.3 }), hl: "root" },
-    { t: "The directory", p: `The directory names ${regs.length} registrars and is signed with both root keys. Epoch ${CUR} is current; the replaced epoch stays in the directory log. Your tab checks it against the root before it trusts anything else.`, at: () => flyTo(byId.root.pos, 780, { pitch: 0.55 }), hl: `epoch${CUR}` },
-    { t: "A registrar", p: `${r0.id} is accredited in the directory. It onboards operators and issues their agents' passports: ${recs.length} here, from ${new Set(recs.map((r) => r.operator)).size} operators.`, at: () => flyTo(r0.pos, 640, { pitch: 0.25 }), hl: r0.id },
-    { t: "Its log", p: `Every passport is appended to the registrar's log before it counts. These ${r0.size} beads are its entries; a filled bead is a passport in the record.`, at: () => flyTo(r0.logMid, 400, { pitch: 0.15 }), hl: `leaf:${r0.id}:${r0.size - 1}` },
-    { t: "Its status list", p: `${r0.list.bit_len.toLocaleString("en")} points, one for each bit of the list the registrar signs. The dark points are set: those passports are switched off. Verifiers keep a copy and read it offline.`, at: () => flyTo(r0.pos, 840, { pitch: 0.7 }), hl: r0.id },
-    { t: "You, the verifier", p: "This tab holds the directory and the signed lists. Watch: it checks a passport now, here, without contacting anyone.", at: () => { focusN = good; flyTo(good.pos, 520, { pitch: 0.2 }); later(() => check(good)); }, hl: "you" },
-    { t: "The off switch", p: `This agent's registrar set its bit. Every verifier that holds the list now refuses it, everywhere, without asking anyone. ${offAll} passports in this record are switched off.`, at: () => { focusN = off; flyTo(off.pos, 420, { pitch: 0.2 }); later(() => check(off)); }, hl: null },
-  ];
+function fillSheet(n, keepAction) {
+  $("#shIc").innerHTML = icon(KIND_ICON[n.kind] || "info"); $("#shK").textContent = n.info.k; $("#shT").textContent = n.info.t;
+  const dl = $("#shD"); dl.textContent = ""; for (const [k, v] of n.info.rows) { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; dl.append(dt, dd); }
+  const V = $("#shV"); V.textContent = ""; const pp = n.kind === "passport";
+  if (pp) {
+    const d = document.createElement("div");
+    if (n.verdict) { const ok = n.verdict === "valid"; d.className = `verdict${ok ? "" : " no"}`; d.innerHTML = icon(ok ? "valid" : "revoked") + "<span></span>"; d.lastChild.textContent = ok ? "Valid. Checked in this tab by the shipped verifier, against the published directory." : n.verdict === "revoked" ? "Switched off. Its registrar set its status bit, so every verifier refuses it." : `Refused: ${n.verdict}.`; }
+    else { d.className = "verdict"; d.innerHTML = "<span></span>"; d.lastChild.textContent = live() ? "Not checked in this tab yet." : "Checks run on the record as it stands now. Move the timeline to the end."; }
+    V.append(d);
+    const path = W.pathOf(n), r = W.byId[n.reg], ol = $("#shSteps"); ol.textContent = "";
+    const li = (a, b) => { const x = document.createElement("li"); x.textContent = a; if (b) { const s = document.createElement("span"); s.textContent = b; x.append(s); } ol.append(x); };
+    li("The registrar's two signatures on the passport", "Ed25519 and ML-DSA-65, both required");
+    li(`Entry ${n.rec.leaf_index} of ${n.rec.checkpoint_size} in ${r.id}'s log`, path.sib.length ? `${path.sib.length} hashes: ${path.sib.map((s) => `${s.hi - s.lo === 1 ? `entry ${s.lo}` : `entries ${s.lo}–${s.hi - 1}`} ${s.hash.slice(0, 8)}…`).join(", ")}` : "its inclusion proof");
+    li("The log's head, signed by the registrar's delegate", `${n.rec.checkpoint_root.slice(0, 20)}…`);
+    li(`${r.id}, named in directory epoch ${W.CUR}`); li("The directory, signed by the root's two keys");
+    li(`Bit ${n.rec.status_idx} of the signed status list`, r.bitsFinal[n.rec.status_idx] ? "set: switched off" : "clear: in service");
+    $("#shCopyTxt").textContent = n.rec.sub;
+  }
+  $("#shProof").hidden = !pp; $("#shCopy").hidden = !pp; act.hidden = !pp; $("#shFocus").hidden = n.kind === "bit";
+  if (pp && !keepAction) setAct("idle");
 }
-function makeLadder() {
-  const box = $("#ladder"); box.innerHTML = "";
-  tour.stops.forEach((s, i) => { const b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-label", `Stop ${i + 1}: ${s.t}`); b.innerHTML = "<i></i><span></span>"; b.querySelector("span").textContent = s.t; b.addEventListener("click", () => tourShow(i)); box.append(b); });
+function select(n) { sel = n; fillSheet(n); openSheet(); poke(); if (n.kind === "passport" && live() && !n.verdict) check(n); }
+// The side a registrar's log is read from: across its row of entries, on whichever side the camera already is.
+function faceYaw(r) { const a = Math.atan2(r.side[0], r.side[2]), b = a + Math.PI; const d = (x) => Math.abs(((x - cam.yaw.x) % TAU + TAU + Math.PI) % TAU - Math.PI); return d(a) <= d(b) ? a : b; }
+function focusOn(n) {
+  const r = n.reg ? W.byId[n.reg] : n.kind === "registrar" ? n : null, yaw = r ? faceYaw(r) + 0.28 : undefined;
+  flyTo(n.kind === "passport" ? mix3(n.pos, n.bit, 0.35) : n.pos, n.kind === "root" ? 520 : n.kind === "registrar" ? 820 : n.kind === "you" ? 900 : (n.kind === "passport" ? 640 : 560) * (phone() ? 1.5 : 1), { yaw, pitch: 0.3 });
+}
+$("#sheetX").addEventListener("click", () => closeSheet());
+$("#shFocus").addEventListener("click", () => sel && focusOn(sel));
+let actT = 0;
+act.addEventListener("click", () => {
+  if (!sel || sel.kind !== "passport" || act.dataset.state === "busy") return;
+  if (!live()) { applyStep(W.events.length); setPlaying(false); }
+  const p = sel, t0 = performance.now(); setAct("busy"); clearTimeout(actT);
+  check(p, { then: (res) => { const show = () => { if (sel !== p) return; $("#actIc").innerHTML = icon(res.ok ? "valid" : "revoked"); $("#actTxt").textContent = `${res.ok ? "Valid" : res.reason === "revoked" ? "Switched off" : "Refused"} · ${msText(res.ms)}`; setAct("done", res.ok); $("#actLive").textContent = $("#actTxt").textContent; actT = setTimeout(() => sel === p && setAct("idle"), 2600); };
+    setTimeout(show, Math.max(0, 450 - (performance.now() - t0))); } });      // a working state is held long enough to be read
+});
+$("#shCopyBtn").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#shCopyTxt").textContent); swapIcon($("#shCopyIc"), "check"); $("#shCopyLive").textContent = "Copied"; setTimeout(() => { swapIcon($("#shCopyIc"), "copy"); $("#shCopyLive").textContent = ""; }, 1600); } catch { $("#shCopyLive").textContent = "Could not copy"; } });
+{ // the phone sheet follows the finger and can be thrown away
+  let g = null;
+  sheet.addEventListener("pointerdown", (e) => { if (!phone() || $("#sheetIn").scrollTop > 0 || e.target.closest("button,a,input")) return; g = { y: e.clientY, at: sheetPos.x, h: sheet.offsetHeight + 24, hist: [{ t: e.timeStamp, y: e.clientY }], id: e.pointerId }; });
+  sheet.addEventListener("pointermove", (e) => { if (!g || e.pointerId !== g.id) return; const d = (e.clientY - g.y) / g.h; if (Math.abs(e.clientY - g.y) < 6) return; sheet.setPointerCapture(g.id); sheetPos.jump(d < 0 ? -rubber(-d, 0.3) + g.at : g.at + d); g.hist.push({ t: e.timeStamp, y: e.clientY }); if (g.hist.length > 5) g.hist.shift(); });
+  const up = (e) => { if (!g || e.pointerId !== g.id) return; const a = g.hist[0], b = g.hist[g.hist.length - 1], v = (b.y - a.y) / Math.max(1, b.t - a.t) * 1000 / g.h; const rest = sheetPos.x + coast(v * 1000, 0.99) / 1000; g = null; rest > 0.5 ? closeSheet(v) : sheetPos.set(0.42, 0.85).go(0, v); };
+  sheet.addEventListener("pointerup", up); sheet.addEventListener("pointercancel", up);
+}
+
+// ---------- the walk-through: seven stops, each a flight you can grab ----------
+const tour = { on: false, i: 0, timer: 0, stops: [] };
+function makeTour() {
+  const r0 = W.regs[0], face = Math.atan2(r0.side[0], r0.side[2]), okP = W.parts.find((n) => n.kind === "passport" && n.reg === r0.id && !n.rec.revoked), ev = W.events.findIndex((e) => e.type === "change" && e.reg === r0.id && e.on);
+  const offP = ev >= 0 ? W.byId[`pp:${r0.used.get(W.events[ev].idx[0])?.sub}`] : null;
+  tour.stops = [
+    { t: "The root", p: "One key pair, kept offline. It signs one thing, the directory of registrars. It issues no passports and sees no traffic. This one is a test root: the real one is made at a public ceremony.", go: () => flyTo([0, 10, 0], 520, { pitch: 0.35, yaw: 0.5 }) },
+    { t: "The directory", p: `The ring is the directory, epoch ${W.CUR}: the short list of registrars the root vouches for, signed again at least every 92 days. The fainter rings inside are the epochs it replaced.`, go: () => flyTo([0, 0, 0], 1050, { pitch: 1.05, yaw: 0.3 }) },
+    { t: "A registrar", p: `${r0.id} issues passports to the agents of the companies it has checked, and it alone can switch them off. It stands on the ring because the directory names it.`, go: () => flyTo(r0.pos, 620, { pitch: 0.3, yaw: face + 0.7 }) },
+    { t: "Its log", p: `Every passport is written into the registrar's log before it counts. The ${r0.size} entries are hashed in pairs up to one signed head, so nothing can be changed or removed without the head changing, and the witness cosigns each head.`, go: () => flyTo([r0.centre[0], 110, r0.centre[2]], 640, { pitch: 0.12, yaw: face + 0.12 }) },
+    { t: "Its status list", p: `${r0.list.bit_len.toLocaleString("en")} bits, signed as one small file. Each passport owns one bit. A dark point is a passport that was switched off. Anyone can hold a copy, so checking needs nobody's permission.`, go: () => flyTo(r0.centre, 640, { pitch: 1.0, yaw: face + 0.2 }) },
+    { t: "You, the verifier", p: "You stand outside the network holding copies. The blue thread is a real check of one passport, run in this tab: its entry, up the log to the signed head, the registrar, the directory, the root, and its status bit.", go: () => { resetView(); mark = okP; if (okP) tour.timer = setTimeout(() => { if (!live()) applyStep(W.events.length, true); check(okP); }, RM.matches ? 0 : 900); } },
+    { t: "The off switch", p: offP ? `Watch ${short(offP.rec.sub)}. Its registrar sets one bit, and from the next check on, every verifier everywhere refuses that agent, with no call to anyone. The refusal you see is this tab's own.` : "A registrar sets one bit, and every verifier refuses that passport from the next check on.", go: () => {
+      if (!offP) return; mark = offP; flyTo(mix3(offP.pos, offP.bit, 0.6), 600, { pitch: 0.5, yaw: face + 0.3 });
+      applyStep(ev, true); tour.timer = setTimeout(() => { applyStep(ev + 1); tour.timer = setTimeout(() => { applyStep(W.events.length, true); offP.verdict = null; check(offP); }, RM.matches ? 0 : 1300); }, RM.matches ? 0 : 1200); } },
+  ];
+  const lad = $("#ladder"); tour.stops.forEach((s, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.title = s.t; b.setAttribute("aria-label", `Stop ${i + 1}: ${s.t}`); b.addEventListener("click", () => tourShow(i)); li.append(b); lad.append(li); });
 }
 function tourShow(i) {
-  tour.i = clamp(i, 0, tour.stops.length - 1); const s = tour.stops[tour.i];
-  [...$("#ladder").children].forEach((b, j) => (j === tour.i ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current")));
+  clearTimeout(tour.timer); mark = null; tour.i = clamp(i, 0, tour.stops.length - 1); const s = tour.stops[tour.i];
+  if (!live()) applyStep(W.events.length, true); setPlaying(false);
   $("#capN").textContent = `${tour.i + 1} / ${tour.stops.length}`; $("#capT").textContent = s.t; $("#capP").textContent = s.p;
-  $("#capBack").disabled = tour.i === 0; $("#capNext").textContent = tour.i === tour.stops.length - 1 ? "Finish" : "Next";
-  focusN = null; if (!live()) applyStep(events.length);
-  s.at(); if (s.hl && byId[s.hl]) byId[s.hl].flash = 1;
+  [...$("#ladder").querySelectorAll("button")].forEach((b, k) => k === tour.i ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current"));
+  $("#capPrev").disabled = tour.i === 0; $("#capNext").textContent = tour.i === tour.stops.length - 1 ? "Finish" : "Next"; s.go();
 }
-function tourStart() { tour.on = true; RM.matches ? (lift.x = 0.1) : lift.go(0.1); $("#caption").hidden = false; $("#tourBtn").setAttribute("aria-pressed", "true"); closeSheet(); setPlaying(false); tourShow(0); $("#capNext").focus({ preventScroll: true }); }
-function tourEnd() { tour.on = false; RM.matches ? (lift.x = 0) : lift.go(0); clearTimeout(tour.timer); $("#caption").hidden = true; $("#tourBtn").setAttribute("aria-pressed", "false"); focusN = null; resetView(); $("#tourBtn").focus({ preventScroll: true }); }
+function tourStart() { tour.on = true; closeSheet(); capShift.go(1); if (phone()) lift.go(0.22); $("#caption").hidden = false; $("#tourBtn").setAttribute("aria-pressed", "true"); tourShow(0); }
+function tourEnd() { tour.on = false; mark = null; capShift.go(0); lift.go(0); clearTimeout(tour.timer); if (!live()) applyStep(W.events.length, true); $("#caption").hidden = true; $("#tourBtn").setAttribute("aria-pressed", "false"); resetView(); }
 $("#tourBtn").addEventListener("click", () => (tour.on ? tourEnd() : tourStart()));
-$("#capNext").addEventListener("click", () => (tour.i === tour.stops.length - 1 ? tourEnd() : tourShow(tour.i + 1)));
-$("#capBack").addEventListener("click", () => tourShow(tour.i - 1));
-$("#capExit").addEventListener("click", tourEnd);
+$("#capPrev").addEventListener("click", () => tourShow(tour.i - 1)); $("#capNext").addEventListener("click", () => (tour.i === tour.stops.length - 1 ? tourEnd() : tourShow(tour.i + 1))); $("#capEnd").addEventListener("click", tourEnd);
 
-// ---------- controls ----------
-$("#aboutBtn").addEventListener("click", () => { const a = $("#about"), on = a.hidden; a.hidden = !on; $("#aboutBtn").setAttribute("aria-expanded", String(on)); });
-$("#feedToggle").addEventListener("click", () => { const f = $("#feed"), closed = !f.classList.contains("closed"); f.classList.toggle("closed", closed); $("#feedToggle").textContent = closed ? "Show" : "Hide"; $("#feedToggle").setAttribute("aria-expanded", String(!closed)); });
-$("#zIn").addEventListener("click", () => zoomBy(0.78)); $("#zOut").addEventListener("click", () => zoomBy(1.28)); $("#zReset").addEventListener("click", resetView);
-document.addEventListener("pointerdown", (e) => { const b = e.target.closest(".btn,.chip,.play"); if (b) b.classList.add("is-down"); });   // the press shows on the press
-addEventListener("pointerup", () => document.querySelectorAll(".is-down").forEach((b) => b.classList.remove("is-down")));
-addEventListener("pointercancel", () => document.querySelectorAll(".is-down").forEach((b) => b.classList.remove("is-down")));
-const findIn = $("#find"), findList = $("#findList"); let hits = [], sel = -1;
-function renderHits() {
-  findList.innerHTML = "";
-  hits.forEach((n, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "option"); b.setAttribute("aria-selected", String(i === sel)); b.textContent = n.rec.sub; b.addEventListener("click", () => choose(n)); li.append(b); findList.append(li); });
-  findList.classList.toggle("on", hits.length > 0);
-}
-function choose(n) { findList.classList.remove("on"); findIn.value = ""; hits = []; findIn.blur(); if (!live()) applyStep(events.length); flyTo(n.pos, 360, { pitch: 0.2 }); select(n); }
-findIn.addEventListener("input", () => { const q = findIn.value.trim().toLowerCase(); hits = q ? nodes.filter((n) => n.kind === "passport" && n.rec.sub.toLowerCase().includes(q)).slice(0, 12) : []; sel = hits.length ? 0 : -1; renderHits(); });
-findIn.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown") { sel = Math.min(hits.length - 1, sel + 1); renderHits(); e.preventDefault(); }
-  if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); renderHits(); e.preventDefault(); }
-  if (e.key === "Enter" && hits[sel]) choose(hits[sel]);
-  if (e.key === "Escape") { findIn.value = ""; hits = []; renderHits(); findIn.blur(); }
-});
+// ---------- finding a passport ----------
+const findIn = $("#find"), findList = $("#findList"); let found = [], foundAt = 0;
+function renderFound() { findList.textContent = ""; found.forEach((n, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "option"); b.setAttribute("aria-selected", String(i === foundAt)); b.textContent = n.rec.sub.replace(/^ainra:/, ""); b.addEventListener("click", () => choose(n)); li.append(b); findList.append(li); }); findList.classList.toggle("on", found.length > 0); }
+function choose(n) { findList.classList.remove("on"); findIn.value = ""; found = []; findIn.blur(); if (!live()) applyStep(W.events.length, true); if (W.byId[n.reg].dim) setReg("all"); if (listOpen) toggleList(false); focusOn(n); select(n); }
+findIn.addEventListener("input", () => { const q = findIn.value.trim().toLowerCase(); found = q ? W.parts.filter((n) => n.kind === "passport" && n.rec.sub.toLowerCase().includes(q)).slice(0, 8) : []; foundAt = 0; renderFound(); });
+findIn.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { foundAt = Math.min(found.length - 1, foundAt + 1); renderFound(); e.preventDefault(); } else if (e.key === "ArrowUp") { foundAt = Math.max(0, foundAt - 1); renderFound(); e.preventDefault(); } else if (e.key === "Enter" && found[foundAt]) choose(found[foundAt]); else if (e.key === "Escape") { findIn.value = ""; found = []; renderFound(); findIn.blur(); } });
 findIn.addEventListener("blur", () => setTimeout(() => findList.classList.remove("on"), 150));
-addEventListener("keydown", (e) => {
-  if (e.target.closest("input")) return;
-  const k = e.key;
-  if (k === "Escape") { if (!$("#about").hidden) $("#aboutBtn").click(); else if (tour.on) tourEnd(); else if (sheetN) closeSheet(); return; }
-  if (e.target.closest("#track") || e.target.closest("button")) { if (k !== " ") return; if (e.target.closest("button")) return; }
-  if (k === "ArrowLeft" || k === "ArrowRight") { const d = k === "ArrowLeft" ? -0.35 : 0.35; RM.matches ? (cam.yaw.x += d) : cam.yaw.set(0.4, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) + d); idleAt = performance.now() + 6000; e.preventDefault(); }
-  if (k === "ArrowUp" || k === "ArrowDown") { const t = clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) + (k === "ArrowUp" ? 0.2 : -0.2), PITCH[0], PITCH[1]); RM.matches ? (cam.pitch.x = t) : cam.pitch.set(0.4, 1).go(t); e.preventDefault(); }
-  if (k === "+" || k === "=") zoomBy(0.8); if (k === "-" || k === "_") zoomBy(1.25); if (k === "0") resetView();
-  if (k === " ") { setPlaying(!playing); e.preventDefault(); }
-});
-// segmented controls: a pill slides under the choice on a spring, from where it is (arrow keys move the choice)
-const segs = [];
-function makeSeg(box, opts, start, onChoose) {
-  const sg = { box, pill: box.querySelector(".seg__pill"), x: new Spring(0, 0.35, 0.85), w: new Spring(0, 0.35, 0.85), opts: [], i: start };
-  sg.opts = opts.map((o, i) => {
-    const b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "radio"); b.setAttribute("aria-label", o.label);
-    b.innerHTML = `<span class="seg__l"></span><span class="seg__s" aria-hidden="true"></span>`; b.querySelector(".seg__l").textContent = o.label; b.querySelector(".seg__s").textContent = o.short || o.label;
-    b.setAttribute("aria-checked", String(i === start)); b.tabIndex = i === start ? 0 : -1;
-    b.addEventListener("click", () => sg.choose(i, true));
-    b.addEventListener("keydown", (e) => { const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]; if (!d) return; e.preventDefault(); const j = (i + d + opts.length) % opts.length; sg.choose(j, true); sg.opts[j].b.focus(); });
-    box.append(b); return { ...o, b };
-  });
-  sg.choose = (i, user) => {
-    sg.i = i; sg.opts.forEach((o, j) => { o.b.setAttribute("aria-checked", String(i === j)); o.b.tabIndex = i === j ? 0 : -1; });
-    const b = sg.opts[i].b; RM.matches ? ((sg.x.x = b.offsetLeft), (sg.w.x = b.offsetWidth)) : (sg.x.go(b.offsetLeft), sg.w.go(b.offsetWidth));
-    onChoose(sg.opts[i], user);
-  };
-  sg.sync = () => { const b = sg.opts[sg.i].b; sg.x.x = sg.x.to = b.offsetLeft; sg.w.x = sg.w.to = b.offsetWidth; sg.x.on = sg.w.on = false; sg.place(); };
-  sg.place = () => { sg.pill.style.transform = `translateX(${sg.x.x}px)`; sg.pill.style.width = `${Math.max(0, sg.w.x)}px`; };
-  sg.step = (dt) => { sg.x.step(dt); sg.w.step(dt); sg.place(); };
-  requestAnimationFrame(sg.sync); segs.push(sg); return sg;
-}
-function filters() {
-  const opts = [{ id: null, label: "All registrars", short: "All" }, ...regs.map((r) => ({ id: r.id, label: `${r.id} · ${r.recs.length}`, short: `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` }))];
-  makeSeg($("#filters"), opts, 0, (o, user) => {
-    for (const r of regs) r.dim = !!o.id && r.id !== o.id; stats();
-    if (user) o.id ? flyTo(byId[o.id].pos, 760, { pitch: 0.3 }) : resetView();
-  });
-  const views = [{ id: "points", label: "Points" }, { id: "text", label: "Text" }, { id: "braille", label: "Braille" }, { id: "dither", label: "Dither" }];
-  let saved = "points"; try { saved = localStorage.getItem("ainra-world-view") || "points"; } catch { /* storage unavailable */ }
-  const start = Math.max(0, views.findIndex((v) => v.id === saved)); VIEW = views[start].id;
-  makeSeg($("#viewSeg"), views, start, (o) => { VIEW = o.id; try { localStorage.setItem("ainra-world-view", o.id); } catch { /* not kept */ } });
-}
 
-// ---------- the timeline: the knob follows the finger and can be grabbed mid-replay ----------
-const track = $("#track");
-function renderTrack() { const f = events.length ? step / events.length : 1; $("#fill").style.width = `${f * 100}%`; $("#knob").style.left = `${f * 100}%`; track.setAttribute("aria-valuemax", String(events.length)); track.setAttribute("aria-valuenow", String(step)); }
-function ticks() { const t = $("#ticks"); events.forEach((e, i) => { const d = document.createElement("i"); if (e.type === "change") d.className = "ch"; d.style.left = `${((i + 1) / events.length) * 100}%`; t.append(d); }); }
-const stepAt = (x) => { const r = track.getBoundingClientRect(); return Math.round(clamp((x - r.left) / r.width, 0, 1) * events.length); };
-track.addEventListener("pointerdown", (e) => { try { track.setPointerCapture(e.pointerId); } catch {} track.classList.add("drag"); setPlaying(false); applyStep(stepAt(e.clientX)); });
-track.addEventListener("pointermove", (e) => { if (track.classList.contains("drag")) applyStep(stepAt(e.clientX)); });
-const trackUp = () => track.classList.remove("drag"); track.addEventListener("pointerup", trackUp); track.addEventListener("pointercancel", trackUp);
-track.addEventListener("keydown", (e) => {
-  const m = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
-  if (m) { setPlaying(false); applyStep(step + m); e.preventDefault(); }
-  if (e.key === "Home") { setPlaying(false); applyStep(0); e.preventDefault(); } if (e.key === "End") { applyStep(events.length); e.preventDefault(); }
-});
-function setPlaying(on) {
-  playing = on; const b = $("#play"); b.setAttribute("aria-pressed", String(on)); b.setAttribute("aria-label", on ? "Pause the replay" : "Replay the record");
-  swapIcon($("#playIc"), on ? "pause" : "play");
-  if (on && live()) applyStep(0);
+// ---------- segmented controls ----------
+function makeSeg(box, opts, start, onChoose) {
+  const pill = document.createElement("i"); pill.className = "seg__pill"; box.append(pill);
+  const btns = opts.map((o) => { const b = document.createElement("button"); b.type = "button"; b.textContent = o.label; if (o.title) b.title = o.title; b.addEventListener("click", () => { set(o.id); onChoose(o.id); }); box.append(b); return b; });
+  function set(id) { const i = Math.max(0, opts.findIndex((o) => o.id === id)); btns.forEach((b, k) => b.setAttribute("aria-pressed", String(k === i))); const b = btns[i]; pill.style.width = `${b.offsetWidth}px`; pill.style.transform = `translateX(${b.offsetLeft}px)`; }
+  set(start); addEventListener("resize", () => set(opts[btns.findIndex((b) => b.getAttribute("aria-pressed") === "true")].id)); document.fonts?.ready.then(() => set(opts[btns.findIndex((b) => b.getAttribute("aria-pressed") === "true")].id));
+  return { set };
 }
+let regSeg = null;
+function setReg(id) { for (const r of W.regs) r.dim = id !== "all" && r.id !== id; for (const r of W.regs) fillBits(r); regSeg.set(id); stats(); if (sel && sel.reg && W.byId[sel.reg].dim) closeSheet(); if (id !== "all") { const r = W.byId[id]; flyTo([r.centre[0] * 0.85, 50, r.centre[2] * 0.85], 900, { yaw: faceYaw(r) + 0.3, pitch: 0.4 }); } else resetView(); }
+
+// ---------- the list: the same record as a table, checked for real ----------
+let listRun = 0;
+function toggleList(on) {
+  listOpen = on ?? !listOpen; $("#list").hidden = !listOpen; $("#listBtn").setAttribute("aria-expanded", String(listOpen));
+  if (!listOpen) return; closeSheet(); if (!live()) applyStep(W.events.length, true);
+  const body = $("#listBody"); body.textContent = ""; const run = ++listRun, ps = W.parts.filter((n) => n.kind === "passport");
+  const rows = ps.map((n) => { const tr = document.createElement("tr"); tr.innerHTML = "<td><button type='button'></button></td><td></td><td></td><td></td><td></td><td>checking…</td>"; const c = tr.children; c[0].firstChild.textContent = short(n.rec.sub); c[0].firstChild.addEventListener("click", () => choose(n)); c[1].textContent = n.reg; c[2].textContent = n.rec.operator; c[3].textContent = `${n.rec.leaf_index} of ${n.rec.checkpoint_size}`; c[4].textContent = `${n.rec.status_idx}`; body.append(tr); return tr; });
+  let i = 0; const next = () => { if (run !== listRun || !listOpen || i >= ps.length) { if (i >= ps.length) $("#listNote").textContent = `${ps.length} passports checked in this tab by the verifier the site ships: ${ps.filter((n) => n.verdict === "valid").length} valid, ${ps.filter((n) => n.verdict && n.verdict !== "valid").length} refused.`; return; }
+    const n = ps[i], res = runCheck(R, n.rec, W.byId[n.reg].list); n.verdict = res.ok ? "valid" : res.reason; times.push(res.ms);
+    rows[i].children[5].innerHTML = `<span class="tag${res.ok ? "" : " no"}">${icon(res.ok ? "valid" : "revoked")}<span></span></span>`; rows[i].children[5].querySelector("span span").textContent = `${res.ok ? "valid" : res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`; i++; setTimeout(next, 0); };
+  $("#listNote").textContent = "Checking each passport in this tab…"; setTimeout(next, 30);
+}
+$("#listBtn").addEventListener("click", () => toggleList()); $("#listX").addEventListener("click", () => toggleList(false));
+
+// ---------- the timeline ----------
+const track = $("#track");
+function renderTrack() { const f = W.events.length ? step / W.events.length : 1; $("#fill").style.transform = `scaleX(${f})`; $("#knob").style.left = `${f * 100}%`; track.setAttribute("aria-valuenow", String(step)); track.setAttribute("aria-valuetext", $("#now").textContent); }
+function makeTrack() {
+  const n = W.events.length, T = $("#ticks"), D = $("#dates"); track.setAttribute("aria-valuemax", String(n)); let lastDay = "";
+  W.events.forEach((e, i) => { const d = document.createElement("i"); d.className = e.type === "change" ? "ch" : e.type === "epoch" ? "ep" : ""; d.style.left = `${((i + 1) / n) * 100}%`; T.append(d);
+    const day = e.date ? dayText(e.date, innerWidth < 620) : lastDay; if (day !== lastDay) { lastDay = day; const s = document.createElement("span"); s.textContent = day; const f = (i + 0.5) / n; s.style.left = `${(f > 0.9 ? 1 : f) * 100}%`; if (f > 0.5) s.className = "r"; D.append(s); } });
+}
+const stepAt = (x) => { const r = track.getBoundingClientRect(); return Math.round(clamp((x - r.left) / r.width, 0, 1) * W.events.length); };
+track.addEventListener("pointerdown", (e) => { track.setPointerCapture(e.pointerId); track.classList.add("drag"); setPlaying(false); applyStep(stepAt(e.clientX)); });
+track.addEventListener("pointermove", (e) => { if (track.classList.contains("drag")) applyStep(stepAt(e.clientX), true); });
+const trackUp = () => track.classList.remove("drag"); track.addEventListener("pointerup", trackUp); track.addEventListener("pointercancel", trackUp);
+track.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") { setPlaying(false); applyStep(step - 1, true); e.preventDefault(); e.stopPropagation(); } if (e.key === "ArrowRight") { setPlaying(false); applyStep(step + 1); e.preventDefault(); e.stopPropagation(); } });
+function setPlaying(on) { playing = on; playT = 0; swapIcon($("#playIc"), on ? "pause" : "play"); $("#play").setAttribute("aria-label", on ? "Pause the replay" : "Replay the record"); if (on) { if (live()) applyStep(0, true); closeSheet(); } }
 $("#play").addEventListener("click", () => setPlaying(!playing));
 
-// ---------- boot ----------
-async function bootUp() {
-  readTheme(); bootArt(); paintIcons(); swapIcon($("#playIc"), "play"); swapIcon($("#shCopyIc"), "copy");
-  stepOn("record", "Reading the published record", 6);
-  let done = 0; const tick = (x) => { done++; progress(6 + (done / 6) * 34); return x; };
-  const sdkP = import("../vendor/ainra-sdk.js").then(tick);
-  const [index, roots, directory, epochs, registry] = await Promise.all(["index", "roots", "directory", "epochs", "registry"].map((f) => getJSON(`net/${f}.json`).then(tick)));
-  stepOk("record");
-  stepOn("lists", `Reading ${registry.registrars.length} signed status lists`, 42);
-  const lists = {}; let li = 0;
-  for (const R of registry.registrars) {
-    const [list, deltas] = await Promise.all([getJSON(`net/registrars/${R.registrar}/status/current.json`), getJSON(`net/registrars/${R.registrar}/status/deltas.json`)]);
-    lists[R.registrar] = { list, bits: await bitsOf(list), deltas: deltas.deltas };
-    progress(42 + (++li / registry.registrars.length) * 20);
-  }
-  const bitsTotal = Object.values(lists).reduce((a, l) => a + l.list.bit_len, 0);
-  boot.querySelector('li[data-s="lists"]').textContent = `${registry.registrars.length} signed status lists, ${bitsTotal.toLocaleString("en")} bits`;
-  stepOk("lists");
-  stepOn("verifier", "Checking the directory against the root's two keys", 66);
-  const sdk = await sdkP;
-  await new Promise((r) => setTimeout(r, 40));                                // let the step paint before the work
-  verifier = sdk.Verifier.fromDirectoryB64(directory, roots.root_ed25519, roots.root_slh, "F1");
-  if (!verifier) throw new Error("the published directory does not verify against the published root keys");
-  NOW = registry.generated_window?.verified_at;
-  if (!Number.isInteger(NOW)) throw new Error("the record does not state its time");
-  stepOk("verifier");
-  stepOn("world", "Placing every part", 86);
-  build({ index, roots, directory, epochs, registry, lists }); buildEvents(); filters(); ticks(); makeTour(); makeLadder(); resize();
-  applyStep(events.length);
-  order = nodes.filter((n) => n.kind === "passport");
-  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  stepOk("world"); progress(100); $("#bootStep").textContent = "Ready";
-  setTimeout(() => boot.classList.add("done"), RM.matches ? 0 : 260);
-  // arrive: the world comes in from afar on a spring (only a cross-fade under reduced motion)
-  if (RM.matches) { cam.yaw.x = HOME.yaw; cam.dist.x = HOME.dist; } else { cam.yaw.set(1.5, 1).go(HOME.yaw); cam.dist.set(1.3, 1).go(HOME.dist); }
-  idleAt = performance.now() + 5000;
-  let last = performance.now(), nextCheck = last + 1800;
+// ---------- tools ----------
+$("#zIn").addEventListener("click", () => zoomBy(0.72)); $("#zOut").addEventListener("click", () => zoomBy(1.38)); $("#zReset").addEventListener("click", resetView);
+$("#inkBtn").addEventListener("click", () => { eng.inkOn = !eng.inkOn; $("#inkBtn").setAttribute("aria-pressed", String(eng.inkOn)); try { localStorage.setItem("ainra-world-ink", eng.inkOn ? "on" : "off"); } catch { /* storage unavailable */ } });
+$("#aboutBtn").addEventListener("click", () => { const a = $("#about"), on = a.hidden; a.hidden = !on; $("#aboutBtn").setAttribute("aria-expanded", String(on)); });
+$("#feedToggle").addEventListener("click", () => { const c = $("#feed").classList.toggle("closed"); $("#feedToggle").textContent = c ? "Show" : "Hide"; $("#feedToggle").setAttribute("aria-expanded", String(!c)); });
+function frameOnce() { matrices(); scene(0); labels(0); eng.frame({ vp, scale: scaleCss * dpr, focus: focusDist(), dof: 0.36, fogA: cam.dist.x * 0.7, fogB: cam.dist.x * 2.1, ink: INK, signal: SIG, dpr }, sets(), 0); }
+$("#stillBtn").addEventListener("click", () => {                       // a still, made in the tab: nothing is uploaded
+  frameOnce(); const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; const x = c.getContext("2d");
+  x.fillStyle = paperCss; x.fillRect(0, 0, c.width, c.height); x.drawImage(cv, 0, 0); x.drawImage(lab, 0, 0);
+  x.fillStyle = inkCss; x.font = `${12 * dpr}px ${MONO}`; x.textBaseline = "bottom"; x.fillText(`AINRA World · the test network's record, copy of ${dayText(R.published.published_at)} · ainra.org/world.html`, 20 * dpr, c.height - 16 * dpr);
+  c.toBlob((b) => { if (!b) return; const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "ainra-world.png"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, "image/png");
+});
+addEventListener("keydown", (e) => {
+  if (e.target.closest?.("input,textarea")) return;
+  if (e.key === "Escape") { if (!$("#about").hidden) $("#aboutBtn").click(); else if (listOpen) toggleList(false); else if (sel) closeSheet(); else if (tour.on) tourEnd(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey || listOpen) return;
+  if (e.key === "ArrowLeft") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) + 0.3); poke(); } else if (e.key === "ArrowRight") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) - 0.3); poke(); }
+  else if (e.key === "ArrowUp") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) + 0.15, ...PITCH)); poke(); } else if (e.key === "ArrowDown") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) - 0.15, ...PITCH)); poke(); }
+  else if (e.key === "+" || e.key === "=") zoomBy(0.72); else if (e.key === "-" || e.key === "_") zoomBy(1.38); else if (e.key === "0") resetView();
+  else if (e.key === " " && e.target === document.body) { e.preventDefault(); setPlaying(!playing); } else if (e.key === "l" || e.key === "L") toggleList();
+});
+for (const b of document.querySelectorAll(".btn,.act")) { b.addEventListener("pointerdown", () => b.classList.add("is-down")); for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, () => b.classList.remove("is-down")); }
+
+// ---------- start ----------
+const FIXED = new URLSearchParams(location.search).has("fixed");                    // for measuring: never lower the quality
+const sets = () => [lineSet, ...W.regs.map((r) => r.set), nodeSet];
+const focusDist = () => (sel && sel.pos ? dist3(eye, sel.pos) : cam.dist.x);
+async function start() {
+  readTheme(); paintIcons(); swapIcon($("#playIc"), "play"); swapIcon($("#shCopyIc"), "copy");
+  eng = new URLSearchParams(location.search).has("nogl") ? null : createEngine(cv);          // ?nogl shows what a browser without WebGL2 gets
+  if (!eng) { toggleListFallback(); return; }
+  eng.font = MONO; let inkPref = null; try { inkPref = localStorage.getItem("ainra-world-ink"); } catch { /* storage unavailable */ }
+  eng.inkOn = inkPref !== "off" && !RM.matches; $("#inkBtn").setAttribute("aria-pressed", String(eng.inkOn));
+  import("./world-mark.mjs").then((m) => m.metalMark($("#bootMetal"), $("#bootMark"), () => INK, RM)).catch(() => {});
+  R = await loadRecord("net", bootStep);
+  const bitsTotal = Object.values(R.lists).reduce((a, l) => a + l.list.bit_len, 0);
+  boot.querySelector('li[data-s="lists"]').textContent = `${R.registry.registrars.length} signed status lists, ${bitsTotal.toLocaleString("en")} bits`; bootStep("lists", null, null, true);
+  bootStep("world", "Placing every part", 88);
+  W = buildWorld(R);
+  for (const r of W.regs) r.set = eng.pointSet(r.list.bit_len);
+  nodeSet = eng.pointSet(W.parts.length * 3 + 96, true); lineSet = eng.lineSet(1600);
+  resize(); addEventListener("resize", () => { resize(); placeSheet(); });
+  makeTrack(); makeTour();
+  regSeg = makeSeg($("#regSeg"), [{ id: "all", label: "All registrars" }, ...W.regs.map((r) => ({ id: r.id, label: phone() ? `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` : `${r.id} · ${r.recs.length}`, title: `${r.recs.length} passports` }))], "all", setReg);
+  makeSeg($("#viewSeg"), [{ id: 0, label: "Points" }, { id: 1, label: "Text" }, { id: 2, label: "Braille" }, { id: 3, label: "Dither" }], 0, (v) => { eng.view = v; });
+  applyStep(W.events.length, true);
+  order = W.parts.filter((n) => n.kind === "passport"); for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  bootStep("world", "Ready", 100, true); setTimeout(() => boot.classList.add("done"), RM.matches ? 0 : 240);
+  const h = home(); cam.tx.jump(h.t[0]); cam.ty.jump(h.t[1]); cam.tz.jump(h.t[2]); cam.pitch.jump(h.pitch);
+  if (RM.matches) { cam.yaw.jump(h.yaw); cam.dist.jump(h.dist); } else { cam.yaw.jump(h.yaw - 1.1); cam.dist.jump(h.dist * 2.6); cam.yaw.set(1.6, 1).go(h.yaw); cam.dist.set(1.4, 1).go(h.dist); }   // the world arrives from afar
+  poke(); placeSheet();
+  let last = performance.now(), nextCheck = last + 2200, slow = 0, frames = 0, acc = 0;
+  const stat = (window.__world = { fps: 0, ms: 0, ink: eng.inkOn, dpr, parts: W.parts.length, events: W.events.length });
+  stat.probe = () => ({ sel: sel && { id: sel.id, shown: sel.shown, at: proj(sel.pos), bit: sel.bit && proj(sel.bit) }, cam: { yaw: cam.yaw.x, pitch: cam.pitch.x, dist: cam.dist.x, t: [cam.tx.x, cam.ty.x, cam.tz.x] }, vw, vh, dpr, cw: cv.width, ch: cv.height, sheet: sheetPos.x, lift: lift.x, INK, SIG, nodes: nodeSet.count, lines: lineSet.count, view: eng.view, focus: focusDist(), eye });
   const frame = (now) => {
-    const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (playing && !document.hidden) { playT += dt; if (playT > (RM.matches ? 0.9 : 0.42)) { playT = 0; applyStep(step + 1); if (live()) setPlaying(false); } }
-    if (!document.hidden && now >= nextCheck && live() && !tour.on) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 2600 : 1300); }
-    physics(dt); lift.step(dt); sheetPos.step(dt); for (const sg of segs) sg.step(dt); placeSheet(); draw(dt);
+    const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
+    if (!document.hidden) {
+      frames++; acc += raw; if (frames === 50) { const ms = (acc / frames) * 1000; stat.ms = ms; stat.fps = 1000 / ms; frames = 0; acc = 0;
+        // measured, not assumed: if frames are slow the ink goes first, then the extra pixels
+        if (!FIXED && ms > 30 && ++slow >= 2) { slow = 0; if (eng.inkOn) { eng.inkOn = false; $("#inkBtn").setAttribute("aria-pressed", "false"); } else if (dprCap > 1) { dprCap = 1; resize(); } stat.ink = eng.inkOn; stat.dpr = dprCap; } else if (ms <= 30) slow = 0; }
+      if (playing) { playT += dt; if (playT > (RM.matches ? 0.9 : 0.5)) { playT = 0; applyStep(step + 1); if (live()) setPlaying(false); } }
+      if (now >= nextCheck && live() && !tour.on && !listOpen && !playing && order.length) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 3000 : 1700); }
+      physics(dt); lift.step(dt); capShift.step(dt); sheetPos.step(dt); placeSheet(); matrices(); scene(dt); labels(dt);
+      eng.frame({ vp, scale: scaleCss * dpr, focus: focusDist(), dof: 0.36, fogA: cam.dist.x * 0.7, fogB: cam.dist.x * 2.1, ink: INK, signal: SIG, dpr }, sets(), dt);
+    }
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 }
-const narrowFind = () => { $("#find").placeholder = innerWidth <= 520 ? "Find" : "Find a passport"; };
-narrowFind();
-addEventListener("resize", () => { readTheme(); narrowFind(); if (nodes.length) { resize(); placeSheet(); for (const sg of segs) sg.sync(); } });
-bootUp().catch((e) => { console.info("[world] did not start:", e); bootFail(e?.message || String(e)); });
+// Without WebGL2 the record is still here: the list and its real checks, no drawing.
+async function toggleListFallback() {
+  R = await loadRecord("net", bootStep); W = buildWorld(R); step = W.events.length; boot.classList.add("done");
+  for (const id of ["tools", "time", "regSeg", "tourBtn", "feed"]) $("#" + id).hidden = true;
+  $("#listX").hidden = true; listOpen = false; toggleList(true); $("#listNote").textContent = "This browser cannot draw the world (no WebGL2), so here is the same record as a table.";
+}
+start().catch((e) => { console.error(e); bootFail(e.message || String(e)); });
