@@ -108,7 +108,8 @@ export function buildWorld(R) {
   const nReg = registry.registrars.length;
   registry.registrars.forEach((G, ri) => {
     const id = G.registrar, recs = G.records.map((x) => x.record), Li = lists[id];
-    // A registrar moves along the orbit, slowly; `ang` is where it stands now, and place() puts it and all it carries there.
+    // A registrar moves along the orbit, slowly; `ang` is where it stands now, and place() puts it and all it carries
+    // there.
     const ang = (ri / nReg) * TAU + (nReg === 2 ? 0 : -Math.PI / 2);
     const pos = [Math.cos(ang) * RING, 0, Math.sin(ang) * RING];
     const size = Math.max(...recs.map((r) => r.checkpoint_size || 0)), n = Li.list.bit_len;
@@ -125,7 +126,7 @@ export function buildWorld(R) {
     const reg = P(id, "registrar", pos, 11, id, { k: "REGISTRAR · ACCREDITED IN THE DIRECTORY", t: id, rows: [
       ["Issuer key", `Ed25519 ${cut(G.accreditation.issuer_key.ed25519, 20)} + ML-DSA-65`], ["Log", `${G.accreditation.log_origin}, ${size} entries`],
       ["Status list", `${n.toLocaleString("en")} bits, change ${G.status_seq}`], ["Passports", `${recs.length} issued, ${recs.filter((r) => Li.bits[r.status_idx]).length} switched off`]] },
-      { ang, phase: 0, centre, globeR, ringR, ringAt, size, recs, bitPos, labelAt: [centre[0], centre[1] - globeR - 22, centre[2] + ringR * 0.8], labelCentre: true,
+      { ang, phase: 0, centre, globeR, ringR, ringAt, size, recs, bitPos, labelAt: [centre[0], centre[1] - globeR - 22, centre[2] + ringR * 0.8], labelAlt: [centre[0], centre[1] + globeR + 22, centre[2] - ringR * 0.8], labelCentre: true,
         list: Li.list, deltas: Li.deltas, bitsFinal: Li.bits, bits: new Uint8Array(Li.bits), used: new Map(recs.map((r) => [r.status_idx, r])), dim: false });
     regs.push(reg);
     P(`list:${id}`, "list", centre, 7, "", { k: "STATUS LIST · SIGNED BY THE REGISTRAR", t: `${id}'s status list`, rows: [["Bits", n.toLocaleString("en")], ["Set now", `${Li.bits.reduce((a, b) => a + b, 0)} (each is a passport switched off)`], ["Issued", day(Li.list.issued_at)], ["Signed", "Ed25519 + ML-DSA-65"], ["Reads as", "bit 0 at the top, later bits winding down"]] }, { reg: id });
@@ -147,6 +148,7 @@ export function buildWorld(R) {
     reg.place = () => {
       centre[0] = Math.cos(reg.ang) * RING; centre[2] = Math.sin(reg.ang) * RING;
       reg.labelAt[0] = centre[0]; reg.labelAt[1] = centre[1] - globeR - 22; reg.labelAt[2] = centre[2] + ringR * 0.8;
+      reg.labelAlt[0] = centre[0]; reg.labelAlt[1] = centre[1] + globeR + 22; reg.labelAlt[2] = centre[2] - ringR * 0.8;   // its name's second place, above
       for (const n of reg.carried) ringAt(n.leaf, n.pos);
     };
     reg.carried = parts.filter((n) => n.reg === id && (n.kind === "passport" || n.kind === "leaf" || n.kind === "head"));

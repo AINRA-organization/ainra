@@ -66,7 +66,7 @@
 
 <section class="about" id="about" aria-label="About this world" hidden><div class="about__in">
   <h2>The test network, as its record states&nbsp;it</h2>
-  <p><b>Every part comes from the record.</b> The root, its directory, the registrars and every passport are the ones the test network published. Each globe of dots is a registrar's signed status list, one dot per bit, 4,096 each, counted from the top. A dark dot is a passport its registrar switched off.</p>
+  <p><b>Every part comes from the record.</b> The root, its directory, the registrars and every passport are the ones the test network published. Each globe of dots is a registrar's signed status list, one dot per bit, 4,096 each, counted from the top. A passport's dot is full while it is in service and hollow once its registrar has switched it off; the small grey dots are bits not in use.</p>
   <p><b>The ring around each globe is that registrar's log,</b> its entries in order. Each passport is a moon at its own entry; a hollow moon is switched off. All entries are hashed into one signed head, and a passport's proof is a few hashes that stand for the rest of the log.</p>
   <p><b>You are the verifier.</b> This tab holds the directory, checked against the root's two keys. Each blue thread is a real check of one passport, run here by the verifier the site ships. It contacts nobody while it checks.</p>
   <p><b>The timeline replays the record in its own order,</b> with the dates the record carries. Until 23 November 2026 the test network kept a fixed test date, so its early entries share two days in April.</p>
@@ -91,7 +91,7 @@
   <div class="list__h"><h2>Every passport in the&nbsp;record</h2><button class="btn btn--icon" id="listX" type="button" aria-label="Close the list" data-icon="close"></button></div>
   <p class="list__note" id="listNote">Each line is checked in this tab by the verifier the site ships.</p>
   <div class="list__scroll"><table>
-    <thead><tr><th scope="col">Passport</th><th scope="col">Registrar</th><th scope="col">Operator</th><th scope="col">Log entry</th><th scope="col">Status bit</th><th scope="col">Checked here</th></tr></thead>
+    <thead><tr><th scope="col">Passport</th><th scope="col">Checked here</th><th scope="col">Registrar</th><th scope="col">Operator</th><th scope="col">Log entry</th><th scope="col">Status bit</th></tr></thead>
     <tbody id="listBody"></tbody>
   </table></div>
 </section>
@@ -121,13 +121,13 @@
   </div>
 </aside>
 
-<div class="caption" id="caption" hidden>
+<aside class="caption" id="caption" aria-label="The walk-through" hidden>
   <div class="caption__n" id="capN"></div>
   <h3 id="capT"></h3>
   <p id="capP"></p>
   <ol class="ladder" id="ladder" aria-label="Stops"></ol>
   <div class="caption__b"><button class="btn" id="capPrev" type="button">Back</button><button class="btn btn--fill" id="capNext" type="button">Next</button><button class="link" id="capEnd" type="button">End the walk</button></div>
-</div>
+</aside>
 
 <div class="tools" id="tools">
   <button class="btn btn--icon" id="zIn" type="button" aria-label="Zoom in" data-icon="plus"></button>

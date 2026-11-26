@@ -1,13 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0 OR MIT */
 /* AINRA World — tokens and chrome.
-   Five colour tokens. Computed against the surface (WCAG): ink #0B1220 on paper #F5F6F3 = 17.3:1; secondary text (ink at
-   64 %) = 5.5:1; signal #2346D8 on paper = 6.6:1. Dark: ink #F2F2F0 on #0A0A0A = 17.7:1; secondary = 7.4:1; signal
-   #8FA6FF on #0A0A0A = 8.5:1. Hairlines are not text.
-   One colour, one meaning: ink is the record; signal is a check running in this tab, and nothing else. State is carried
-   by shape and words (a hollow point and "switched off"), never by colour alone.
+   Six colour tokens (paper, ink, a secondary ink, a hairline, a press tint, signal). Computed against the surface
+   (WCAG): ink #0B1220 on paper #F5F6F3 = 17.3:1; secondary text (ink at 64 %) = 5.5:1; signal #2346D8 on paper =
+   6.6:1. Dark: ink #F2F2F0 on #0A0A0A = 17.7:1; secondary = 7.4:1; signal #8FA6FF on #0A0A0A = 8.5:1. Hairlines are
+   not text.
+   One colour, one meaning: ink is the record; signal is you and the check you are running, and nothing else. State is
+   carried by shape and words (full is in service, hollow is switched off), never by colour alone.
    Appearance follows the system (no page switch). Solid surfaces, no glass (house rule).
-   Type: Inter for the few headings, Noto Sans Mono for data and controls; 12.5 px minimum on desktop, 13 px on phones.
-   Controls: 32 px with a pointer, 44 px on touch. Every control shows its press on pointer-down. */
+   Type: Inter for headings and running text (13 to 20 px). Noto Sans Mono for data and controls, in three sizes:
+   12.5 px by default (13 px on a narrow screen for `.btn` buttons, the search field and segments); 12 px for key
+   caps, the loading title, the stop counter, a panel's kind line and the feed's note; 11.5 px for dates, tags, the
+   words under the numbers, the two small headings and a check's second line. The numbers themselves are 26 px
+   (20 px narrow).
+   Controls: every button, segment, slider and link that stands on its own is at least --tap high and wide: 32 px with
+   a pointer, 44 px on touch or a narrow screen. (A link inside a sentence, as in the error and no-script texts, is
+   as tall as its line.) Every button and link shows its press on pointer-down; the search field shows its focus.
+   Motion: the system's reduced-motion setting and the site's own Motion switch (html[data-motion="off"], set by
+   js/world.mjs) both stop every animation and transition here. */
 @font-face{font-family:"Inter";src:url(../fonts/inter-latin-wght.woff2) format("woff2");font-weight:100 900;font-display:swap}
 @font-face{font-family:"Noto Sans Mono";src:url(../fonts/noto-sans-mono-latin-400.woff2) format("woff2");font-weight:400;font-display:swap}
 :root{
@@ -22,6 +31,7 @@
 html,body{margin:0;height:100%;overflow:hidden;background:var(--paper);color:var(--ink);font:400 15px/1.45 var(--sans);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
 button,input{font:inherit;color:inherit}
 a{color:inherit}
+a:active{opacity:.55}
 canvas#world,canvas#labels{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;display:block}
 canvas#world{touch-action:none;cursor:grab;outline:none}
 canvas#world.grabbing{cursor:grabbing}
@@ -41,8 +51,12 @@ kbd{font:12px var(--mono);border:1px solid var(--hair);border-radius:5px;padding
 .btn--icon{padding:0}
 .btn--fill,.btn[aria-expanded="true"],.btn[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
 .btn--fill:hover,.btn[aria-expanded="true"]:hover,.btn[aria-pressed="true"]:hover{background:var(--ink);opacity:.86}
-.link{border:0;background:none;padding:6px 0;font:12.5px var(--mono);color:var(--ink2);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+/* a filled button stays ink while it is held: the light pressed tint would leave its paper-coloured label unreadable */
+.btn--fill:active,.btn--fill.is-down,.btn[aria-expanded="true"]:active,.btn[aria-expanded="true"].is-down,.btn[aria-pressed="true"]:active,.btn[aria-pressed="true"].is-down{background:var(--ink);opacity:.8}
+.link{border:0;background:none;padding:0;min-height:var(--tap);display:inline-flex;align-items:center;font:12.5px var(--mono);color:var(--ink2);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .link:hover{color:var(--ink)}
+/* a press shows at once on the plain controls too: links, a stop's mark, a search result, a name in the table */
+.link:active,.about__links a:active,.list td:first-child button:active{color:var(--ink);opacity:.55}
 .ic{width:16px;height:16px;flex:none;display:block}
 .btn--icon .ic{width:17px;height:17px}
 .swap{display:grid;place-items:center}
@@ -77,9 +91,9 @@ kbd{font:12px var(--mono);border:1px solid var(--hair);border-radius:5px;padding
 .boot__err{margin-top:16px;font:13px/1.5 var(--sans);text-align:left}
 
 /* top bar */
-.top{position:fixed;z-index:10;top:var(--top);left:20px;right:20px;display:flex;align-items:center;gap:12px;pointer-events:none}
+.top{position:fixed;z-index:32;top:var(--top);left:20px;right:20px;display:flex;align-items:center;gap:12px;pointer-events:none}
 .top>*{pointer-events:auto}
-.brand{display:inline-flex;align-items:center;gap:8px;text-decoration:none;font:600 16px var(--sans);letter-spacing:-.01em}
+.brand{display:inline-flex;align-items:center;gap:8px;min-height:var(--tap);min-width:var(--tap);text-decoration:none;font:600 16px var(--sans);letter-spacing:-.01em}
 .brand svg{width:24px;height:24px}
 .crumb{font:12.5px var(--mono);color:var(--ink2)}
 .top__r{margin-left:auto;display:flex;gap:8px;align-items:center}
@@ -89,29 +103,31 @@ kbd{font:12px var(--mono);border:1px solid var(--hair);border-radius:5px;padding
 .find input{height:var(--tap);width:210px;border:1px solid var(--ink);border-radius:999px;background:var(--paper);padding:0 14px 0 34px;outline:none;font:12.5px var(--mono)}
 .find input::placeholder{color:var(--ink2)}
 .find input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.find ul{position:absolute;top:calc(var(--tap) + 6px);right:0;width:320px;max-height:320px;overflow:auto;margin:0;padding:4px;list-style:none;background:var(--paper);border:1px solid var(--ink);border-radius:14px;display:none;transform-origin:top right}
+.find ul{position:absolute;top:calc(var(--tap) + 6px);right:0;width:320px;max-height:min(320px,calc(100dvh - var(--top) - var(--tap) - 16px));overflow:auto;margin:0;padding:4px;list-style:none;background:var(--paper);border:1px solid var(--ink);border-radius:14px;display:none;transform-origin:top right}
 .find ul.on{display:block;animation:pop .22s var(--ease)}
-.find li button{width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:9px;cursor:pointer;font:12.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.find li button:hover,.find li button:focus-visible,.find li button[aria-selected="true"]{background:var(--ink);color:var(--paper);outline:none}
+.find li button{width:100%;min-height:var(--tap);text-align:left;border:0;background:none;padding:0 10px;border-radius:9px;cursor:pointer;font:12.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.find li button:hover,.find li button:focus-visible,.find li button:active,.find li button[aria-selected="true"]{background:var(--ink);color:var(--paper);outline:none}
 
 /* a segmented control: the pill slides under the labels */
 .seg{position:relative;display:inline-flex;border:1px solid var(--ink);border-radius:999px;background:var(--paper);padding:2px}
-.seg button{position:relative;z-index:1;min-height:calc(var(--tap) - 6px);padding:0 12px;border:0;background:none;border-radius:999px;cursor:pointer;font:12.5px var(--mono);white-space:nowrap;transition:color .18s}
+.seg button{position:relative;z-index:1;min-height:var(--tap);padding:0 12px;border:0;background:none;border-radius:999px;cursor:pointer;font:12.5px var(--mono);white-space:nowrap;transition:color .18s}
 .seg button[aria-pressed="true"]{color:var(--paper)}
 .seg button:active{transform:scale(.96)}
 .seg__pill{position:absolute;z-index:0;top:2px;bottom:2px;left:0;border-radius:999px;background:var(--ink);transition:transform .32s var(--ease),width .32s var(--ease)}
 #regSeg{position:fixed;z-index:6;left:20px;top:calc(var(--top) + var(--tap) + 14px)}
+.seg .sm{display:none}
+@media (max-width:760px),(max-height:520px) and (min-aspect-ratio:9/10){.seg .lg{display:none}.seg .sm{display:inline}}
 
 /* about */
 /* A panel never scrolls itself: its inner box does. (A scrolling box that is also a layer of its own can make a
    browser treat the canvas beside it as covered.) */
-.about{position:fixed;z-index:12;right:20px;top:calc(var(--top) + var(--tap) + 10px);width:min(460px,calc(100vw - 40px));max-height:calc(100dvh - var(--top) - var(--tap) - 30px);overflow:hidden;display:flex;background:var(--paper);border:1px solid var(--ink);border-radius:18px;transform-origin:top right;animation:pop .24s var(--ease)}
+.about{position:fixed;z-index:31;right:20px;top:calc(var(--top) + var(--tap) + 10px);width:min(460px,calc(100vw - 40px));max-height:calc(100dvh - var(--top) - var(--tap) - 30px);overflow:hidden;display:flex;background:var(--paper);border:1px solid var(--ink);border-radius:18px;transform-origin:top right;animation:pop .24s var(--ease)}
 .about__in{overflow:auto;padding:18px 20px;min-height:0}
 .about h2{margin:0 0 10px;font:600 16px/1.3 var(--sans);letter-spacing:-.01em}
 .about p{margin:0 0 10px;color:var(--ink2);font-size:14px}
 .about p b{color:var(--ink);font-weight:550}
-.about__links{display:flex;flex-wrap:wrap;gap:6px 16px;font:12.5px var(--mono)}
-.about__links a{color:var(--ink);text-underline-offset:3px}
+.about p.about__links{display:flex;flex-wrap:wrap;gap:6px 16px;font:12.5px var(--mono)}
+.about__links a{color:var(--ink);text-underline-offset:3px;min-height:var(--tap);display:inline-flex;align-items:center}
 .about__view{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;font:12.5px var(--mono);color:var(--ink2)}
 .about__keys{font:12.5px/2 var(--mono)!important;margin:0!important}
 
@@ -180,10 +196,16 @@ kbd{font:12px var(--mono);border:1px solid var(--hair);border-radius:5px;padding
 .caption__n{font:12px var(--mono);color:var(--ink2);letter-spacing:.06em}
 .caption h3{margin:4px 0 6px;font:600 18px/1.25 var(--sans);letter-spacing:-.015em}
 .caption p{margin:0 0 12px;color:var(--ink2);font-size:14.5px}
-.ladder{list-style:none;display:flex;gap:6px;margin:0 0 12px;padding:0}
-.ladder button{width:22px;height:var(--tap);border:0;background:none;padding:0;cursor:pointer;display:grid;place-items:center}
+/* one panel at a time, at every size: the caption gives way while the details are open, and the list of checks
+   steps aside for the walk */
+body.detail .caption,body.touring .feed{display:none}
+/* where a stop's text is longer than its box (a phone) it scrolls, and fades where more follows */
+.caption p.more{-webkit-mask-image:linear-gradient(#000 calc(100% - 26px),transparent);mask-image:linear-gradient(#000 calc(100% - 26px),transparent)}
+.ladder{list-style:none;display:flex;gap:0;margin:0 0 12px -6px;padding:0}
+.ladder button{width:var(--tap);height:var(--tap);border:0;background:none;padding:0;cursor:pointer;display:grid;place-items:center}
 .ladder button::before{content:"";display:block;height:2px;width:12px;background:var(--ink2);border-radius:2px;transition:width .24s var(--ease),background-color .2s}
 .ladder button[aria-current="step"]::before{width:22px;background:var(--ink)}
+.ladder button:active::before{width:18px;background:var(--ink)}
 .caption__b{display:flex;gap:8px;align-items:center}
 .caption__b .link{margin-left:auto}
 
@@ -219,15 +241,50 @@ kbd{font:12px var(--mono);border:1px solid var(--hair);border-radius:5px;padding
   .sheet{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:58dvh;border-radius:22px;transform:translateY(calc(100% + 24px));touch-action:none}
   .sheet__grab{display:block;flex:none;width:40px;height:5px;border-radius:5px;background:var(--hair);margin:10px auto 0}
   .sheet__in{padding-top:12px}
+  /* while the details are open on a phone the filter and the counts step aside, so nothing lies over the chosen part */
+  .detail #regSeg,.detail .feed{display:none}
+  /* the walk's caption takes the foot of a phone and at most 44 % of its height: the world has the band above it to
+     itself, so the filter and the counts step aside, and the row of stops too (Back and Next remain) */
+  .touring #regSeg,.ladder{display:none}
+  .caption{display:flex;flex-direction:column;max-height:44dvh;padding:14px 16px}
+  .caption p{flex:1;min-height:0;overflow:auto;font-size:14px}
 }
 
 /* sizes */
 @media (max-width:1100px){.btn .btn__t{display:none}.btn:has(.btn__t){padding:0;width:var(--tap)}}
 @media (max-width:900px){
-  .feed{display:none}.crumb{display:none}.find input{width:150px}
+  .crumb{display:none}.find input{width:150px}
+  /* a narrow screen keeps the two counts and their legend, under the registrar filter; the list of checks is in List */
+  .feed{right:auto;left:20px;top:calc(var(--top) + var(--tap) * 2 + 30px);width:auto}
+  .feed .feed__h,.feed ol,.feed .feed__note{display:none}
+  .stats{gap:16px;margin:0}.stats dd{font-size:20px}
   .tools{bottom:calc(var(--bot) + 70px)}
+  /* during the walk the caption takes the foot of a narrow screen: the timeline and the zoom buttons step aside */
+  .touring .time,.touring .tools{display:none}
+  .touring .caption{bottom:var(--bot)}
   .list{inset:calc(var(--top) + var(--tap) + 10px) 8px 8px;padding:14px}
 }
-@media (max-width:520px){.find input{width:112px}.brand span{display:none}.top{gap:8px;left:12px;right:12px}.top__r{gap:6px}.btn,.find input,.seg button{font-size:13px}#regSeg{left:12px}.time{left:12px;right:12px}.tools{right:12px}.seg--view button{padding:0 9px}}
+/* On a phone held upright the status line may take two lines. Room for two is always kept there, so nothing below it
+   moves, and the zoom buttons stand clear above it. Wider than that its short form fits on one line. */
+@media (max-width:540px){.time__now{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.35;min-height:2.7em}.tools{bottom:calc(var(--bot) + 96px)}}
+@media (max-width:520px){.find ul{position:fixed;left:12px;right:12px;width:auto;top:calc(var(--top) + var(--tap) + 6px)}.find input{width:112px}.brand span{display:none}.top{gap:8px;left:12px;right:12px}.top__r{gap:6px}.btn,.find input,.seg button{font-size:13px}#regSeg{left:12px}.feed{left:12px}.brand{justify-content:center}.time{left:12px;right:12px}.tools{right:12px}.seg--view button{padding:0 9px}}
+/* The narrowest phones (320 px): a shorter search field and a smaller margin keep the last button inside the screen. */
+@media (max-width:340px){.find input{width:96px;padding-left:32px;padding-right:8px}.top{left:8px;right:8px}}
+/* A short, wide screen (a phone on its side, or a low window). The scene is a wide ellipse, so the controls keep to the
+   corners: the registrar filter top left with short names, the zoom buttons bottom right. The counts step aside (List
+   has them). The details and the walk-through stand at the side, as on a wide screen, and the world moves over for
+   them: one panel at a time, so the walk's caption gives way while the details are open. */
+@media (max-height:520px) and (min-aspect-ratio:9/10){
+  .feed{display:none}
+  .sheet{left:auto;right:8px;top:calc(var(--top) + var(--tap) + 8px);bottom:8px;width:min(340px,52vw);max-height:none;border-radius:20px;transform:translateX(calc(100% + 24px));touch-action:pan-y}
+  .sheet__grab{display:none}.sheet__in{padding-top:22px}
+  .caption,.touring .caption{left:12px;top:calc(var(--top) + var(--tap) + 8px);bottom:var(--bot);width:min(340px,48vw);max-height:none;transform:none;display:flex;flex-direction:column;padding:12px 14px;animation:capInS .32s var(--ease)}
+  .caption p{flex:1;min-height:0;overflow:auto;font-size:13.5px}
+  .ladder,.touring #regSeg,.touring .time,.touring .tools{display:none}
+  /* while the details are open here the timeline, the zoom buttons and the filter step aside, as for the walk */
+  .detail .time,.detail .tools,.detail #regSeg{display:none}
+}
+@keyframes capInS{from{opacity:0;transform:translateX(-10px)}}
 @media (prefers-reduced-motion:reduce){*,*::before{animation:none!important;transition:none!important}}
+html[data-motion="off"] *,html[data-motion="off"] *::before{animation:none!important;transition:none!important}
 .nojs{position:fixed;inset:auto 20px 20px;z-index:60;background:var(--paper);border:1px solid var(--ink);border-radius:14px;padding:12px 14px}

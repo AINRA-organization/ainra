@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SITE = new URL("../site/", import.meta.url).pathname;
-const PAGES = [["index.html", "Home"], ["verify.html", "Verify"], ["get.html", "Network"], ["landscape.html", "Landscape"],
+const PAGES = [["index.html", "Home"], ["verify.html", "Verify"], ["get.html", "Network"], ["world.html", "World"], ["landscape.html", "Landscape"],
   ["foundation.html", "Foundation"], ["docs.html", "Docs"], ["standard.html", "Standard"], ["request-demo.html", "Demo"], ["control.html", "Control room"], ["news.html", "News"]];
 // the words of a part, for matching only (never shown): a search for "install", "npm", "python" or "contact" found
 // nothing while the index held just each heading and its first 220 characters
@@ -23,7 +23,7 @@ for (const [file, label] of PAGES) {
   // first: read as a tag it became a space, so a page built twice gave "fail-closed ." for "fail-closed." and the
   // index depended on whether the page had been through that step yet.
   h = h.replace(/<span class="nw">([\s\S]*?)<\/span>/g, "$1");
-  h = h.replace(/<(script|style|svg|template|nav|footer|aside)\b[\s\S]*?<\/\1>/gi, " ")
+  h = h.replace(/<(script|style|svg|template|nav|footer|aside|noscript)\b[\s\S]*?<\/\1>/gi, " ")
        .replace(/<div class="g-menu"[\s\S]*?<\/ul>\s*<\/div>\s*<\/div>\s*<\/div>/, " ")
        // the Standard's Part IV is the first registrar's required disclosure: it is read in place, in full, and kept
        // out of the index, so its names never surface in a result list (doctrine-check holds where they may appear)

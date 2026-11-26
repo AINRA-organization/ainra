@@ -16,6 +16,9 @@ import { createEngine, perspective, lookAt, mul4 } from "./world-gl.mjs";
 const $ = (s) => document.querySelector(s);
 const cv = $("#world"), lab = $("#labels"), lx = lab.getContext("2d");
 const RMQ = matchMedia("(prefers-reduced-motion: reduce)");
+// A short, wide screen (a phone on its side, or a low window): the same query as the stylesheet. The details and the
+// walk-through stand at the side there.
+const SHORT = matchMedia("(max-height:520px) and (min-aspect-ratio:9/10)");
 const RM = { get matches() { let pref = null; try { pref = localStorage.getItem("ainra-motion"); } catch { /* storage unavailable */ } return pref === "off" || (pref !== "on" && RMQ.matches); } };
 const MONO = '"Noto Sans Mono", ui-monospace, monospace', TAU = Math.PI * 2;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -84,10 +87,30 @@ const live = () => step === W.events.length;
 const FOV = 0.66, PITCH = [-0.45, 1.45], DIST = [220, 3600];
 const cam = { yaw: new Spring(-0.7, 1.2), pitch: new Spring(0.42, 0.6), dist: new Spring(4200, 1.2), tx: new Spring(0, 0.7), ty: new Spring(120, 0.7), tz: new Spring(0, 0.7), vyaw: 0, vpitch: 0 };
 const SPR = [cam.yaw, cam.pitch, cam.dist, cam.tx, cam.ty, cam.tz];
-const lift = new Spring(0, 0.6), capShift = new Spring(0, 0.6), sheetPos = new Spring(1, 0.42);                               // sheet: 1 = away, 0 = open
-const feedW = () => (vw > 900 && !$("#feed").classList.contains("closed") ? 310 : 0);   // the open list of checks takes the right-hand side
-// The view at rest. On a tall screen the camera looks from the side and from above, so the orbit's long side runs down the page.
-const home = () => { const a = (vw - feedW()) / Math.max(1, vh); return a < 0.9 ? { yaw: 1.2, pitch: 0.82, dist: clamp(1180 / a, 1600, 3300), t: [0, 30, 60] } : { yaw: 0.28, pitch: 0.3, dist: clamp(1880 / a, 1520, 2800), t: [0, 110, 0] }; };
+const lift = new Spring(0, 0.6), rest = new Spring(0.1, 0.6), capShift = new Spring(0, 0.6), feedShift = new Spring(0, 0.6), sheetPos = new Spring(1, 0.42);                               // sheet: 1 = away, 0 = open
+const feedW = () => (vw > 900 && !SHORT.matches && !tour.on && !$("#feed").classList.contains("closed") ? 310 : 0);   // the open list of checks takes the right-hand side
+// The view at rest. The registrars travel all the way round, so the whole orbit must fit the narrow side. On a tall
+// screen the camera looks from the front and from high up: the orbit fills the width, and you stay on screen below it.
+// What the world has to itself. The details stand at the side (or rise from the foot on an upright phone), the walk's
+// caption stands at the side on a short screen: all measured, so a chosen part is fitted and centred in what is left.
+let capPx = 0, capTop = 0, sheetPx = 0, sheetH = 0, topPx = 66;
+const sheetOpen = () => sheetPos.to !== 1;
+// The walk's caption gives way while the details are open, at every size: one panel at a time, never two. Where the
+// caption stands at the side (a wide or a short screen) its width is taken off what the world has.
+const capSide = () => tour.on && !footCap() && !sheetOpen();
+const freeW = () => Math.max(160, vw - Math.max(feedW(), sheetOpen() && !phone() ? sheetPx : 0) - (capSide() ? capPx : 0));
+const aside = () => SHORT.matches && (tour.on || sheetOpen());       // a short screen with a panel at the side: timeline and zoom step aside
+// At rest a short, wide screen lifts the scene so that your point clears the timeline. With a panel at the side there
+// the scene is centred below the top bar instead. An upright screen keeps the small lift.
+const restLift = () => (aside() ? -topPx / vh : SHORT.matches ? 0.3 : 0.1);
+// During the walk on an upright phone or tablet (up to 900 px wide) the caption takes the foot. The scene then has
+// the band between the top bar and the caption: it is centred there, and each stop is fitted to it. Read every
+// frame, as the rest lift is, so that a longer caption or a turn of the screen in the middle of the walk moves the
+// scene with it.
+const footCap = () => vw <= 900 && !SHORT.matches;
+const band = () => (tour.on && footCap() && !sheetOpen() ? Math.max(120, capTop - 8 - topPx) : 0);
+const tourLift = () => { const b = band(); return b ? 1 - (2 * topPx + b) / vh - restLift() : 0; };
+const home = () => { const b = band(), a = Math.min(freeW(), b || vh * 9) / Math.max(1, vh); return a < 0.9 ? { yaw: 0, pitch: 0.95, dist: clamp(1640 / a, 1700, 3600), t: [0, 0, 70] } : { yaw: 0.28, pitch: 0.3, dist: clamp(1880 / a, 1520, 2800) * (SHORT.matches ? 1.22 : 1), t: [0, 110, 0] }; };
 function flyTo(t, dist, { yaw, pitch } = {}) {                                                 // always from wherever the camera is now
   for (const s of SPR) s.set(0.85, 1);
   cam.tx.go(t[0]); cam.ty.go(t[1]); cam.tz.go(t[2]); cam.dist.go(clamp(dist, DIST[0], DIST[1])); cam.vyaw = cam.vpitch = 0;
@@ -96,7 +119,7 @@ function flyTo(t, dist, { yaw, pitch } = {}) {                                  
  
 }
 // How far back the camera must be for a ball of this radius to fit the narrower side of the screen.
-const fit = (radius) => radius * 1.3 / (Math.tan(FOV / 2) * Math.min(1, (vw - feedW()) / vh));
+const fit = (radius) => radius * 1.3 / (Math.tan(FOV / 2) * Math.min(1, freeW() / vh, sheetOpen() && phone() ? 1.5 * Math.max(60, vh - sheetH - 24 - topPx) / vh : band() ? 1.3 * band() / vh : 1));
 const resetView = () => { const h = home(); flyTo(h.t, h.dist, { yaw: h.yaw, pitch: h.pitch }); };
 const zoomBy = (f) => { cam.dist.set(0.35, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * f, DIST[0], DIST[1])); };
 function matrices() {
@@ -104,8 +127,12 @@ function matrices() {
   eye = [t[0] + cam.dist.x * cp * Math.sin(cam.yaw.x), t[1] + cam.dist.x * Math.sin(cam.pitch.x), t[2] + cam.dist.x * cp * Math.cos(cam.yaw.x)];
   const m = mul4(perspective(FOV, vw / vh, 8, 9000), lookAt(eye, t));
   // the world moves aside for the details panel (wide screens) or up for the caption and the sheet (phones)
-  const wide = vw > 760, open = 1 - clamp(sheetPos.x, 0, 1);
-  const sx = wide ? -Math.max(open * Math.min(210, vw * 0.16) * 2, feedW()) / vw + (vw > 900 ? capShift.x * 400 / vw : 0) : 0, sy = (wide ? 0 : open * 0.36) + lift.x + 0.1;
+  const wide = !phone(), open = 1 - clamp(sheetPos.x, 0, 1), base = lift.x + rest.x;
+  // beside a side sheet the world moves half the sheet's width; above a bottom sheet it is centred between the top bar
+  // and the sheet, 16 px clear of it. A side caption's share fades as the details open: the caption gives way to them.
+  // The list of checks has its share on a spring too, so the world glides when the list opens, closes or steps aside.
+  const sx = wide ? -Math.max(open * sheetPx, feedShift.x * 310) / vw + capShift.x * (footCap() ? 0 : capPx * (1 - open)) / vw : 0;
+  const sy = wide ? base : base + open * (1 - (topPx + vh - sheetH - 24) / vh - base);
   for (let c = 0; c < 4; c++) { m[c * 4] += sx * m[c * 4 + 3]; m[c * 4 + 1] += sy * m[c * 4 + 3]; }
   vp = m; scaleCss = vh * 0.5 / Math.tan(FOV / 2);
 }
@@ -118,6 +145,8 @@ function resize() {
   vw = innerWidth; vh = innerHeight; dpr = Math.min(devicePixelRatio || 1, dprCap);
   eng.resize(Math.round(vw * dpr), Math.round(vh * dpr));
   lab.width = Math.round(vw * dpr); lab.height = Math.round(vh * dpr);
+  sheetPx = sheet.offsetWidth + 16; sheetH = sheet.offsetHeight; topPx = $(".top").getBoundingClientRect().bottom + 8;
+  measureCap();
 }
 
 // ---------- replay: the record up to a step ----------
@@ -147,29 +176,29 @@ function applyStep(s, quiet) {
     if (e.type === "epoch") W.byId[`epoch${e.epoch}`].flash = 1;
     if (e.type === "change") for (const ix of e.idx) W.byId[e.reg].spot = { ix, t: 1 };
   }
-  renderTrack(); sayNow(); stats();
+  sayNow(); renderTrack(); stats();
   $("#feedNote").textContent = live() ? "" : "Checks pause while the record replays; they run on the record as it stands now.";
 }
 function fillBits(r) {
   const set = r.set, n = r.list.bit_len, d = r.dim ? 0.14 : 1;
   for (let i = 0; i < n; i++) {
     const rec = r.used.get(i), there = rec && W.byId[`pp:${rec.sub}`].shown, o = i * 3;
-    if (r.bits[i]) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 3.0, d, 0);
-    else if (there) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.8, 0.95 * d, 1);
+    if (r.bits[i]) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 3.1, d, 1);           // a set bit: hollow, like a moon that is switched off
+    else if (there) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.4, 0.95 * d, 0);   // a passport's bit, in service: full
     else set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 1.1, 0.46 * d, 0);
   }
 }
 // Where bit i of a registrar's list is now: its fixed place on the globe, turned by the globe's slow spin.
 function bitAt(r, i) { const o = i * 3, x = r.bitPos[o], z = r.bitPos[o + 2], c = Math.cos(r.spin), q = Math.sin(r.spin); return [r.centre[0] + c * x + q * z, r.centre[1] + r.bitPos[o + 1], r.centre[2] - q * x + c * z]; }
 function sayNow() {
-  const el = $("#now");
-  if (live()) { el.innerHTML = `<b>The record as it stands.</b> Copy taken ${dayText(R.published.published_at)}.`; return; }
+  const el = $("#now"), narrow = innerWidth <= 880, reg = (id) => (narrow ? id.replace("registrar-", "r-") : id);
+  if (live()) { el.innerHTML = narrow ? `<b>As it stands</b> · copy of ${dayText(R.published.published_at)}` : `<b>The record as it stands.</b> Copy taken ${dayText(R.published.published_at)}.`; return; }
   if (!step) { el.innerHTML = "<b>Before the first entry.</b> Only the root exists."; return; }
-  const e = W.events[step - 1], d = e.date ? dayText(e.date) : "undated";
+  const e = W.events[step - 1], d = e.date ? dayText(e.date, narrow) : "undated";
   let t;
-  if (e.type === "epoch") t = e.epoch === 1 ? "the root signs the first directory" : e.epoch === W.CUR ? `the root signs directory epoch ${e.epoch}: the network keeps real time from here` : `the root signs directory epoch ${e.epoch}`;
-  else if (e.type === "leaf") t = `${e.reg} logs entry ${e.leaf}: ${e.rec ? short(e.rec.sub) : "an entry that is not a passport in this record"}`;
-  else { const r = W.byId[e.reg], rec = r.used.get(e.idx[0]); t = `${e.reg} ${e.on ? "switches off" : "restores"} ${rec ? short(rec.sub) : `bit ${e.idx[0]}`} (list change ${e.seq})`; }
+  if (e.type === "epoch") t = narrow ? `the root signs directory epoch ${e.epoch}` : e.epoch === 1 ? "the root signs the first directory" : e.epoch === W.CUR ? `the root signs directory epoch ${e.epoch}: the network keeps real time from here` : `the root signs directory epoch ${e.epoch}`;
+  else if (e.type === "leaf") t = narrow ? `${reg(e.reg)} logs ${e.rec ? short(e.rec.sub) : `entry ${e.leaf}`}` : `${e.reg} logs entry ${e.leaf}: ${e.rec ? short(e.rec.sub) : "an entry that is not a passport in this record"}`;
+  else { const r = W.byId[e.reg], rec = r.used.get(e.idx[0]), who = rec ? short(rec.sub) : `bit ${e.idx[0]}`; t = narrow ? `${reg(e.reg)} ${e.on ? "switches off" : "restores"} ${who}` : `${e.reg} ${e.on ? "switches off" : "restores"} ${who} (list change ${e.seq})`; }
   el.innerHTML = `<b>${d}</b> · ${t}`;
 }
 function stats() {
@@ -287,9 +316,19 @@ function scene(dt) {
 }
 
 // ---------- labels: placed by priority, never overlapping; each is a click target; each fades in ----------
+// Where the page's own controls are, so that no name or verdict is drawn over them. Measured a few times a second.
+let chromeAt = -1, chromeBoxes = [], lastNames = [], lastPills = [], youBox = null, youWas = null;
+function chromeRects() {
+  if (clock - chromeAt < 0.25 && chromeAt >= 0) return chromeBoxes; chromeAt = clock;
+  chromeBoxes = [".top .brand", ".top .crumb", ".top__r", "#regSeg", "#feed", "#tools", "#time", "#caption", "#about", "#sheet"].map((q) => document.querySelector(q)).filter((el) => el && !el.hidden && el.getClientRects().length)
+    .map((el) => { const r = el.getBoundingClientRect(); return [r.left - 4, r.top - 4, r.width + 8, r.height + 8]; }).filter((r) => r[0] < vw && r[1] < vh && r[2] > 8 && r[3] > 8);
+  return chromeBoxes;
+}
+// A registrar's name may also stand beside its ring, right or left, level with the globe.
+function beside(n, w, h) { if (!n.centre || !n.ringR) return []; const q = proj(n.centre); if (!q.ok) return []; const r = n.ringR * scaleCss / q.w + 8; return [[q.x + r, q.y - h / 2], [q.x - r - w, q.y - h / 2]]; }
 function labels(dt) {
   const c = lx; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, vw, vh); hits = [];
-  const cand = [], zoomed = cam.dist.x < 1150, drawn = new Set();
+  const cand = [], zoomed = cam.dist.x < 1150, drawn = new Set(); youWas = youBox; youBox = null;
   for (const n of W.parts) {
     if (n.a < 0.6 || !n.shown || !n.label && n.kind !== "you") continue;
     const p = proj(n.labelAt || n.pos); if (!p.ok || p.x < -40 || p.x > vw + 40 || p.y < 0 || p.y > vh) continue;
@@ -306,25 +345,57 @@ function labels(dt) {
     cand.push({ n, p, pri, tag, on, rpx, text: n.kind === "you" ? "YOU ARE HERE" : n.kind === "passport" && n.off && !tag ? `${n.label} · off` : n.label });
   }
   cand.sort((a, b) => b.pri - a.pri || a.p.w - b.p.w);
-  const boxes = [];
+  const boxes = [], chrome = chromeRects();
+  const hit = (q, o) => q[0] < o[0] + o[2] && q[0] + q[2] > o[0] && q[1] < o[1] + o[3] && q[1] + q[3] > o[1];
+  const inChrome = (q) => q[0] < 0 || q[0] + q[2] > vw || q[1] < 0 || q[1] + q[3] > vh || chrome.some((o) => hit(q, o)), clash = (q) => boxes.some((o) => hit(q, o));
+  // Its text, its size and the places it may take, best first; those over the page's controls or past the screen's
+  // edge are left out. Nothing is written over the controls: when the first place is taken by them, a name or a
+  // verdict moves to its next one. A verdict has spare places beside YOU ARE HERE, where its thread begins, and then
+  // down the middle of what the panels leave free; where that is narrower than the verdict, it is written without
+  // its time, and where that is still too wide, as the verdict alone. A name is left out only while none of its places
+  // is free.
+  const lo = capSide() ? capPx - 12 : 0, hi = vw - (sheetOpen() && !phone() ? sheetPx - 8 : 0);
+  const places = (k) => {
+    const you = k.n.kind === "you", pill = you || k.tag; c.font = `${pill ? 600 : 400} ${pill ? 11 : 12}px ${MONO}`;
+    let text = k.tag ? `${k.text} · ${k.tag.text}` : k.text, w = c.measureText(text).width + (pill ? 20 : 0); const h = pill ? 22 : 16;
+    if (k.tag) for (const t of [`${k.text} · ${k.tag.text.split(" · ")[0]}`, k.tag.text.split(" · ")[0]]) { if (w <= hi - lo - 16) break; text = t; w = c.measureText(t).width + 20; }
+    const mid = clamp(k.p.x - w / 2, 8, vw - w - 8), box = (x, y) => [x - 3, y - 2, w + 6, h + 4], yb = youBox || youWas;
+    const spots = you ? [[mid, k.p.y - k.rpx - 34], [mid, k.p.y + k.rpx + 16], [Math.min(k.p.x + k.rpx + 14, vw - w - 8), k.p.y - h / 2], [Math.max(8, k.p.x - k.rpx - 14 - w), k.p.y - h / 2]]
+      : pill ? [[Math.min(k.p.x + k.rpx + 8, vw - w - 8), k.p.y - h / 2], [Math.max(8, k.p.x - k.rpx - 8 - w), k.p.y - h / 2], [mid, k.p.y + k.rpx + 10], [mid, k.p.y - k.rpx - 10 - h]]
+      : k.n.labelCentre ? [[k.p.x - w / 2, k.p.y + 2], ...(k.n.labelAlt ? [proj(k.n.labelAlt)].filter((q) => q.ok).map((q) => [q.x - w / 2, q.y - h - 2]) : []), ...beside(k.n, w, h)]
+      : [[k.p.x + k.rpx + 8, k.p.y - h / 2], [k.p.x - k.rpx - 8 - w, k.p.y - h / 2], [k.p.x - w / 2, k.p.y + k.rpx + 6], [k.p.x - w / 2, k.p.y - k.rpx - 6 - h]];
+    if (k.tag && yb) { for (let j = 1; j <= 3; j++) spots.push([clamp(yb[0] + yb[2] / 2 - w / 2, 8, vw - w - 8), yb[1] + 2 - j * (h + 8)]); spots.push([yb[0] + yb[2] + 8, yb[1] + 2], [yb[0] - 8 - w, yb[1] + 2]); }
+    if (k.tag) for (let y = vh - 44; y > 60; y -= h + 8) spots.push([(lo + hi - w) / 2, y]);     // last, the middle of the free area, from the foot up
+    return { you, pill, text, w, h, above: spots[0], free: spots.map(([x, y]) => [x, y, box(x, y)]).filter((s) => !inChrome(s[2])) };
+  };
+  // YOU ARE HERE and the verdicts are placed together, before the names: YOU takes the first of its places that leaves
+  // every verdict a free one, so that neither is written over the other. Where no place of YOU does that, the
+  // verdicts go first and YOU takes a place clear of them if it has one.
+  const fixed = new Map(), pills = [], me = cand.find((k) => k.n.kind === "you"), verdicts = cand.filter((k) => k.tag);
+  if (me) {
+    for (const s of places(me).free) {
+      youBox = s[2]; boxes.length = 0; boxes.push(s[2]); const got = [];
+      for (const k of verdicts) { const at = places(k).free.find((f) => !clash(f[2])); if (!at) break; got.push([k, at]); boxes.push(at[2]); }
+      if (got.length === verdicts.length) { fixed.set(me, s); for (const [k, at] of got) fixed.set(k, at); break; }
+    }
+    if (!fixed.size) { youBox = null; boxes.length = 0; }
+    pills.push(...boxes);
+  }
   for (const k of cand) {
-    const pill = k.n.kind === "you" || k.tag; c.font = `${pill ? 600 : 400} ${pill ? 11 : 12}px ${MONO}`;
-    const text = k.tag ? `${k.text} · ${k.tag.text}` : k.text, w = c.measureText(text).width + (pill ? 20 : 0), h = pill ? 22 : 16;
-    const x = k.n.kind === "you" ? clamp(k.p.x - w / 2, 8, vw - w - 8) : pill ? Math.min(k.p.x + k.rpx + 8, vw - w - 8) : k.n.labelCentre ? k.p.x - w / 2 : k.p.x + k.rpx + 8; let y = k.n.kind === "you" ? k.p.y - k.rpx - 34 : k.n.labelCentre ? k.p.y + 2 : k.p.y - h / 2;
-    let b = [x - 3, y - 2, w + 6, h + 4];
-    const clash = () => boxes.some((o) => b[0] < o[0] + o[2] && b[0] + b[2] > o[0] && b[1] < o[1] + o[3] && b[1] + b[3] > o[1]);
-    if (k.tag) for (let t = 0; t < 5 && clash(); t++) { y += h + 4; b = [x - 3, y - 2, w + 6, h + 4]; }      // a verdict never hides behind a name
-    else if (!k.on && !pill && clash()) continue;
-    boxes.push(b); hits.push({ b, n: k.n });
+    const { you, pill, text, w, h, above, free } = places(k), clear = (q) => !pills.some((o) => hit(q, o));
+    const at = fixed.get(k) || free.find((s) => !clash(s[2])) || (pill || k.on ? free.find((s) => clear(s[2])) || free[0] : null);
+    if (!at) continue;
+    const [x, y, b] = at;
+    if (!fixed.has(k)) boxes.push(b); hits.push({ b, n: k.n }); if (you) youBox = b; if (pill && !fixed.has(k)) pills.push(b);
     if (pill) {
-      const sig = k.n.kind === "you", fillC = sig ? sigCss : k.tag.ok ? paperCss : inkCss;
+      const fillC = you ? sigCss : k.tag.ok ? paperCss : inkCss;
       let a = k.n.a, s = 1;
       if (k.tag) { k.tag.age += dt; const u = RM.matches ? 1 : Math.min(1, k.tag.age / 0.22); a = Math.min(1, k.tag.age / 0.12) * clamp(k.tag.t / 0.4, 0, 1); s = 0.9 + 0.1 * outBack(u); }   // a verdict arrives: a small pop, then still
       c.save(); c.translate(x + w / 2, y + h / 2); c.scale(s, s); c.translate(-(x + w / 2), -(y + h / 2));
       c.globalAlpha = a; c.beginPath(); c.roundRect(x, y, w, h, 11); c.fillStyle = fillC; c.fill();
-      if (!sig && k.tag.ok) { c.strokeStyle = inkCss; c.lineWidth = 1; c.stroke(); }
-      c.fillStyle = sig || !k.tag.ok ? paperCss : inkCss; c.textBaseline = "middle"; c.fillText(text, x + 10, y + h / 2 + 0.5);
-      if (sig) { c.fillStyle = sigCss; c.fillRect(k.p.x - 0.5, y + h, 1, 12); }
+      if (!you && k.tag.ok) { c.strokeStyle = inkCss; c.lineWidth = 1; c.stroke(); }
+      c.fillStyle = you || !k.tag.ok ? paperCss : inkCss; c.textBaseline = "middle"; c.fillText(text, x + 10, y + h / 2 + 0.5);
+      if (you && x === above[0] && y === above[1]) { c.fillStyle = sigCss; c.fillRect(k.p.x - 0.5, y + h, 1, 12); }
       c.restore(); c.globalAlpha = 1;
     } else {
       drawn.add(k.n); k.n.la = RM.matches ? 1 : Math.min(1, k.n.la + dt * 6);
@@ -333,6 +404,7 @@ function labels(dt) {
     }
   }
   for (const n of W.parts) if (!drawn.has(n)) n.la = 0;
+  lastNames = [...drawn].map((n) => n.label); lastPills = hits.filter((x) => x.n.kind === "you" || tags.some((t) => t.p === x.n)).map((x) => (x.n.kind === "you" ? "you" : x.n.label));
   for (const t of tags) t.t -= dt; tags = tags.filter((t) => t.t > 0);
 }
 
@@ -354,7 +426,7 @@ function pick(x, y) {
     if (bi >= 0) {
       const rec = r.used.get(bi), pp = rec && W.byId[`pp:${rec.sub}`];
       return { id: `bit:${r.id}:${bi}`, kind: "bit", pos: bitAt(r, bi), r: 2.5, shown: true, flash: 0, reg: r.id, info: { k: `STATUS BIT ${bi} · ${r.id.toUpperCase()}`, t: r.bits[bi] ? `Bit ${bi}: set` : `Bit ${bi}: clear`,
-        rows: [["List", `${r.id}'s signed status list`], ["Belongs to", pp && pp.shown ? short(rec.sub) : "no passport in this record"], ["Means", r.bits[bi] ? "that passport is switched off; every verifier refuses it" : pp && pp.shown ? "that passport is in service" : "not in use yet"]] } };
+        rows: [["List", `${r.id}'s signed status list`], ["Belongs to", pp && pp.shown ? short(rec.sub) : "no passport in this record"], ["Means", r.bits[bi] ? "that passport is switched off; every verifier that checks refuses it" : pp && pp.shown ? "that passport is in service" : "not in use yet"]] } };
     }
   }
   return null;
@@ -386,7 +458,7 @@ function release(e) {
   if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId); cv.classList.remove("grabbing");
   if (pinch) { pinch = null; cam.dist.set(0.4, 1).go(clamp(cam.dist.x, DIST[0], DIST[1])); drag = null; return; }
   if (!drag) return;
-  if (moved < 6) { const n = pick(e.clientX, e.clientY); n ? select(n) : closeSheet(); }
+  if (moved < 6) { const n = pick(e.clientX, e.clientY); if (n) { select(n); if (phone() || SHORT.matches) focusOn(n); } else closeSheet(); }
   else if (!RM.matches && hist.length > 1) {                           // the flick's own speed carries on
     const a = hist[0], b = hist[hist.length - 1], t = Math.max(1, b.t - a.t) / 1000;
     cam.vyaw = -(b.x - a.x) / t * 0.0052; cam.vpitch = (b.y - a.y) / t * 0.0042;
@@ -408,10 +480,12 @@ function physics(dt) {
 }
 
 // ---------- details: a sheet (right on wide screens, a bottom sheet on phones) ----------
-const sheet = $("#sheet"), phone = () => matchMedia("(max-width: 760px)").matches;
+const sheet = $("#sheet"), phone = () => matchMedia("(max-width: 760px)").matches && !SHORT.matches;
 function placeSheet() { const v = sheetPos.x; sheet.style.transform = phone() ? `translateY(calc(${v * 100}% + ${v * 24}px))` : `translateX(calc(${v * 100}% + ${v * 24}px))`; sheet.setAttribute("aria-hidden", String(v > 0.98)); sheet.inert = v > 0.98; }
-function openSheet() { sheetPos.set(0.42, 1).go(0); }
-function closeSheet(v) { if (sheetPos.to === 1 && !sel) return; sheetPos.set(0.42, 1).go(1, v); sel = null; }
+function openSheet() { sheetPx = sheet.offsetWidth + 16; sheetH = sheet.offsetHeight; sheetPos.set(0.42, 1).go(0); document.body.classList.add("detail"); }
+// When the details close during the walk, the caption comes back and the view returns to the stop it describes.
+function closeSheet(v, quiet) { if (sheetPos.to === 1 && !sel) return; sheetPos.set(0.42, 1).go(1, v); sel = null; document.body.classList.remove("detail"); if (tour.on && !quiet) tourShow(tour.i); }
+new ResizeObserver(() => { sheetPx = sheet.offsetWidth + 16; sheetH = sheet.offsetHeight; }).observe(sheet);   // its height follows what it says
 const act = $("#shCheck");
 function setAct(state, ok) { act.dataset.state = state; if (ok !== undefined) act.dataset.ok = String(ok); for (const el of act.querySelectorAll(".act__s")) el.setAttribute("aria-hidden", String(el.dataset.s !== state)); }
 function fillSheet(n, keepAction) {
@@ -420,7 +494,7 @@ function fillSheet(n, keepAction) {
   const V = $("#shV"); V.textContent = ""; const pp = n.kind === "passport";
   if (pp) {
     const d = document.createElement("div");
-    if (n.verdict) { const ok = n.verdict === "valid"; d.className = `verdict${ok ? "" : " no"}`; d.innerHTML = icon(ok ? "valid" : "revoked") + "<span></span>"; d.lastChild.textContent = ok ? "Valid. Checked in this tab by the shipped verifier, against the published directory." : n.verdict === "revoked" ? "Switched off. Its registrar set its status bit, so every verifier refuses it." : `Refused: ${n.verdict}.`; }
+    if (n.verdict) { const ok = n.verdict === "valid"; d.className = `verdict${ok ? "" : " no"}`; d.innerHTML = icon(ok ? "valid" : "revoked") + "<span></span>"; d.lastChild.textContent = ok ? "Valid. Checked in this tab by the shipped verifier, against the published directory." : n.verdict === "revoked" ? "Switched off. Its registrar set its status bit, so every verifier that checks refuses it." : `Refused: ${n.verdict}.`; }
     else { d.className = "verdict"; d.innerHTML = "<span></span>"; d.lastChild.textContent = live() ? "Not checked in this tab yet." : "Checks run on the record as it stands now. Move the timeline to the end."; }
     V.append(d);
     const path = W.pathOf(n), r = W.byId[n.reg], ol = $("#shSteps"); ol.textContent = "";
@@ -465,34 +539,40 @@ function makeTour() {
   const r0 = W.regs[0], okP = W.parts.find((n) => n.kind === "passport" && n.reg === r0.id && !n.rec.revoked), ev = W.events.findIndex((e) => e.type === "change" && e.reg === r0.id && e.on);
   const offP = ev >= 0 ? W.byId[`pp:${r0.used.get(W.events[ev].idx[0])?.sub}`] : null;
   tour.stops = [
-    { t: "The root", p: "One key pair, kept offline. It signs one thing, the directory of registrars. It issues no passports and sees no traffic. This one is a test root: the real one is made at a public ceremony.", go: () => flyTo([0, 10, 0], 560, { pitch: 0.35, yaw: 0.5 }) },
-    { t: "The directory", p: `The orbit is the directory, epoch ${W.CUR}: the short list of registrars the root vouches for, signed again at least every 92 days. The fainter rings inside are the epochs it replaced.`, go: () => flyTo([0, 0, 0], 1350, { pitch: 1.0, yaw: 0.3 }) },
+    { t: "The root", p: "One root, with two keys of different kinds (Ed25519 and SLH-DSA). It signs one thing, the directory of registrars. It issues no passports and sees no traffic. This one is a test root: the real one is made at a public ceremony.", go: () => flyTo([0, 10, 0], 560, { pitch: 0.35, yaw: 0.5 }) },
+    { t: "The directory", p: `The orbit is the directory, epoch ${W.CUR}: the short list of registrars the root vouches for, signed again at least every 92 days. The fainter rings inside are the epochs it replaced.`, go: () => flyTo([0, 0, 0], Math.max(1350, fit(W.RING + 150)), { pitch: 1.0, yaw: 0.3 }) },
     { t: "A registrar", p: `${r0.id} issues passports to the agents of the companies it has checked, and it alone can switch them off. It stands on the orbit because the directory names it.`, go: () => flyTo(r0.centre, fit(r0.ringR) * 1.1, { pitch: 0.3, yaw: 0.2 }) },
     { t: "Its log", p: `Every passport is written into the registrar's log before it counts. The ring around the globe is that log: ${r0.size} entries in order, each passport a moon at its own entry. All of them are hashed into one signed head, so nothing can be changed or removed unseen, and the witness cosigns each head.`, go: () => { mark = W.byId[r0.headId]; flyTo(r0.centre, fit(r0.ringR), { pitch: 0.42, yaw: 0.1 }); } },
-    { t: "Its status list", p: `The ${r0.list.bit_len.toLocaleString("en")} dots of this globe are the registrar's status list, signed as one small file. Each passport owns one dot, counted from the top. A dark dot is a passport that was switched off. Anyone can hold a copy, so checking needs nobody's permission.`, go: () => flyTo([r0.centre[0], r0.centre[1] + r0.globeR * 0.5, r0.centre[2]], fit(r0.globeR) * 1.05, { pitch: 0.7, yaw: 0.25 }) },
+    { t: "Its status list", p: `The ${r0.list.bit_len.toLocaleString("en")} dots of this globe are the registrar's status list, signed as one small file. Each passport owns one dot, counted from the top: full while it is in service, hollow once it is switched off. Anyone can hold a copy, so checking needs nobody's permission.`, go: () => flyTo([r0.centre[0], r0.centre[1] + r0.globeR * 0.5, r0.centre[2]], fit(r0.globeR) * 1.05, { pitch: 0.7, yaw: 0.25 }) },
     { t: "You, the verifier", p: "You stand outside the network holding copies. The blue thread is a real check of one passport, run in this tab: its entry in the log, the registrar, the directory, the root, and its status bit. The heavy arcs are its proof: a few hashes that stand for the rest of the log.", go: () => { resetView(); mark = okP; if (okP) tour.timer = setTimeout(() => { if (!live()) applyStep(W.events.length, true); check(okP); }, RM.matches ? 0 : 900); } },
-    { t: "The off switch", p: offP ? `Watch ${short(offP.rec.sub)}. Its registrar sets one bit, and from the next check on, every verifier everywhere refuses that agent, with no call to anyone. The refusal you see is this tab's own.` : "A registrar sets one bit, and every verifier refuses that passport from the next check on.", go: () => {
+    { t: "The off switch", p: offP ? `Watch ${short(offP.rec.sub)}. Its registrar sets one bit, and every verifier that checks refuses that agent, each within the freshness window it chose, with no call to anyone. The refusal you see is this tab's own.` : "A registrar sets one bit, and every verifier that checks refuses that passport, each within the freshness window it chose.", go: () => {
       if (!offP) return; mark = offP; flyTo([r0.centre[0], r0.centre[1] + r0.globeR * 0.6, r0.centre[2]], fit(r0.ringR) * 0.9, { pitch: 0.6, yaw: 0.2 });
       applyStep(ev, true); tour.timer = setTimeout(() => { applyStep(ev + 1); tour.timer = setTimeout(() => { applyStep(W.events.length, true); offP.verdict = null; check(offP); }, RM.matches ? 0 : 1300); }, RM.matches ? 0 : 1200); } },
   ];
   const lad = $("#ladder"); tour.stops.forEach((s, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.title = s.t; b.setAttribute("aria-label", `Stop ${i + 1}: ${s.t}`); b.addEventListener("click", () => tourShow(i)); li.append(b); lad.append(li); });
 }
+// On a short screen a stop's text may be longer than its box: it scrolls, by finger or keys, and fades where more
+// follows. The caption is measured whenever it appears or changes size, also after it gave way to the details.
+function capMore() { const cp = $("#capP"), over = cp.scrollHeight > cp.clientHeight + 1; if (over) cp.tabIndex = 0; else cp.removeAttribute("tabindex"); cp.classList.toggle("more", over && cp.scrollTop + cp.clientHeight < cp.scrollHeight - 2); }
+$("#capP").addEventListener("scroll", capMore, { passive: true });
+function measureCap() { const cap = $("#caption"); if (cap.offsetWidth) { capPx = cap.offsetWidth + 24; capTop = cap.offsetTop; capMore(); } }
+new ResizeObserver(measureCap).observe($("#caption"));
 function tourShow(i) {
   clearTimeout(tour.timer); mark = null; tour.i = clamp(i, 0, tour.stops.length - 1); const s = tour.stops[tour.i];
   if (!live()) applyStep(W.events.length, true); setPlaying(false);
-  $("#capN").textContent = `${tour.i + 1} / ${tour.stops.length}`; $("#capT").textContent = s.t; $("#capP").textContent = s.p;
+  $("#capN").textContent = `${tour.i + 1} / ${tour.stops.length}`; $("#capT").textContent = s.t; const cp = $("#capP"); cp.textContent = s.p; cp.scrollTop = 0; measureCap();
   [...$("#ladder").querySelectorAll("button")].forEach((b, k) => k === tour.i ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current"));
   $("#capPrev").disabled = tour.i === 0; $("#capNext").textContent = tour.i === tour.stops.length - 1 ? "Finish" : "Next"; s.go();
 }
-function tourStart() { tour.on = true; closeSheet(); capShift.go(1); if (phone()) lift.go(0.22); $("#caption").hidden = false; $("#tourBtn").setAttribute("aria-pressed", "true"); tourShow(0); }
-function tourEnd() { tour.on = false; mark = null; capShift.go(0); lift.go(0); clearTimeout(tour.timer); if (!live()) applyStep(W.events.length, true); $("#caption").hidden = true; $("#tourBtn").setAttribute("aria-pressed", "false"); resetView(); }
+function tourStart() { tour.on = true; document.body.classList.add("touring"); closeSheet(undefined, true); $("#caption").hidden = false; measureCap(); capShift.go(1); $("#tourBtn").setAttribute("aria-pressed", "true"); tourShow(0); }
+function tourEnd() { tour.on = false; document.body.classList.remove("touring"); mark = null; capShift.go(0); clearTimeout(tour.timer); if (!live()) applyStep(W.events.length, true); $("#caption").hidden = true; $("#tourBtn").setAttribute("aria-pressed", "false"); resetView(); }
 $("#tourBtn").addEventListener("click", () => (tour.on ? tourEnd() : tourStart()));
 $("#capPrev").addEventListener("click", () => tourShow(tour.i - 1)); $("#capNext").addEventListener("click", () => (tour.i === tour.stops.length - 1 ? tourEnd() : tourShow(tour.i + 1))); $("#capEnd").addEventListener("click", tourEnd);
 
 // ---------- finding a passport ----------
 const findIn = $("#find"), findList = $("#findList"); let found = [], foundAt = 0;
-function renderFound() { findList.textContent = ""; found.forEach((n, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "option"); b.setAttribute("aria-selected", String(i === foundAt)); b.textContent = n.rec.sub.replace(/^ainra:/, ""); b.addEventListener("click", () => choose(n)); li.append(b); findList.append(li); }); findList.classList.toggle("on", found.length > 0); }
-function choose(n) { findList.classList.remove("on"); findIn.value = ""; found = []; findIn.blur(); if (!live()) applyStep(W.events.length, true); if (W.byId[n.reg].dim) setReg("all"); if (listOpen) toggleList(false); focusOn(n); select(n); }
+function renderFound() { findList.textContent = ""; found.forEach((n, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "option"); b.setAttribute("aria-selected", String(i === foundAt)); b.textContent = n.rec.sub.replace(/^ainra:/, ""); b.addEventListener("click", () => choose(n)); li.append(b); findList.append(li); }); findList.classList.toggle("on", found.length > 0); const row = findList.children[foundAt]; if (row) findList.scrollTop = Math.max(0, row.offsetTop + row.offsetHeight - findList.clientHeight + 4); }
+function choose(n) { if (!eng) return; findList.classList.remove("on"); findIn.value = ""; found = []; findIn.blur(); if (!live()) applyStep(W.events.length, true); if (W.byId[n.reg].dim) setReg("all"); if (listOpen) toggleList(false); select(n); focusOn(n); }   // the details first: the flight is fitted to what they leave free
 findIn.addEventListener("input", () => { const q = findIn.value.trim().toLowerCase(); found = q ? W.parts.filter((n) => n.kind === "passport" && n.rec.sub.toLowerCase().includes(q)).slice(0, 8) : []; foundAt = 0; renderFound(); });
 findIn.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { foundAt = Math.min(found.length - 1, foundAt + 1); renderFound(); e.preventDefault(); } else if (e.key === "ArrowUp") { foundAt = Math.max(0, foundAt - 1); renderFound(); e.preventDefault(); } else if (e.key === "Enter" && found[foundAt]) choose(found[foundAt]); else if (e.key === "Escape") { findIn.value = ""; found = []; renderFound(); findIn.blur(); } });
 findIn.addEventListener("blur", () => setTimeout(() => findList.classList.remove("on"), 150));
@@ -500,7 +580,7 @@ findIn.addEventListener("blur", () => setTimeout(() => findList.classList.remove
 // ---------- segmented controls ----------
 function makeSeg(box, opts, start, onChoose) {
   const pill = document.createElement("i"); pill.className = "seg__pill"; box.append(pill);
-  const btns = opts.map((o) => { const b = document.createElement("button"); b.type = "button"; b.textContent = o.label; if (o.title) b.title = o.title; b.addEventListener("click", () => { set(o.id); onChoose(o.id); }); box.append(b); return b; });
+  const btns = opts.map((o) => { const b = document.createElement("button"); b.type = "button"; for (const part of [].concat(o.label)) { if (typeof part === "string") b.append(part); else { const sp = document.createElement("span"); sp.className = part[0]; sp.textContent = part[1]; b.append(sp); } } if (o.title) b.title = o.title; b.addEventListener("click", () => { set(o.id); onChoose(o.id); }); box.append(b); return b; });
   function set(id) { const i = Math.max(0, opts.findIndex((o) => o.id === id)); btns.forEach((b, k) => b.setAttribute("aria-pressed", String(k === i))); const b = btns[i]; pill.style.width = `${b.offsetWidth}px`; pill.style.transform = `translateX(${b.offsetLeft}px)`; }
   set(start); addEventListener("resize", () => set(opts[btns.findIndex((b) => b.getAttribute("aria-pressed") === "true")].id)); document.fonts?.ready.then(() => set(opts[btns.findIndex((b) => b.getAttribute("aria-pressed") === "true")].id));
   return { set };
@@ -514,11 +594,11 @@ function toggleList(on) {
   listOpen = on ?? !listOpen; $("#list").hidden = !listOpen; $("#listBtn").setAttribute("aria-expanded", String(listOpen));
   if (!listOpen) return; closeSheet(); if (!live()) applyStep(W.events.length, true);
   const body = $("#listBody"); body.textContent = ""; const run = ++listRun, ps = W.parts.filter((n) => n.kind === "passport");
-  const rows = ps.map((n) => { const tr = document.createElement("tr"); tr.innerHTML = "<td><button type='button'></button></td><td></td><td></td><td></td><td></td><td>checking…</td>"; const c = tr.children; c[0].firstChild.textContent = short(n.rec.sub); c[0].firstChild.addEventListener("click", () => choose(n)); c[1].textContent = n.reg; c[2].textContent = n.rec.operator; c[3].textContent = `${n.rec.leaf_index} of ${n.rec.checkpoint_size}`; c[4].textContent = `${n.rec.status_idx}`; body.append(tr); return tr; });
-  let i = 0; const next = () => { if (run !== listRun || !listOpen || i >= ps.length) { if (i >= ps.length) $("#listNote").textContent = `${ps.length} passports checked in this tab by the verifier the site ships: ${ps.filter((n) => n.verdict === "valid").length} valid, ${ps.filter((n) => n.verdict && n.verdict !== "valid").length} refused.`; return; }
+  const rows = ps.map((n) => { const tr = document.createElement("tr"); tr.innerHTML = eng ? "<td><button type='button'></button></td><td>checking…</td><td></td><td></td><td></td><td></td>" : "<td><span></span></td><td>checking…</td><td></td><td></td><td></td><td></td>"; const c = tr.children; c[0].firstChild.textContent = short(n.rec.sub); if (eng) c[0].firstChild.addEventListener("click", () => choose(n)); c[2].textContent = n.reg; c[3].textContent = n.rec.operator; c[4].textContent = `${n.rec.leaf_index} of ${n.rec.checkpoint_size}`; c[5].textContent = `${n.rec.status_idx}`; body.append(tr); return tr; });
+  let i = 0; const next = () => { if (run !== listRun || !listOpen || i >= ps.length) { if (i >= ps.length) $("#listNote").textContent = `${eng ? "" : NO_GL + " "}${ps.length} passports checked in this tab by the verifier the site ships: ${ps.filter((n) => n.verdict === "valid").length} valid, ${ps.filter((n) => n.verdict && n.verdict !== "valid").length} refused.`; return; }
     const n = ps[i], res = runCheck(R, n.rec, W.byId[n.reg].list); n.verdict = res.ok ? "valid" : res.reason; times.push(res.ms);
-    rows[i].children[5].innerHTML = `<span class="tag${res.ok ? "" : " no"}">${icon(res.ok ? "valid" : "revoked")}<span></span></span>`; rows[i].children[5].querySelector("span span").textContent = `${res.ok ? "valid" : res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`; i++; setTimeout(next, 0); };
-  $("#listNote").textContent = "Checking each passport in this tab…"; setTimeout(next, 30);
+    rows[i].children[1].innerHTML = `<span class="tag${res.ok ? "" : " no"}">${icon(res.ok ? "valid" : "revoked")}<span></span></span>`; rows[i].children[1].querySelector("span span").textContent = `${res.ok ? "valid" : res.reason === "revoked" ? "switched off" : res.reason}${innerWidth < 620 ? "" : ` · ${msText(res.ms)}`}`; i++; setTimeout(next, 0); };
+  $("#listNote").textContent = `${eng ? "" : NO_GL + " "}Checking each passport in this tab…`; setTimeout(next, 30);
 }
 $("#listBtn").addEventListener("click", () => toggleList()); $("#listX").addEventListener("click", () => toggleList(false));
 
@@ -535,7 +615,7 @@ track.addEventListener("pointerdown", (e) => { track.setPointerCapture(e.pointer
 track.addEventListener("pointermove", (e) => { if (track.classList.contains("drag")) applyStep(stepAt(e.clientX), true); });
 const trackUp = () => track.classList.remove("drag"); track.addEventListener("pointerup", trackUp); track.addEventListener("pointercancel", trackUp);
 track.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") { setPlaying(false); applyStep(step - 1, true); e.preventDefault(); e.stopPropagation(); } if (e.key === "ArrowRight") { setPlaying(false); applyStep(step + 1); e.preventDefault(); e.stopPropagation(); } });
-function setPlaying(on) { playing = on; playT = 0; swapIcon($("#playIc"), on ? "pause" : "play"); $("#play").setAttribute("aria-label", on ? "Pause the replay" : "Replay the record"); if (on) { if (live()) applyStep(0, true); closeSheet(); } }
+function setPlaying(on) { playing = on; playT = 0; swapIcon($("#playIc"), on ? "pause" : "play"); $("#play").setAttribute("aria-label", on ? "Pause the replay" : "Replay the record"); if (on) { if (live()) applyStep(0, true); closeSheet(undefined, true); } }
 $("#play").addEventListener("click", () => setPlaying(!playing));
 
 // ---------- tools ----------
@@ -554,8 +634,9 @@ $("#stillBtn").addEventListener("click", () => {                       // a stil
 });
 addEventListener("keydown", (e) => {
   if (e.target.closest?.("input,textarea")) return;
-  if (e.key === "Escape") { if (!$("#about").hidden) $("#aboutBtn").click(); else if (listOpen) toggleList(false); else if (sel) closeSheet(); else if (tour.on) tourEnd(); return; }
-  if (e.metaKey || e.ctrlKey || e.altKey || listOpen) return;
+  if (e.key === "Escape") { if (!$("#about").hidden) $("#aboutBtn").click(); else if (listOpen && eng) toggleList(false); else if (sel) closeSheet(); else if (tour.on) tourEnd(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey || listOpen || !eng) return;
+  if (e.key.startsWith("Arrow") && e.target.closest?.("#capP")) return;   // there the arrows scroll the stop's text, and only that
   if (e.key === "ArrowLeft") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) + 0.3); } else if (e.key === "ArrowRight") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) - 0.3); }
   else if (e.key === "ArrowUp") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) + 0.15, ...PITCH)); } else if (e.key === "ArrowDown") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) - 0.15, ...PITCH)); }
   else if (e.key === "+" || e.key === "=") zoomBy(0.72); else if (e.key === "-" || e.key === "_") zoomBy(1.38); else if (e.key === "0") resetView();
@@ -569,6 +650,7 @@ const sets = () => [lineSet, ...W.regs.map((r) => r.set), nodeSet];
 const focusDist = () => (sel && sel.pos ? dist3(eye, sel.pos) : cam.dist.x);
 async function start() {
   readTheme(); paintIcons(); swapIcon($("#playIc"), "play"); swapIcon($("#shCopyIc"), "copy");
+  const motionAttr = () => { document.documentElement.dataset.motion = RM.matches ? "off" : "on"; }; motionAttr(); RMQ.addEventListener("change", motionAttr);   // the stylesheet stops its own animations under it
   eng = new URLSearchParams(location.search).has("nogl") ? null : createEngine(cv);          // ?nogl shows what a browser without WebGL2 gets
   if (!eng) { toggleListFallback(); return; }
   eng.font = MONO;
@@ -583,9 +665,17 @@ async function start() {
   W.parts.forEach((n) => { const ri = n.reg ? W.regs.indexOf(W.byId[n.reg]) : W.regs.indexOf(n); n.a = 0; n.hv = 0; n.la = 0; n.pulse = 0; n.offA = 0;
     n.born = RM.matches ? 0 : { root: 0.15, epoch: 0.45, registrar: 0.8 + ri * 0.25, list: 0.8 + ri * 0.25, witness: 1.9, open: 1.9, you: 2.2 }[n.kind] ?? 1.25 + ri * 0.25 + (n.leaf || 0) * 0.05; });
   nodeSet = eng.pointSet(W.parts.length * 3 + 96, true); lineSet = eng.lineSet(1600);
-  resize(); addEventListener("resize", () => { resize(); placeSheet(); });
+  const narrowFind = () => { findIn.placeholder = innerWidth <= 900 ? "Find" : "Find a passport"; }; narrowFind();
+  // A turn of the screen changes the layout (upright phone or tablet, short screen, wide screen), so the view is
+  // framed again for it: the chosen part, the walk's stop, or the resting view. Not while the search field is in
+  // use: there a keyboard on the screen may be what changed the shape, and it goes away again, so the question
+  // waits for it.
+  const shape = () => (SHORT.matches ? 3 : innerWidth <= 760 ? 2 : innerWidth <= 900 ? 1 : 0); let was = shape();
+  const reframe = () => { if (document.activeElement === findIn || shape() === was) return; was = shape(); if (sel) focusOn(sel); else if (tour.on) tourShow(tour.i); else resetView(); };
+  findIn.addEventListener("blur", () => setTimeout(reframe, 600));
+  resize(); rest.jump(restLift()); feedShift.jump(feedW() ? 1 : 0); addEventListener("resize", () => { resize(); placeSheet(); narrowFind(); sayNow(); reframe(); });
   makeTrack(); makeTour();
-  regSeg = makeSeg($("#regSeg"), [{ id: "all", label: "All registrars" }, ...W.regs.map((r) => ({ id: r.id, label: phone() ? `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` : `${r.id} · ${r.recs.length}`, title: `${r.recs.length} passports` }))], "all", setReg);
+  regSeg = makeSeg($("#regSeg"), [{ id: "all", label: ["All", ["lg", " registrars"]] }, ...W.regs.map((r) => ({ id: r.id, label: r.id.startsWith("registrar-") ? [["lg", "registrar-"], ["sm", "r-"], `${r.id.slice(10)} · ${r.recs.length}`] : `${r.id} · ${r.recs.length}`, title: `${r.id}: ${r.recs.length} passports` }))], "all", setReg);
   viewSeg = makeSeg($("#viewSeg"), [{ id: 0, label: "Points" }, { id: 1, label: "Text" }, { id: 2, label: "Braille" }, { id: 3, label: "Dither" }], 0, (v) => { eng.view = v; });
   applyStep(W.events.length, true);
   for (const n of W.parts) if (n.kind === "passport") n.offA = n.off ? 1 : 0;       // at arrival each moon already is what the record says
@@ -594,10 +684,11 @@ async function start() {
   const h = home(); cam.tx.jump(h.t[0]); cam.ty.jump(h.t[1]); cam.tz.jump(h.t[2]); cam.pitch.jump(h.pitch);
   if (RM.matches) { cam.yaw.jump(h.yaw); cam.dist.jump(h.dist); } else { cam.yaw.jump(h.yaw - 1.1); cam.dist.jump(h.dist * 2.6); cam.yaw.set(1.6, 1).go(h.yaw); cam.dist.set(1.4, 1).go(h.dist); }   // the world arrives from afar
   placeSheet();
+  openHash(); addEventListener("hashchange", openHash);
   let last = performance.now(), nextCheck = last + 2200, slow = 0, frames = 0, acc = 0;
   const stat = (window.__world = { fps: 0, ms: 0, dpr, parts: W.parts.length, events: W.events.length });
   // For measuring and for tests only: where the chosen part and the camera are. The page itself never reads it.
-  stat.probe = () => ({ sel: sel && { id: sel.id, shown: sel.shown, at: proj(sel.pos), bit: sel.bit && proj(sel.bit) }, cam: { yaw: cam.yaw.x, pitch: cam.pitch.x, dist: cam.dist.x, t: [cam.tx.x, cam.ty.x, cam.tz.x] }, vw, vh, dpr, cw: cv.width, ch: cv.height, sheet: sheetPos.x, lift: lift.x, INK, SIG, nodes: nodeSet.count, lines: lineSet.count, view: eng.view, focus: focusDist(), eye });
+  stat.probe = () => ({ sel: sel && { id: sel.id, shown: sel.shown, at: proj(sel.pos), bit: sel.bit && proj(sel.bit) }, cam: { yaw: cam.yaw.x, pitch: cam.pitch.x, dist: cam.dist.x, t: [cam.tx.x, cam.ty.x, cam.tz.x] }, vw, vh, dpr, cw: cv.width, ch: cv.height, sheet: sheetPos.x, lift: lift.x, names: lastNames, pills: lastPills, you: proj(W.byId.you.pos), INK, SIG, nodes: nodeSet.count, lines: lineSet.count, view: eng.view, focus: focusDist(), eye });
   const frame = (now) => {
     const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
     if (!document.hidden) {
@@ -606,7 +697,7 @@ async function start() {
         if (!FIXED && ms > 30 && ++slow >= 2) { slow = 0; if (dprCap > 1) { dprCap = 1; resize(); } stat.dpr = dprCap; } else if (ms <= 30) slow = 0; }
       if (playing) { playT += dt; if (playT > (RM.matches ? 0.9 : 0.5)) { playT = 0; applyStep(step + 1); if (live()) setPlaying(false); } }
       if (now >= nextCheck && live() && !tour.on && !listOpen && !playing && order.length) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 3000 : 1100 + Math.random() * 1500); }   // an uneven beat, like real traffic
-      physics(dt); lift.step(dt); capShift.step(dt); sheetPos.step(dt); placeSheet(); matrices(); scene(dt); labels(dt);
+      { const rl = restLift(), tl = tourLift(), fs = feedW() ? 1 : 0; if (rest.to !== rl) rest.go(rl); if (lift.to !== tl) lift.go(tl); if (feedShift.to !== fs) feedShift.go(fs); } physics(dt); lift.step(dt); rest.step(dt); capShift.step(dt); feedShift.step(dt); sheetPos.step(dt); placeSheet(); matrices(); scene(dt); labels(dt);
       eng.frame(look(), sets());
     }
     requestAnimationFrame(frame);
@@ -614,9 +705,13 @@ async function start() {
   requestAnimationFrame(frame);
 }
 // Without WebGL2 the record is still here: the list and its real checks, no drawing.
+// A link to a panel opens it: world.html#list, world.html#about. With or without the drawing.
+function openHash() { if (location.hash === "#list" && !listOpen) toggleList(true); if (location.hash === "#about" && $("#about").hidden) $("#aboutBtn").click(); }
+const NO_GL = "This browser cannot draw the world (no WebGL2), so here is the same record as a table.";
 async function toggleListFallback() {
   R = await loadRecord("net", bootStep); W = buildWorld(R); step = W.events.length; boot.classList.add("done");
-  for (const id of ["tools", "time", "regSeg", "tourBtn", "feed"]) $("#" + id).hidden = true;
-  $("#listX").hidden = true; listOpen = false; toggleList(true); $("#listNote").textContent = "This browser cannot draw the world (no WebGL2), so here is the same record as a table.";
+  for (const id of ["tools", "time", "regSeg", "tourBtn", "listBtn", "feed"]) $("#" + id).hidden = true;
+  $(".find").hidden = true; $(".about__view").hidden = true;
+  $("#listX").hidden = true; listOpen = false; toggleList(true); openHash(); addEventListener("hashchange", openHash);
 }
 start().catch((e) => { console.error(e); bootFail(e.message || String(e)); });
