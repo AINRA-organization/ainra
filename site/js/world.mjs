@@ -157,10 +157,11 @@ function fillBits(r) {
     const rec = r.used.get(i), there = rec && W.byId[`pp:${rec.sub}`].shown, o = i * 3;
     if (r.bits[i]) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 3.0, d, 0);
     else if (there) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.8, 0.95 * d, 1);
-    else set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 1.1, (seenEpoch || live() ? 0.46 : 0) * d, 0);
+    else set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 1.1, 0.46 * d, 0);
   }
 }
-const bitAt = (r, i) => [r.bitPos[i * 3], r.bitPos[i * 3 + 1], r.bitPos[i * 3 + 2]];
+// Where bit i of a registrar's list is now: its fixed place on the globe, turned by the globe's slow spin.
+function bitAt(r, i) { const o = i * 3, x = r.bitPos[o] - r.centre[0], z = r.bitPos[o + 2] - r.centre[2], c = Math.cos(r.spin), q = Math.sin(r.spin); return [r.centre[0] + c * x + q * z, r.bitPos[o + 1], r.centre[2] - q * x + c * z]; }
 function sayNow() {
   const el = $("#now");
   if (live()) { el.innerHTML = `<b>The record as it stands.</b> Copy taken ${dayText(R.published.published_at)}.`; return; }
@@ -185,10 +186,10 @@ function check(p, { quiet, then } = {}) {
   const main = [W.byId.you.pos, p.pos, ...(refusedAtBit ? [] : [path.reg, path.root])];
   const lens = main.slice(1).map((q, i) => dist3(main[i], q)), total = lens.reduce((a, b) => a + b, 0);
   const reveal = () => {
-    p.verdict = res.ok ? "valid" : res.reason; p.flash = 1; W.byId.you.flash = 0.7;
+    p.verdict = res.ok ? "valid" : res.reason; p.flash = 1; p.pulse = 1; W.byId.you.flash = 0.7;
     if (res.ok) { W.byId.root.flash = 0.6; W.byId[p.reg].flash = 0.7; } else if (refusedAtBit) W.byId[p.reg].spot = { ix: p.rec.status_idx, t: 1 };
     times.push(res.ms); if (times.length > 300) times.shift(); res.ok ? nValid++ : nRefused++;
-    tags = [{ p, text: res.ok ? `valid · ${msText(res.ms)}` : `${res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`, ok: res.ok, t: 2.6 }];                    // one verdict on screen at a time
+    tags = [{ p, text: res.ok ? `valid · ${msText(res.ms)}` : `${res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`, ok: res.ok, t: 2.6, age: 0 }];                    // one verdict on screen at a time
     if (!quiet) feedLine(p, res);
     stats(); if (sel === p) fillSheet(p, true); then && then(res);
   };
@@ -205,40 +206,63 @@ function feedLine(p, res) {
 const along = (th, f) => { let d = f * th.total; for (let i = 0; i < th.lens.length; i++) { if (d <= th.lens[i] || i === th.lens.length - 1) return { i, pos: mix3(th.main[i], th.main[i + 1], clamp(d / (th.lens[i] || 1), 0, 1)) }; d -= th.lens[i]; } return { i: 0, pos: th.main[0] }; };
 
 // ---------- the frame: what is drawn ----------
+// Nothing appears or changes at once. Every part has a presence (0 to 1) that eases toward shown or hidden, a lift
+// while it is pointed at, and, for a passport, how far it has turned from in service to switched off. A globe's dots
+// are written in from the top, the way its list is counted, and the globe turns slowly. Under reduced motion each of
+// these jumps to its end and nothing turns.
+let clock = 0;
+const ease = (x, to, rate, dt) => (RM.matches ? to : x + (to - x) * (1 - Math.exp(-rate * dt)));
+const outBack = (t) => { const u = t - 1; return 1 + 2.70158 * u * u * u + 1.70158 * u * u; };          // arrives a little past, then settles
+const bitOf = (p) => bitAt(W.byId[p.reg], p.rec.status_idx);
 function scene(dt) {
+  clock += dt;
   const L = lineSet, N = nodeSet; L.clear(); let ni = 0;
-  const put = (pos, size, ink, shape = 0, tone = 0) => { if (ni < N.n) N.set(ni++, pos[0], pos[1], pos[2], size, ink, shape, tone); };
-  const ring = (c, rad, alpha, dash = 0, seg = 96) => { let a = [c[0] + rad, c[1], c[2]]; for (let i = 1; i <= seg; i++) { const t = (i / seg) * TAU, b = [c[0] + Math.cos(t) * rad, c[1], c[2] + Math.sin(t) * rad]; L.add(a, b, alpha, 1, 0, dash); a = b; } };
+  const put = (pos, size, ink, shape = 0, tone = 0) => { if (ni < N.n && ink > 0.003) N.set(ni++, pos[0], pos[1], pos[2], size, ink, shape, tone); };
+  const arc = (at, from, to, alpha, width, tone, seg) => { if (to - from < 1e-3) return; let a = at(from); for (let i = 1; i <= seg; i++) { const b = at(from + (to - from) * i / seg); L.add(a, b, alpha, width, tone); a = b; } };
+  const circle = (rad) => (t) => [Math.cos(t * TAU) * rad, 0, Math.sin(t * TAU) * rad];
   const selPath = sel && sel.kind === "passport" ? W.pathOf(sel) : null;
   // a run of entries on a registrar's ring, drawn heavier: one hash of a proof stands for all of them
-  const run = (r, lo, hi, alpha, tone) => { const a0 = lo - 0.32, a1 = hi - 1 + 0.32, seg = Math.max(2, Math.ceil((a1 - a0) * 3)); let a = r.ringAt(a0); for (let i = 1; i <= seg; i++) { const b = r.ringAt(a0 + (a1 - a0) * i / seg); L.add(a, b, alpha, 3.2, tone); a = b; } };
+  const run = (r, lo, hi, alpha, tone, grow = 1) => { const a0 = lo - 0.32, a1 = a0 + (hi - 1 + 0.32 - a0) * grow; arc(r.ringAt, a0, a1, alpha, 3.2, tone, Math.max(2, Math.ceil((a1 - a0) * 3))); };
   const subject = [sel, hover, mark].find((n) => n && (n.kind === "witness" || n.kind === "open" || n.kind === "head"));
+  for (const r of W.regs) {                                             // each globe turns, and its dots are written in from the top
+    if (!RM.matches) r.spin += dt * 0.028;
+    const want = r.shown && clock >= r.born ? 1.12 : 0;
+    r.reveal = RM.matches ? want : want > r.reveal ? Math.min(want, r.reveal + dt * 0.62) : Math.max(want, r.reveal - dt * 2.4);
+    r.set.spin = r.spin; r.set.reveal = r.reveal;
+  }
   for (const n of W.parts) {
-    n.flash = Math.max(0, n.flash - dt * 1.4);
-    if (!n.shown) continue;
-    const dim = n.reg && W.byId[n.reg]?.dim ? 0.16 : n.kind === "registrar" && n.dim ? 0.16 : 1, f = n.flash;
-    if (n.kind === "epoch") { ring([0, 0, 0], n.r, (n.cur ? 0.55 : 0.2) + f * 0.4); continue; }
-    if (n.kind === "registrar") { let a = n.ringAt(0); const top = n.size + 1; for (let i = 1; i <= 80; i++) { const b = n.ringAt(top * i / 80); L.add(a, b, 0.2 * dim + f * 0.3, 1); a = b; } }   // its log's ring
+    n.flash = Math.max(0, n.flash - dt * 1.4); n.pulse = Math.max(0, n.pulse - dt * 2.6);
+    n.a = ease(n.a, n.shown && clock >= n.born ? 1 : 0, 7, dt);
+    if (n.a < 0.01) continue;
+    const on = n === sel || n === hover || n === mark; n.hv = ease(n.hv, on ? 1 : 0, 14, dt);
+    const dim = n.reg && W.byId[n.reg]?.dim ? 0.16 : n.kind === "registrar" && n.dim ? 0.16 : 1, f = n.flash, k = n.a, grow = k < 0.999 ? Math.max(0, outBack(k)) : 1;
+    if (n.kind === "epoch") { arc(circle(n.r), 0.25 - 0.5 * k, 0.25 + 0.5 * k, ((n.cur ? 0.55 : 0.2) + f * 0.4) * Math.min(1, k * 2), 1, 0, 96); continue; }      // an orbit draws itself from the front
+    if (n.kind === "registrar") arc(n.ringAt, 0, (n.size + 1) * k, 0.2 * dim + f * 0.3, 1, 0, 80);                                                              // its log's ring
     if (n.kind === "list") { const r = W.byId[n.reg]; if (r.spot) { r.spot.t -= dt * 0.5; if (r.spot.t <= 0) r.spot = null; else put(bitAt(r, r.spot.ix), 3 + (1 - r.spot.t) * 26, r.spot.t * 0.8, 1); } continue; }
-    const on = n === sel || n === hover || n === mark;
-    if (n.kind === "root") { put(n.pos, n.r, 1, 3); put(n.pos, n.r + 9, 0.4, 1); }
-    else if (n.kind === "registrar") put(n.pos, n.r, dim, 3);
-    else if (n.kind === "passport") { put(n.pos, n.r + (on ? 1.4 : 0), dim, n.off ? 1 : 3); if (on) L.add(n.pos, n.bit, 0.7 * dim, 1.3); }
-    else if (n.kind === "leaf") put(n.pos, n.r, 0.42 * dim);
-    else if (n.kind === "head") put(n.pos, n.r, 0.7 * dim, 1);
-    else if (n.kind === "witness") put(n.pos, n.r, 1, 3);
-    else if (n.kind === "open") { if (subject) put(n.pos, n.r, 0.8, 1); }
-    else if (n.kind === "you") { put(n.pos, n.r, 1, 0, 1); put(n.pos, n.r + 6 + f * 10, 0.45, 1, 1); }
+    if (n.kind === "root") { put(n.pos, n.r * grow, k, 3); put(n.pos, (n.r + 9) * grow, 0.4 * k, 1); }
+    else if (n.kind === "registrar") put(n.pos, n.r * grow, dim * k, 3);
+    else if (n.kind === "passport") {
+      n.offA = ease(n.offA, n.off ? 1 : 0, 6, dt);                      // a moon closes into a ring as it is switched off
+      const sz = (n.r + n.hv * 1.6 + n.pulse * 2.4) * grow * (1 - 0.24 * Math.sin(Math.PI * n.offA));
+      if (n.offA < 0.98) put(n.pos, sz, dim * k * (1 - n.offA), 3);
+      if (n.offA > 0.02) put(n.pos, sz, dim * k * n.offA, 1);
+      if (n.hv > 0.02) L.add(n.pos, bitOf(n), 0.7 * dim * n.hv, 1.3);
+    }
+    else if (n.kind === "leaf") put(n.pos, n.r * grow, 0.42 * dim * k);
+    else if (n.kind === "head") put(n.pos, (n.r + n.hv) * grow, 0.7 * dim * k, 1);
+    else if (n.kind === "witness") put(n.pos, (n.r + n.hv) * grow, k, 3);
+    else if (n.kind === "open") { if (subject) put(n.pos, n.r * grow, 0.8 * k, 1); }
+    else if (n.kind === "you") { put(n.pos, n.r * grow, k, 0, 1); put(n.pos, (n.r + 6 + f * 10) * grow, 0.45 * k, 1, 1); }
     if (f > 0.02) put(n.pos, n.r + 5 + (1 - f) * 22, f * 0.5, 1, n.kind === "you" ? 1 : 0);
-    if (on && n.kind !== "you") put(n.pos, n.r + 5, 0.9, 1);
+    if (n.hv > 0.02 && n.kind !== "you") put(n.pos, n.r + 3 + n.hv * 2.5, 0.9 * n.hv, 1);
   }
   if (subject) for (const l of W.links) {                               // the witness cosigns each log's head: shown when that is the subject
     if (!l.a.shown || !l.b.shown) continue;
     L.add(l.a.pos, l.b.pos, 0.34, 1, 0, l.kind === "dash" ? 1 : 0);
   }
   if (selPath && sel.shown) {                                           // the chosen passport's proof, held in ink
-    L.add(sel.pos, selPath.reg, 0.7, 1.3); L.add(selPath.reg, selPath.root, 0.7, 1.3);
-    for (const x of selPath.sib) run(W.byId[sel.reg], x.lo, x.hi, 0.85, 0);
+    const h = sel.hv; L.add(sel.pos, selPath.reg, 0.7 * h, 1.3); L.add(selPath.reg, selPath.root, 0.7 * h, 1.3);
+    selPath.sib.forEach((x, i) => run(W.byId[sel.reg], x.lo, x.hi, 0.85, 0, clamp(h * selPath.sib.length * 1.2 - i, 0, 1)));
   }
   for (const th of threads) {                                           // a check in flight, in the signal colour
     if (!th.done) { th.t += dt / th.dur; if (th.t >= 1) { th.t = 1; th.done = true; th.reveal(); } } else th.fade -= dt * 1.5;
@@ -247,22 +271,22 @@ function scene(dt) {
     L.add(th.main[head.i], head.pos, 0.95 * a, 1.9, tone);
     if (!th.done) { put(head.pos, 7, 0.9, 2, 1); put(head.pos, 2.6, 1, 0, 1); }
     const leafAt = th.lens[0] / th.total;
-    if (th.t > leafAt) {                                                // from the entry down to its status bit, and the proof's siblings
-      const g = clamp((th.t - leafAt) / Math.max(0.001, th.refusedAtBit ? 1 - leafAt : 0.3), 0, 1), end = mix3(th.p.pos, th.path.bit, g);
+    if (th.t > leafAt) {                                                // from the entry to its status bit; and the proof, one run of entries after another
+      const g = clamp((th.t - leafAt) / Math.max(0.001, th.refusedAtBit ? 1 - leafAt : 0.3), 0, 1), end = mix3(th.p.pos, bitOf(th.p), g), m = th.path.sib.length;
       L.add(th.p.pos, end, 0.95 * a, th.refusedAtBit ? 2.4 : 1.6, th.refusedAtBit ? 0 : 1);
-      if (!th.refusedAtBit) for (const x of th.path.sib) run(W.byId[th.p.reg], x.lo, x.hi, 0.8 * a * g, 0);   // the proof is the record's, so it is drawn in ink; blue is yours alone
+      if (!th.refusedAtBit) th.path.sib.forEach((x, i) => run(W.byId[th.p.reg], x.lo, x.hi, 0.8 * a, 0, clamp(g * m * 1.15 - i, 0, 1)));   // the proof is the record's, so it is ink; blue is yours alone
     }
   }
   threads = threads.filter((th) => th.fade > 0);
   N.count = ni; N.touch();
 }
 
-// ---------- labels: placed by priority, never overlapping; each is a click target ----------
+// ---------- labels: placed by priority, never overlapping; each is a click target; each fades in ----------
 function labels(dt) {
   const c = lx; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, vw, vh); hits = [];
-  const cand = [], zoomed = cam.dist.x < 1150;
+  const cand = [], zoomed = cam.dist.x < 1150, drawn = new Set();
   for (const n of W.parts) {
-    if (!n.shown || !n.label && n.kind !== "you") continue;
+    if (n.a < 0.6 || !n.shown || !n.label && n.kind !== "you") continue;
     const p = proj(n.labelAt || n.pos); if (!p.ok || p.x < -40 || p.x > vw + 40 || p.y < 0 || p.y > vh) continue;
     const tag = tags.find((t) => t.p === n), on = n === sel || n === hover || n === mark;
     let pri = { you: 100, root: 90, registrar: 80, witness: 60, open: 40, epoch: 50, list: 45, head: 42, passport: 20 }[n.kind] ?? 0;
@@ -284,21 +308,26 @@ function labels(dt) {
     const x = k.n.kind === "you" ? clamp(k.p.x - w / 2, 8, vw - w - 8) : pill ? Math.min(k.p.x + k.rpx + 8, vw - w - 8) : k.n.labelCentre ? k.p.x - w / 2 : k.p.x + k.rpx + 8; let y = k.n.kind === "you" ? k.p.y - k.rpx - 34 : k.n.labelCentre ? k.p.y + 2 : k.p.y - h / 2;
     let b = [x - 3, y - 2, w + 6, h + 4];
     const clash = () => boxes.some((o) => b[0] < o[0] + o[2] && b[0] + b[2] > o[0] && b[1] < o[1] + o[3] && b[1] + b[3] > o[1]);
-    if (k.tag) for (let t = 0; t < 5 && clash(); t++) { y += h + 4; b = [x - 3, y - 2, w + 6, h + 4]; }      // verdicts stack, they never hide each other
+    if (k.tag) for (let t = 0; t < 5 && clash(); t++) { y += h + 4; b = [x - 3, y - 2, w + 6, h + 4]; }      // a verdict never hides behind a name
     else if (!k.on && !pill && clash()) continue;
     boxes.push(b); hits.push({ b, n: k.n });
     if (pill) {
-      const sig = k.n.kind === "you", fillC = sig ? sigCss : k.tag.ok ? paperCss : inkCss, a = k.tag ? clamp(k.tag.t / 0.4, 0, 1) : 1;
+      const sig = k.n.kind === "you", fillC = sig ? sigCss : k.tag.ok ? paperCss : inkCss;
+      let a = k.n.a, s = 1;
+      if (k.tag) { k.tag.age += dt; const u = RM.matches ? 1 : Math.min(1, k.tag.age / 0.22); a = Math.min(1, k.tag.age / 0.12) * clamp(k.tag.t / 0.4, 0, 1); s = 0.9 + 0.1 * outBack(u); }   // a verdict arrives: a small pop, then still
+      c.save(); c.translate(x + w / 2, y + h / 2); c.scale(s, s); c.translate(-(x + w / 2), -(y + h / 2));
       c.globalAlpha = a; c.beginPath(); c.roundRect(x, y, w, h, 11); c.fillStyle = fillC; c.fill();
       if (!sig && k.tag.ok) { c.strokeStyle = inkCss; c.lineWidth = 1; c.stroke(); }
       c.fillStyle = sig || !k.tag.ok ? paperCss : inkCss; c.textBaseline = "middle"; c.fillText(text, x + 10, y + h / 2 + 0.5);
       if (sig) { c.fillStyle = sigCss; c.fillRect(k.p.x - 0.5, y + h, 1, 12); }
-      c.globalAlpha = 1;
+      c.restore(); c.globalAlpha = 1;
     } else {
-      c.textBaseline = "middle"; c.lineWidth = 3; c.strokeStyle = paperCss; c.strokeText(text, x, y + h / 2 + 0.5);
-      c.fillStyle = k.on || k.n.kind === "root" || k.n.kind === "registrar" ? inkCss : ink2Css; c.fillText(text, x, y + h / 2 + 0.5);
+      drawn.add(k.n); k.n.la = RM.matches ? 1 : Math.min(1, k.n.la + dt * 6);
+      c.globalAlpha = k.n.la; c.textBaseline = "middle"; c.lineWidth = 3; c.strokeStyle = paperCss; c.strokeText(text, x, y + h / 2 + 0.5);
+      c.fillStyle = k.on || k.n.kind === "root" || k.n.kind === "registrar" ? inkCss : ink2Css; c.fillText(text, x, y + h / 2 + 0.5); c.globalAlpha = 1;
     }
   }
+  for (const n of W.parts) if (!drawn.has(n)) n.la = 0;
   for (const t of tags) t.t -= dt; tags = tags.filter((t) => t.t > 0);
 }
 
@@ -546,13 +575,17 @@ async function start() {
   boot.querySelector('li[data-s="lists"]').textContent = `${R.registry.registrars.length} signed status lists, ${bitsTotal.toLocaleString("en")} bits`; bootStep("lists", null, null, true);
   bootStep("world", "Placing every part", 88);
   W = buildWorld(R);
-  for (const r of W.regs) { r.set = eng.pointSet(r.list.bit_len); r.set.globe = [...r.centre, r.globeR]; }
+  for (const r of W.regs) { r.set = eng.pointSet(r.list.bit_len); r.set.globe = [...r.centre, r.globeR]; r.spin = 0; r.reveal = 0; }
+  // The order of arrival: the root, its orbit, each registrar, its entries one by one, the witness, then you.
+  W.parts.forEach((n) => { const ri = n.reg ? W.regs.indexOf(W.byId[n.reg]) : W.regs.indexOf(n); n.a = 0; n.hv = 0; n.la = 0; n.pulse = 0; n.offA = 0;
+    n.born = RM.matches ? 0 : { root: 0.15, epoch: 0.45, registrar: 0.8 + ri * 0.25, list: 0.8 + ri * 0.25, witness: 1.9, open: 1.9, you: 2.2 }[n.kind] ?? 1.25 + ri * 0.25 + (n.leaf || 0) * 0.05; });
   nodeSet = eng.pointSet(W.parts.length * 3 + 96, true); lineSet = eng.lineSet(1600);
   resize(); addEventListener("resize", () => { resize(); placeSheet(); });
   makeTrack(); makeTour();
   regSeg = makeSeg($("#regSeg"), [{ id: "all", label: "All registrars" }, ...W.regs.map((r) => ({ id: r.id, label: phone() ? `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` : `${r.id} · ${r.recs.length}`, title: `${r.recs.length} passports` }))], "all", setReg);
   viewSeg = makeSeg($("#viewSeg"), [{ id: 0, label: "Points" }, { id: 1, label: "Text" }, { id: 2, label: "Braille" }, { id: 3, label: "Dither" }], 0, (v) => { eng.view = v; });
   applyStep(W.events.length, true);
+  for (const n of W.parts) if (n.kind === "passport") n.offA = n.off ? 1 : 0;       // at arrival each moon already is what the record says
   order = W.parts.filter((n) => n.kind === "passport"); for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
   bootStep("world", "Ready", 100, true); setTimeout(() => boot.classList.add("done"), RM.matches ? 0 : 240);
   const h = home(); cam.tx.jump(h.t[0]); cam.ty.jump(h.t[1]); cam.tz.jump(h.t[2]); cam.pitch.jump(h.pitch);

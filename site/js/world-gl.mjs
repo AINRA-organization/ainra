@@ -15,23 +15,28 @@ layout(location=0) in vec2 aP; out vec2 vUv; void main(){ vUv = aP * 0.5 + 0.5; 
 
 const VS_POINT = `#version 300 es
 layout(location=0) in vec3 aPos; layout(location=1) in float aSize; layout(location=2) in float aInk; layout(location=3) in float aShape; layout(location=4) in float aTone;
-uniform mat4 uVP; uniform float uScale, uFocus, uDof, uFogA, uFogB, uMinPx; uniform vec4 uGlobe; uniform vec3 uEye, uLight;
+uniform mat4 uVP; uniform float uScale, uFocus, uDof, uFogA, uFogB, uMinPx, uSpin, uReveal, uCount; uniform vec4 uGlobe; uniform vec3 uEye, uLight;
 out float vA; out float vShape; out float vTone; out float vPx;
 void main(){
-  vec4 p = uVP * vec4(aPos, 1.0); gl_Position = p; float w = max(p.w, 1.0);
+  vec3 pos = aPos; float shown = 1.0;
+  if (uGlobe.w > 0.0) {                                     // a globe turns about its own axis, and its points are written in from the first
+    vec3 r = aPos - uGlobe.xyz; float c = cos(uSpin), q = sin(uSpin); pos = uGlobe.xyz + vec3(c * r.x + q * r.z, r.y, -q * r.x + c * r.z);
+    shown = clamp((uReveal - float(gl_VertexID) / uCount) * 9.0, 0.0, 1.0);
+  }
+  vec4 p = uVP * vec4(pos, 1.0); gl_Position = p; float w = max(p.w, 1.0);
   float d = 2.0 * aSize * uScale / w;                       // diameter in device pixels
   float coc = min(uDof * abs(w - uFocus) / uFocus, 1.1);   // how far off the focus plane
   float fog = clamp((uFogB - w) / (uFogB - uFogA), 0.0, 1.0);
   float a = aInk * mix(0.16, 1.0, fog) / (1.0 + coc * 1.8);
   if (uGlobe.w > 0.0) {                                     // a point on a globe: where it faces
-    vec3 n = normalize(aPos - uGlobe.xyz); float facing = dot(n, normalize(uEye - aPos)), lit = max(dot(n, uLight), 0.0);
+    vec3 n = normalize(pos - uGlobe.xyz); float facing = dot(n, normalize(uEye - pos)), lit = max(dot(n, uLight), 0.0);
     float front = smoothstep(-0.25, 0.3, facing);
-    a *= mix(0.3, 1.0, front) * mix(1.0, 0.58, lit * front); d *= mix(0.8, 1.08, front);
+    a *= mix(0.3, 1.0, front) * mix(1.0, 0.58, lit * front) * shown; d *= mix(0.8, 1.08, front) * mix(2.2, 1.0, shown);
   }
   d *= 1.0 + coc;
   if (d < uMinPx) { a *= d / uMinPx; d = uMinPx; }
   gl_PointSize = d + 2.0; vPx = d + 2.0; vA = a; vShape = aShape; vTone = aTone;
-  if (aInk <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+  if (aInk <= 0.0 || shown <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }`;
 const FS_POINT = `#version 300 es
 precision mediump float; in float vA; in float vShape; in float vTone; in float vPx;
@@ -121,7 +126,7 @@ export function createEngine(canvas) {
     gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data.byteLength, dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
     [[0, 3, 0], [1, 1, 12], [2, 1, 16], [3, 1, 20], [4, 1, 24]].forEach(([loc, size, off]) => { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 28, off); });
     return {
-      data, n, count: n, globe: null,                       // globe: [x, y, z, radius] when the points lie on a sphere
+      data, n, count: n, globe: null, spin: 0, reveal: 2,                       // globe: [x, y, z, radius] when the points lie on a sphere
       set(i, x, y, z, size, ink, shape = 0, tone = 0) { const o = i * 7; data[o] = x; data[o + 1] = y; data[o + 2] = z; data[o + 3] = size; data[o + 4] = ink; data[o + 5] = shape; data[o + 6] = tone; dirty = true; },
       ink(i, v) { if (data[i * 7 + 4] !== v) { data[i * 7 + 4] = v; dirty = true; } },
       touch() { dirty = true; },
@@ -181,7 +186,7 @@ export function createEngine(canvas) {
       for (const s of sets) if (s.add) s.draw();
       gl.useProgram(P.point.p); U = P.point.u;
       gl.uniformMatrix4fv(U.uVP, false, u.vp); gl.uniform1f(U.uScale, u.scale); gl.uniform1f(U.uFocus, u.focus); gl.uniform1f(U.uDof, u.dof); gl.uniform1f(U.uFogA, u.fogA); gl.uniform1f(U.uFogB, u.fogB); gl.uniform1f(U.uMinPx, 1.3 * u.dpr); gl.uniform3f(U.uInk, ...u.ink); gl.uniform3f(U.uSignal, ...u.signal); gl.uniform3f(U.uEye, ...u.eye); gl.uniform3f(U.uLight, ...u.light);
-      for (const s of sets) if (!s.add) { gl.uniform4f(U.uGlobe, ...(s.globe || [0, 0, 0, 0])); s.draw(); }
+      for (const s of sets) if (!s.add) { gl.uniform4f(U.uGlobe, ...(s.globe || [0, 0, 0, 0])); gl.uniform1f(U.uSpin, s.spin); gl.uniform1f(U.uReveal, s.reveal); gl.uniform1f(U.uCount, s.n); s.draw(); }
       if (viewOn) {
         gl.bindTexture(gl.TEXTURE_2D, scene.t); gl.generateMipmap(gl.TEXTURE_2D);
         into(null); gl.clear(gl.COLOR_BUFFER_BIT); gl.disable(gl.BLEND); gl.useProgram(P.view.p); U = P.view.u;
