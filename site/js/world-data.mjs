@@ -3,8 +3,10 @@
 // record under net/ and from the verifier the site ships. No drawing and no DOM in this file.
 //
 //   parts, counts      net/index.json, net/roots.json, net/directory.json, net/epochs.json, net/registry.json
-//   status bits        each registrar's signed status list (status/current.json), inflated in the tab
-//   the log's tree     the shape RFC 6962 gives a log of that size; a passport's path is its own inclusion proof
+//   status bits        each registrar's signed status list (status/current.json), inflated in the tab; they are the
+//                      dots of that registrar's globe, bit 0 at the top
+//   the log            a ring of entries in log order; a passport's proof names the rest of the log in the runs of
+//                      entries RFC 6962 gives for a log of that size, one hash each
 //   order and dates    each passport's log position and issue date, each status change's sequence and date, each
 //                      directory epoch's date, all as the record states them
 //   verdicts           vendor/ainra-sdk.js in this tab, against the published directory and roots, at the record's time
@@ -29,18 +31,9 @@ export async function bitsOf(st) {
 // ---------- the log's tree (RFC 6962, section 2.1) ----------
 // A node is the range of leaves [lo, hi) it covers. A tree of n leaves splits at the largest power of two below n.
 const splitAt = (n) => { let k = 1; while (k * 2 < n) k *= 2; return k; };
-export const levelOf = (lo, hi) => Math.ceil(Math.log2(hi - lo));
-export function treeNodes(n) {                                          // every node of a tree of n leaves, leaves included
-  const out = []; const walk = (lo, hi) => { out.push([lo, hi]); if (hi - lo > 1) { const k = splitAt(hi - lo); walk(lo, lo + k); walk(lo + k, hi); } };
-  if (n > 0) walk(0, n); return out;
-}
 export function auditPath(m, n) {                                       // the siblings a proof for leaf m carries, deepest first
   const path = []; const walk = (lo, hi) => { if (hi - lo <= 1) return; const k = splitAt(hi - lo), mid = lo + k; if (m < mid) { walk(lo, mid); path.push([mid, hi]); } else { walk(mid, hi); path.push([lo, mid]); } };
   walk(0, n); return path;
-}
-export function climb(m, n) {                                           // the nodes from leaf m up to the tree's head
-  const up = []; const walk = (lo, hi) => { if (hi - lo > 1) { const k = splitAt(hi - lo), mid = lo + k; m < mid ? walk(lo, mid) : walk(mid, hi); } up.push([lo, hi]); };
-  walk(0, n); return up;
 }
 
 // ---------- reading the record ----------
@@ -92,23 +85,24 @@ const cut = (s, n = 26) => (s && s.length > n ? s.slice(0, n) + "…" : s || "")
 const TAU = Math.PI * 2, GOLD = 2.399963229728653;
 const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
 
-// Layout, in world units, y up. The root is the centre. The current directory epoch is the ring the registrars stand
-// on. Beyond each registrar lies its status list as a flat spiral of bits (bit 0 at the centre, later bits further
-// out), and above that its log as a tree: leaves in log order, each pair joined upward to the signed head.
+// Layout, in world units, y up. The root is the centre, like a sun. The current directory epoch is the orbit the
+// registrars stand on. Each registrar is a globe: its status list, one dot per bit, wound from the top (bit 0) to
+// the bottom. Around the globe runs its log as a ring of entries in log order, like moons on one orbit; the signed
+// head closes the ring.
 export function buildWorld(R) {
   const { roots, directory, epochs, registry, lists } = R;
   const parts = [], byId = {}, links = [], regs = [];
   const P = (id, kind, pos, r, label, info, extra = {}) => { const n = { id, kind, pos, r, label, info, flash: 0, shown: true, ...extra }; parts.push(n); byId[id] = n; return n; };
   const L = (a, b, kind = "base") => { const l = { a: byId[a], b: byId[b], kind, lit: 0 }; links.push(l); return l; };
-  const CUR = directory.epoch, RING = 220;
+  const CUR = directory.epoch, RING = 330, INNER = (i) => 104 + i * 44;
 
-  P("root", "root", [0, 0, 0], 15, "root", { k: "ROOT · TEST, BEFORE THE CEREMONY", t: "The root", rows: [["Ed25519", cut(roots.root_ed25519)], ["SLH-DSA", cut(roots.root_slh)], ["Signs", "one thing: the registrar directory"], ["Issues", "no passports, sees no traffic"]] });
+  P("root", "root", [0, 0, 0], 22, "root", { k: "ROOT · TEST, BEFORE THE CEREMONY", t: "The root", rows: [["Ed25519", cut(roots.root_ed25519)], ["SLH-DSA", cut(roots.root_slh)], ["Signs", "one thing: the registrar directory"], ["Issues", "no passports, sees no traffic"]] });
   const eps = epochs.epochs;
   eps.forEach((ep, i) => {
     const cur = ep.epoch === CUR;
-    P(`epoch${ep.epoch}`, "epoch", [0, 0, 0], cur ? RING : 70 + i * 36, `epoch ${ep.epoch}`, {
+    P(`epoch${ep.epoch}`, "epoch", [0, 0, 0], cur ? RING : INNER(i), `epoch ${ep.epoch}`, {
       k: `DIRECTORY EPOCH ${ep.epoch}`, t: cur ? `The directory, epoch ${ep.epoch} (current)` : `The directory, epoch ${ep.epoch} (replaced)`,
-      rows: [["Signed", `${day(ep.issued_at)} by the root's two keys`], ["Digest", cut(ep.digest)], ["Names", cur ? `${directory.entries.length} registrars` : "kept in the directory's own log"]] }, { cur, date: ep.issued_at, epoch: ep.epoch, labelAt: [-(cur ? RING : 70 + i * 36) * 0.7071, 0, (cur ? RING : 70 + i * 36) * 0.7071] });
+      rows: [["Signed", `${day(ep.issued_at)} by the root's two keys`], ["Digest", cut(ep.digest)], ["Names", cur ? `${directory.entries.length} registrars` : "kept in the directory's own log"]] }, { cur, date: ep.issued_at, epoch: ep.epoch, labelAt: [0, 0, cur ? RING : INNER(i)], labelCentre: true });
   });
 
   const nReg = registry.registrars.length;
@@ -117,45 +111,44 @@ export function buildWorld(R) {
     const ang = (ri / nReg) * TAU + (nReg === 2 ? 0 : -Math.PI / 2), out = [Math.cos(ang), 0, Math.sin(ang)], side = [-out[2], 0, out[0]];
     const pos = [out[0] * RING, 0, out[2] * RING];
     const size = Math.max(...recs.map((r) => r.checkpoint_size || 0)), n = Li.list.bit_len;
-    const discR = 132, c = discR / Math.sqrt(n), centre = [out[0] * (RING + 190), -70, out[2] * (RING + 190)];
-    // the status list: bit i always sits at the same place on the spiral
+    const globeR = 84 + Math.sqrt(recs.length) * 15, centre = pos;
+    // the status list: bit i always sits at the same place on the globe, winding down from the top
     const bitPos = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { const rr = c * Math.sqrt(i + 0.5), th = i * GOLD; bitPos[i * 3] = centre[0] + Math.cos(th) * rr; bitPos[i * 3 + 1] = centre[1]; bitPos[i * 3 + 2] = centre[2] + Math.sin(th) * rr; }
-    // the log: leaves in a row above the list, the tree rising from them
-    const gap = Math.min(22, (discR * 1.9) / Math.max(1, size - 1)), y0 = 36, lift = 40;
-    const leafX = (k) => (k - (size - 1) / 2) * gap;
-    const at = (lo, hi) => { const x = (leafX(lo) + leafX(hi - 1)) / 2, lv = levelOf(lo, hi); return [centre[0] + out[0] * x, y0 + lv * lift, centre[2] + out[2] * x]; };   // the row runs outward, so it faces a reader standing in front
-    const reg = P(id, "registrar", pos, 9, id, { k: "REGISTRAR · ACCREDITED IN THE DIRECTORY", t: id, rows: [
+    for (let i = 0; i < n; i++) { const y = 1 - ((i + 0.5) / n) * 2, rr = Math.sqrt(1 - y * y), th = i * GOLD; bitPos[i * 3] = centre[0] + Math.cos(th) * rr * globeR; bitPos[i * 3 + 1] = centre[1] + y * globeR; bitPos[i * 3 + 2] = centre[2] + Math.sin(th) * rr * globeR; }
+    // the log: a ring around the globe, tilted like a moon's orbit. Entry k of `size` always sits at the same place,
+    // in log order; a passport is the moon at its own entry.
+    // Every ring leans the same way (its near side lower), so from the front each one opens toward the reader.
+    const ringR = globeR + 62, tilt = 0.6, e1 = out, e2 = [0, -Math.sin(tilt), Math.cos(tilt)];
+    // entries run clockwise from the top, like a clock face
+    const ringAt = (k) => { const a = -Math.PI / 2 + ((k + 0.5) / (size + 1)) * TAU; return [centre[0] + ringR * (Math.cos(a) * e1[0] + Math.sin(a) * e2[0]), centre[1] + ringR * (Math.cos(a) * e1[1] + Math.sin(a) * e2[1]), centre[2] + ringR * (Math.cos(a) * e1[2] + Math.sin(a) * e2[2])]; };
+    const reg = P(id, "registrar", pos, 11, id, { k: "REGISTRAR · ACCREDITED IN THE DIRECTORY", t: id, rows: [
       ["Issuer key", `Ed25519 ${cut(G.accreditation.issuer_key.ed25519, 20)} + ML-DSA-65`], ["Log", `${G.accreditation.log_origin}, ${size} entries`],
       ["Status list", `${n.toLocaleString("en")} bits, change ${G.status_seq}`], ["Passports", `${recs.length} issued, ${recs.filter((r) => Li.bits[r.status_idx]).length} switched off`]] },
-      { out, side, centre, discR, size, recs, at, bitPos, list: Li.list, deltas: Li.deltas, bitsFinal: Li.bits, bits: new Uint8Array(Li.bits), used: new Map(recs.map((r) => [r.status_idx, r])), dim: false });
-    regs.push(reg); L("root", id, "sign");
-    P(`list:${id}`, "list", centre, 7, "status list", { k: "STATUS LIST · SIGNED BY THE REGISTRAR", t: `${id}'s status list`, rows: [["Bits", n.toLocaleString("en")], ["Set now", `${Li.bits.reduce((a, b) => a + b, 0)} (each is a passport switched off)`], ["Issued", day(Li.list.issued_at)], ["Signed", "Ed25519 + ML-DSA-65"], ["Reads as", "bit 0 at the centre, later bits further out"]] }, { reg: id, labelAt: [centre[0], centre[1], centre[2] + discR + 14] });
-    for (const [lo, hi] of treeNodes(size)) {
-      const leaf = hi - lo === 1, rec = leaf ? recs.find((r) => r.leaf_index === lo) : null, nid = `t:${id}:${lo}:${hi}`, head = lo === 0 && hi === size;
+      { out, side, centre, globeR, ringR, ringAt, size, recs, bitPos, labelAt: [centre[0], centre[1] - globeR - 22, centre[2] + ringR * 0.8], labelCentre: true,
+        list: Li.list, deltas: Li.deltas, bitsFinal: Li.bits, bits: new Uint8Array(Li.bits), used: new Map(recs.map((r) => [r.status_idx, r])), dim: false });
+    regs.push(reg);
+    P(`list:${id}`, "list", centre, 7, "", { k: "STATUS LIST · SIGNED BY THE REGISTRAR", t: `${id}'s status list`, rows: [["Bits", n.toLocaleString("en")], ["Set now", `${Li.bits.reduce((a, b) => a + b, 0)} (each is a passport switched off)`], ["Issued", day(Li.list.issued_at)], ["Signed", "Ed25519 + ML-DSA-65"], ["Reads as", "bit 0 at the top, later bits winding down"]] }, { reg: id });
+    for (let k = 0; k < size; k++) {
+      const rec = recs.find((r) => r.leaf_index === k), nid = `t:${id}:${k}`;
       if (rec) {
-        P(`pp:${rec.sub}`, "passport", at(lo, hi), 4.4, short(rec.sub).replace(/^smoke-(\d{4})\d*-\d+/, "smoke-$1…"), { k: "PASSPORT", t: short(rec.sub), rows: [
+        P(`pp:${rec.sub}`, "passport", ringAt(k), 5.2, short(rec.sub).replace(/^smoke-(\d{4})\d*-\d+/, "smoke-$1…"), { k: "PASSPORT", t: short(rec.sub), rows: [
           ["Name", rec.sub], ["Registrar", id], ["Operator", rec.operator], ["Class", `${rec.auth_class}, tier ${rec.tier ?? "–"}`], ["May", (rec.capabilities || []).join(", ")],
           ["Issued", day(rec.issued_at)], ["Log entry", `${rec.leaf_index} of ${rec.checkpoint_size}`], ["Status bit", String(rec.status_idx)],
           ...((rec.chain_keys || []).length ? [["Acts through", `a chain of ${rec.chain_keys.length} earlier keys`]] : [])] },
-          { rec, reg: id, leaf: lo, tid: nid, verdict: null, off: false, bit: [bitPos[rec.status_idx * 3], bitPos[rec.status_idx * 3 + 1], bitPos[rec.status_idx * 3 + 2]] });
+          { rec, reg: id, leaf: k, verdict: null, off: false, bit: [bitPos[rec.status_idx * 3], bitPos[rec.status_idx * 3 + 1], bitPos[rec.status_idx * 3 + 2]] });
         byId[nid] = byId[`pp:${rec.sub}`];
-      } else {
-        P(nid, leaf ? "leaf" : head ? "head" : "node", at(lo, hi), leaf ? 2.4 : head ? 5 : 2, head ? "log head" : "", leaf
-          ? { k: `LOG ENTRY ${lo}`, t: `Entry ${lo}`, rows: [["Log", G.accreditation.log_origin], ["Holds", "another entry, not a passport in this record"]] }
-          : head ? { k: "LOG HEAD · SIGNED CHECKPOINT", t: `${id}'s log, ${size} entries`, rows: [["Log", G.accreditation.log_origin], ["Size", `${size} entries`], ["Signed by", "the registrar's delegate, cosigned by the witness"], ["Means", "one hash stands for every entry below it; nothing can be changed or removed unseen"]] }
-          : { k: "TREE NODE", t: `Entries ${lo} to ${hi - 1}`, rows: [["Is", "the hash of the two nodes below it"], ["Covers", `${hi - lo} entries`]] }, { reg: id, lo, hi });
-      }
+      } else P(nid, "leaf", ringAt(k), 2.2, "", { k: `LOG ENTRY ${k}`, t: `Entry ${k}`, rows: [["Log", G.accreditation.log_origin], ["Holds", "another entry, not a passport in this record"]] }, { reg: id, leaf: k });
     }
-    for (const [lo, hi] of treeNodes(size)) if (hi - lo > 1) { const k = splitAt(hi - lo); L(`t:${id}:${lo}:${hi}`, `t:${id}:${lo}:${lo + k}`, "tree"); L(`t:${id}:${lo}:${hi}`, `t:${id}:${lo + k}:${hi}`, "tree"); }
-    reg.headId = `t:${id}:0:${size}`; L(id, reg.headId, "sign");
+    // the signed head closes the ring, where the next entry will go
+    P(`head:${id}`, "head", ringAt(size), 3.6, "log head", { k: "LOG HEAD · SIGNED CHECKPOINT", t: `${id}'s log, ${size} entries`, rows: [["Log", G.accreditation.log_origin], ["Size", `${size} entries`], ["Signed by", "the registrar's delegate, cosigned by the witness"], ["Means", "one hash stands for every entry on the ring; nothing can be changed or removed unseen"]] }, { reg: id, leaf: size });
+    reg.headId = `head:${id}`;
   });
 
   const w = registry.witnesses[0];
-  P("wit", "witness", [0, 285, 0], 6, "witness", { k: "WITNESS · SELF-DECLARED", t: "The network's own witness", rows: [["Operator", w.operator], ["Ed25519", cut(w.ed25519)], ["Does", "cosigns each log's head, so a log cannot show two histories"]] });
-  P("wit-open", "open", [64, 300, 40], 6, "open seat", { k: "OPEN SEAT", t: "An independent witness", rows: [["Needed for", "fork resistance: witnesses run by others"], ["Who", "anyone; the software is published"]] });
-  for (const r of regs) { L(r.headId, "wit", "sign"); L(r.headId, "wit-open", "dash"); }
-  P("you", "you", [0, -40, 440], 8, "", { k: "YOU · THIS TAB", t: "You, the verifier", rows: [["Holds", "the directory, checked against the root's two keys"], ["And", "each registrar's signed status list"], ["Contacts", "nobody while it checks"]] });
+  P("wit", "witness", [0, 270, 0], 7, "witness", { k: "WITNESS · SELF-DECLARED", t: "The network's own witness", rows: [["Operator", w.operator], ["Ed25519", cut(w.ed25519)], ["Does", "cosigns each log's head, so a log cannot show two histories"]] });
+  P("wit-open", "open", [64, 286, 40], 7, "open seat", { k: "OPEN SEAT", t: "An independent witness", rows: [["Needed for", "fork resistance: witnesses run by others"], ["Who", "anyone; the software is published"]] });
+  for (const r of regs) { L(r.headId, "wit", "wit"); L(r.headId, "wit-open", "dash"); }       // drawn only when the witness is the subject
+  P("you", "you", [0, 0, 500], 9, "", { k: "YOU · THIS TAB", t: "You, the verifier", rows: [["Holds", "the directory, checked against the root's two keys"], ["And", "each registrar's signed status list"], ["Contacts", "nobody while it checks"]] });
 
   // ---------- the record's own order, with its own dates ----------
   // Epochs by number; each log's entries by position; each status change by sequence. Dates are the record's:
@@ -168,14 +161,13 @@ export function buildWorld(R) {
   for (const e of events) if (e.type === "leaf") e.sort[0] = e.date ?? firstLeaf;
   events.sort((a, b) => a.sort[0] - b.sort[0] || a.sort[1] - b.sort[1] || a.sort[2] - b.sort[2]);
 
-  // The path one check walks, in the order the verifier works: the passport's entry, up its inclusion proof to the
-  // signed head, the registrar that signed it, the directory that names the registrar, the root that signed the
-  // directory; and beside it the passport's bit in the status list.
+  // What one check rests on, in the order the verifier works: the passport's entry in the log; its inclusion proof,
+  // which names the rest of the log in a few runs of entries (each one hash); the signed head; the registrar that
+  // signed it; the directory that names the registrar; the root that signed the directory; and the passport's bit.
   const pathOf = (p) => {
-    const r = byId[p.reg], n = p.rec.checkpoint_size, m = p.rec.leaf_index;
-    const up = climb(m, n).map(([lo, hi]) => r.at(lo, hi)), sib = auditPath(m, n).map(([lo, hi]) => ({ pos: r.at(lo, hi), lo, hi }));
-    const proofOk = sib.length === p.rec.inclusion_proof.length;
-    return { up, sib: proofOk ? sib.map((s, i) => ({ ...s, hash: p.rec.inclusion_proof[i] })) : [], bit: p.bit, reg: r.pos, root: byId.root.pos, head: byId[r.headId].pos };
+    const r = byId[p.reg], n = p.rec.checkpoint_size, m = p.rec.leaf_index, sib = auditPath(m, n);
+    const ok = sib.length === p.rec.inclusion_proof.length && n === r.size;
+    return { sib: ok ? sib.map(([lo, hi], i) => ({ lo, hi, hash: p.rec.inclusion_proof[i] })) : [], bit: p.bit, reg: r.pos, root: byId.root.pos, head: byId[r.headId].pos };
   };
-  return { parts, byId, links, regs, events, CUR, pathOf, RING };
+  return { parts, byId, links, regs, events, CUR, pathOf, RING, INNER };
 }

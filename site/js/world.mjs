@@ -2,12 +2,12 @@
 // AINRA World. The test network as a place you can turn, replay, walk through and check.
 //
 // Real (js/world-data.mjs): every part, count, status bit, log position, date, proof path and verdict.
-// Drawn (and the About panel says so): where things sit in space, the slow turn, and the ink.
+// Drawn (and the About panel says so): where things sit in space and the slow turn.
 //
 // Motion: respond on press; drag 1:1; a flick's speed becomes momentum; the camera and the sheet move on springs
 // (no overshoot, except a little after a flick), always from where they are now, so anything can be grabbed
-// mid-flight; soft resistance past every limit. Under reduced motion nothing travels or turns by itself, the ink is
-// off, and a check shows its answer at once.
+// mid-flight; soft resistance past every limit. Under reduced motion nothing travels or turns by itself, and a check
+// shows its answer at once.
 
 import { icon } from "./icons.mjs";
 import { loadRecord, buildWorld, runCheck, short } from "./world-data.mjs";
@@ -81,12 +81,13 @@ const times = []; let nValid = 0, nRefused = 0, order = [], cursor = 0, idleAt =
 const live = () => step === W.events.length;
 
 // ---------- camera: an orbit around a target, every part a spring ----------
-const FOV = 0.66, PITCH = [-0.25, 1.45], DIST = [220, 3400];
-const cam = { yaw: new Spring(-0.7, 1.2), pitch: new Spring(0.42, 0.6), dist: new Spring(4200, 1.2), tx: new Spring(0, 0.7), ty: new Spring(60, 0.7), tz: new Spring(0, 0.7), vyaw: 0, vpitch: 0 };
+const FOV = 0.66, PITCH = [-0.45, 1.45], DIST = [220, 3600];
+const cam = { yaw: new Spring(-0.7, 1.2), pitch: new Spring(0.42, 0.6), dist: new Spring(4200, 1.2), tx: new Spring(0, 0.7), ty: new Spring(120, 0.7), tz: new Spring(0, 0.7), vyaw: 0, vpitch: 0 };
 const SPR = [cam.yaw, cam.pitch, cam.dist, cam.tx, cam.ty, cam.tz];
 const lift = new Spring(0, 0.6), capShift = new Spring(0, 0.6), sheetPos = new Spring(1, 0.42);                               // sheet: 1 = away, 0 = open
-const feedW = () => (vw > 900 && !$("#feed").classList.contains("closed") ? 310 : 0);
-const home = () => { const a = (vw - feedW()) / Math.max(1, vh); return a < 0.9 ? { yaw: 0.78, pitch: 0.34, dist: clamp(1180 / a, 1500, 3200), t: [0, 70, 0] } : { yaw: 0.3, pitch: 0.36, dist: clamp(1780 / a, 1100, 2600), t: [0, 60, 0] }; };
+const feedW = () => (vw > 900 && !$("#feed").classList.contains("closed") ? 310 : 0);   // the open list of checks takes the right-hand side
+// The view at rest. On a tall screen the camera looks from the side and from above, so the orbit's long side runs down the page.
+const home = () => { const a = (vw - feedW()) / Math.max(1, vh); return a < 0.9 ? { yaw: 1.2, pitch: 0.82, dist: clamp(1180 / a, 1600, 3300), t: [0, 30, 60] } : { yaw: 0.28, pitch: 0.3, dist: clamp(1880 / a, 1520, 2800), t: [0, 110, 0] }; };
 function flyTo(t, dist, { yaw, pitch } = {}) {                                                 // always from wherever the camera is now
   for (const s of SPR) s.set(0.85, 1);
   cam.tx.go(t[0]); cam.ty.go(t[1]); cam.tz.go(t[2]); cam.dist.go(clamp(dist, DIST[0], DIST[1])); cam.vyaw = cam.vpitch = 0;
@@ -94,6 +95,8 @@ function flyTo(t, dist, { yaw, pitch } = {}) {                                  
   if (yaw !== undefined) { let d = (yaw - cam.yaw.x) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; cam.yaw.go(cam.yaw.x + d); }
   poke();
 }
+// How far back the camera must be for a ball of this radius to fit the narrower side of the screen.
+const fit = (radius) => radius * 1.3 / (Math.tan(FOV / 2) * Math.min(1, (vw - feedW()) / vh));
 const resetView = () => { const h = home(); flyTo(h.t, h.dist, { yaw: h.yaw, pitch: h.pitch }); };
 const zoomBy = (f) => { cam.dist.set(0.35, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * f, DIST[0], DIST[1])); poke(); };
 const poke = () => { idleAt = performance.now() + 7000; };
@@ -103,7 +106,7 @@ function matrices() {
   const m = mul4(perspective(FOV, vw / vh, 8, 9000), lookAt(eye, t));
   // the world moves aside for the details panel (wide screens) or up for the caption and the sheet (phones)
   const wide = vw > 760, open = 1 - clamp(sheetPos.x, 0, 1);
-  const sx = wide ? -Math.max(open * Math.min(210, vw * 0.16) * 2, feedW()) / vw + (vw > 900 ? capShift.x * 400 / vw : 0) : 0, sy = (wide ? 0 : open * 0.36) + lift.x + 0.06;
+  const sx = wide ? -Math.max(open * Math.min(210, vw * 0.16) * 2, feedW()) / vw + (vw > 900 ? capShift.x * 400 / vw : 0) : 0, sy = (wide ? 0 : open * 0.36) + lift.x + 0.1;
   for (let c = 0; c < 4; c++) { m[c * 4] += sx * m[c * 4 + 3]; m[c * 4 + 1] += sy * m[c * 4 + 3]; }
   vp = m; scaleCss = vh * 0.5 / Math.tan(FOV / 2);
 }
@@ -131,41 +134,33 @@ function applyStep(s, quiet) {
   }
   const latest = live() ? W.CUR : seenEpoch;
   for (const n of W.parts) {
-    if (n.kind === "epoch") { n.shown = n.epoch <= latest; n.cur = n.epoch === latest; n.r = n.cur ? W.RING : 70 + (n.epoch - 1) * 36; n.labelAt = [-n.r * 0.7071, 0, n.r * 0.7071]; n.label = `epoch ${n.epoch}`; }
+    if (n.kind === "epoch") { n.shown = n.epoch <= latest; n.cur = n.epoch === latest; n.r = n.cur ? W.RING : W.INNER(n.epoch - 1); n.labelAt = [0, 0, n.r]; n.label = `epoch ${n.epoch}`; }
     else if (n.kind === "registrar" || n.kind === "list") n.shown = latest >= 1;
     else if (n.kind === "passport") { n.shown = seen.has(`${n.reg}:${n.leaf}`); n.off = W.byId[n.reg].bits[n.rec.status_idx] === 1; if (!live()) n.verdict = null; }
-    else if (n.kind === "leaf" || n.kind === "node" || n.kind === "head") n.shown = seen.has(`${n.reg}:${n.hi - 1}`);
+    else if (n.kind === "leaf") n.shown = seen.has(`${n.reg}:${n.leaf}`);
+    else if (n.kind === "head") n.shown = seen.has(`${n.reg}:0`);
   }
   for (const r of W.regs) fillBits(r);
-  // one step forward leaves a mark: a new entry flashes, a switch-off spills ink at its bit
+  // one step forward leaves a mark: a new entry flashes, a switch-off rings out from its bit
   if (!quiet && step === prev + 1) {
     const e = W.events[step - 1];
-    if (e.type === "leaf") { const n = W.byId[`t:${e.reg}:${e.leaf}:${e.leaf + 1}`]; if (n) n.flash = 1; }
+    if (e.type === "leaf") { const n = W.byId[`t:${e.reg}:${e.leaf}`]; if (n) n.flash = 1; }
     if (e.type === "epoch") W.byId[`epoch${e.epoch}`].flash = 1;
-    if (e.type === "change") for (const ix of e.idx) spill(W.byId[e.reg], ix);
+    if (e.type === "change") for (const ix of e.idx) W.byId[e.reg].spot = { ix, t: 1 };
   }
   renderTrack(); sayNow(); stats();
-  $("#feedNote").textContent = live() ? "Newest first. Each line is one passport checked in this tab, now." : "Checks pause while the record replays; they run on the record as it stands now.";
+  $("#feedNote").textContent = live() ? "" : "Checks pause while the record replays; they run on the record as it stands now.";
 }
 function fillBits(r) {
   const set = r.set, n = r.list.bit_len, d = r.dim ? 0.14 : 1;
   for (let i = 0; i < n; i++) {
     const rec = r.used.get(i), there = rec && W.byId[`pp:${rec.sub}`].shown, o = i * 3;
-    if (r.bits[i]) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.5, d, 0);
-    else if (there) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.4, 0.9 * d, 1);
-    else set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 1.05, (seenEpoch || live() ? 0.3 : 0) * d, 0);
+    if (r.bits[i]) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 3.0, d, 0);
+    else if (there) set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 2.8, 0.95 * d, 1);
+    else set.set(i, r.bitPos[o], r.bitPos[o + 1], r.bitPos[o + 2], 1.1, (seenEpoch || live() ? 0.46 : 0) * d, 0);
   }
 }
 const bitAt = (r, i) => [r.bitPos[i * 3], r.bitPos[i * 3 + 1], r.bitPos[i * 3 + 2]];
-function spill(r, ix) {                                                 // ink where a passport was switched off
-  const p = proj(bitAt(r, ix)); r.spot = { ix, t: 1 };
-  if (!eng.inkOn || !eng.ink || RM.matches || !p.ok) return;
-  const x = p.x / vw, y = 1 - p.y / vh;
-  eng.ink.splat(x, y, 0, 0, 1.5, 0, 0.0009);
-  for (let k = 0; k < 6; k++) { const a = (k / 6) * TAU + ix; eng.ink.splat(x + Math.cos(a) * 0.012, y + Math.sin(a) * 0.012, Math.cos(a) * 260, Math.sin(a) * 260, 0.22, 0, 0.0006); }
-}
-function puff(pos, sig, amt) { const p = proj(pos); if (!eng.inkOn || !eng.ink || RM.matches || !p.ok) return; eng.ink.splat(p.x / vw, 1 - p.y / vh, 0, 46, sig ? 0 : amt, sig ? amt : 0, 0.0007); }
-
 function sayNow() {
   const el = $("#now");
   if (live()) { el.innerHTML = `<b>The record as it stands.</b> Copy taken ${dayText(R.published.published_at)}.`; return; }
@@ -187,13 +182,13 @@ function stats() {
 function check(p, { quiet, then } = {}) {
   if (!live() || W.byId[p.reg].dim || !p.shown) return false;
   const res = runCheck(R, p.rec, W.byId[p.reg].list), path = W.pathOf(p), refusedAtBit = !res.ok && res.reason === "revoked";
-  const main = [W.byId.you.pos, p.pos, ...(refusedAtBit ? [] : [...path.up.slice(1), path.reg, path.root])];
+  const main = [W.byId.you.pos, p.pos, ...(refusedAtBit ? [] : [path.reg, path.root])];
   const lens = main.slice(1).map((q, i) => dist3(main[i], q)), total = lens.reduce((a, b) => a + b, 0);
   const reveal = () => {
     p.verdict = res.ok ? "valid" : res.reason; p.flash = 1; W.byId.you.flash = 0.7;
-    if (res.ok) { W.byId.root.flash = 0.6; W.byId[p.reg].flash = 0.7; puff(p.pos, true, 0.5); } else if (refusedAtBit) { W.byId[p.reg].spot = { ix: p.rec.status_idx, t: 1 }; puff(p.bit, false, 0.55); }
+    if (res.ok) { W.byId.root.flash = 0.6; W.byId[p.reg].flash = 0.7; } else if (refusedAtBit) W.byId[p.reg].spot = { ix: p.rec.status_idx, t: 1 };
     times.push(res.ms); if (times.length > 300) times.shift(); res.ok ? nValid++ : nRefused++;
-    tags = tags.filter((t) => t.p !== p); tags.push({ p, text: res.ok ? `valid · ${msText(res.ms)}` : `${res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`, ok: res.ok, t: 3.2 });
+    tags = [{ p, text: res.ok ? `valid · ${msText(res.ms)}` : `${res.reason === "revoked" ? "switched off" : res.reason} · ${msText(res.ms)}`, ok: res.ok, t: 2.6 }];                    // one verdict on screen at a time
     if (!quiet) feedLine(p, res);
     stats(); if (sel === p) fillSheet(p, true); then && then(res);
   };
@@ -205,7 +200,7 @@ function feedLine(p, res) {
   const li = document.createElement("li"); li.innerHTML = `<span class="n"></span><span class="tag${res.ok ? "" : " no"}">${icon(res.ok ? "valid" : "revoked")}<span></span></span><span class="t"></span>`;
   li.querySelector(".n").textContent = short(p.rec.sub); li.querySelector(".tag span").textContent = res.ok ? "valid" : res.reason === "revoked" ? "switched off" : res.reason;
   li.querySelector(".t").textContent = `${p.reg} · ${new Date().toTimeString().slice(0, 8)} · ${msText(res.ms)}`;
-  const ol = $("#checks"); ol.prepend(li); while (ol.children.length > 5) ol.lastChild.remove();
+  const ol = $("#checks"); ol.prepend(li); while (ol.children.length > 3) ol.lastChild.remove();
 }
 const along = (th, f) => { let d = f * th.total; for (let i = 0; i < th.lens.length; i++) { if (d <= th.lens[i] || i === th.lens.length - 1) return { i, pos: mix3(th.main[i], th.main[i + 1], clamp(d / (th.lens[i] || 1), 0, 1)) }; d -= th.lens[i]; } return { i: 0, pos: th.main[0] }; };
 
@@ -215,34 +210,35 @@ function scene(dt) {
   const put = (pos, size, ink, shape = 0, tone = 0) => { if (ni < N.n) N.set(ni++, pos[0], pos[1], pos[2], size, ink, shape, tone); };
   const ring = (c, rad, alpha, dash = 0, seg = 96) => { let a = [c[0] + rad, c[1], c[2]]; for (let i = 1; i <= seg; i++) { const t = (i / seg) * TAU, b = [c[0] + Math.cos(t) * rad, c[1], c[2] + Math.sin(t) * rad]; L.add(a, b, alpha, 1, 0, dash); a = b; } };
   const selPath = sel && sel.kind === "passport" ? W.pathOf(sel) : null;
+  // a run of entries on a registrar's ring, drawn heavier: one hash of a proof stands for all of them
+  const run = (r, lo, hi, alpha, tone) => { const a0 = lo - 0.32, a1 = hi - 1 + 0.32, seg = Math.max(2, Math.ceil((a1 - a0) * 3)); let a = r.ringAt(a0); for (let i = 1; i <= seg; i++) { const b = r.ringAt(a0 + (a1 - a0) * i / seg); L.add(a, b, alpha, 3.2, tone); a = b; } };
+  const subject = [sel, hover, mark].find((n) => n && (n.kind === "witness" || n.kind === "open" || n.kind === "head"));
   for (const n of W.parts) {
     n.flash = Math.max(0, n.flash - dt * 1.4);
     if (!n.shown) continue;
     const dim = n.reg && W.byId[n.reg]?.dim ? 0.16 : n.kind === "registrar" && n.dim ? 0.16 : 1, f = n.flash;
     if (n.kind === "epoch") { ring([0, 0, 0], n.r, (n.cur ? 0.55 : 0.2) + f * 0.4); continue; }
-    if (n.kind === "list") { const r = W.byId[n.reg]; ring(r.centre, r.discR + 7, 0.2 * dim, 0, 72); if (r.spot) { r.spot.t -= dt * 0.5; if (r.spot.t <= 0) r.spot = null; else put(bitAt(r, r.spot.ix), 3 + (1 - r.spot.t) * 26, r.spot.t * 0.8, 1); } continue; }
+    if (n.kind === "registrar") { let a = n.ringAt(0); const top = n.size + 1; for (let i = 1; i <= 80; i++) { const b = n.ringAt(top * i / 80); L.add(a, b, 0.2 * dim + f * 0.3, 1); a = b; } }   // its log's ring
+    if (n.kind === "list") { const r = W.byId[n.reg]; if (r.spot) { r.spot.t -= dt * 0.5; if (r.spot.t <= 0) r.spot = null; else put(bitAt(r, r.spot.ix), 3 + (1 - r.spot.t) * 26, r.spot.t * 0.8, 1); } continue; }
     const on = n === sel || n === hover || n === mark;
-    if (n.kind === "root") { put(n.pos, n.r, 1); put(n.pos, n.r + 7, 0.5, 1); }
-    else if (n.kind === "registrar") put(n.pos, n.r, dim);
-    else if (n.kind === "passport") { put(n.pos, n.r + (on ? 1.4 : 0), dim, n.off ? 1 : 0); L.add(n.pos, n.bit, (on ? 0.7 : 0.13) * dim, on ? 1.4 : 1); }
-    else if (n.kind === "leaf") put(n.pos, n.r, 0.5 * dim);
-    else if (n.kind === "node") put(n.pos, n.r, 0.5 * dim);
-    else if (n.kind === "head") put(n.pos, n.r, dim, 1);
-    else if (n.kind === "witness") put(n.pos, n.r, 1);
-    else if (n.kind === "open") put(n.pos, n.r, 0.8, 1);
+    if (n.kind === "root") { put(n.pos, n.r, 1, 3); put(n.pos, n.r + 9, 0.4, 1); }
+    else if (n.kind === "registrar") put(n.pos, n.r, dim, 3);
+    else if (n.kind === "passport") { put(n.pos, n.r + (on ? 1.4 : 0), dim, n.off ? 1 : 3); if (on) L.add(n.pos, n.bit, 0.7 * dim, 1.3); }
+    else if (n.kind === "leaf") put(n.pos, n.r, 0.42 * dim);
+    else if (n.kind === "head") put(n.pos, n.r, 0.7 * dim, 1);
+    else if (n.kind === "witness") put(n.pos, n.r, 1, 3);
+    else if (n.kind === "open") { if (subject) put(n.pos, n.r, 0.8, 1); }
     else if (n.kind === "you") { put(n.pos, n.r, 1, 0, 1); put(n.pos, n.r + 6 + f * 10, 0.45, 1, 1); }
     if (f > 0.02) put(n.pos, n.r + 5 + (1 - f) * 22, f * 0.5, 1, n.kind === "you" ? 1 : 0);
     if (on && n.kind !== "you") put(n.pos, n.r + 5, 0.9, 1);
   }
-  for (const l of W.links) {
+  if (subject) for (const l of W.links) {                               // the witness cosigns each log's head: shown when that is the subject
     if (!l.a.shown || !l.b.shown) continue;
-    const dim = (l.a.reg && W.byId[l.a.reg]?.dim) || l.a.dim || l.b.dim ? 0.16 : 1;
-    L.add(l.a.pos, l.b.pos, (l.kind === "tree" ? 0.34 : l.kind === "dash" ? 0.34 : 0.24) * dim, 1, 0, l.kind === "dash" ? 1 : 0);
+    L.add(l.a.pos, l.b.pos, 0.34, 1, 0, l.kind === "dash" ? 1 : 0);
   }
   if (selPath && sel.shown) {                                           // the chosen passport's proof, held in ink
-    const pts = [sel.pos, ...selPath.up.slice(1), selPath.reg, selPath.root];
-    for (let i = 1; i < pts.length; i++) L.add(pts[i - 1], pts[i], 0.85, 1.5);
-    for (const s of selPath.sib) put(s.pos, 5.5, 0.9, 1);
+    L.add(sel.pos, selPath.reg, 0.7, 1.3); L.add(selPath.reg, selPath.root, 0.7, 1.3);
+    for (const x of selPath.sib) run(W.byId[sel.reg], x.lo, x.hi, 0.85, 0);
   }
   for (const th of threads) {                                           // a check in flight, in the signal colour
     if (!th.done) { th.t += dt / th.dur; if (th.t >= 1) { th.t = 1; th.done = true; th.reveal(); } } else th.fade -= dt * 1.5;
@@ -254,7 +250,7 @@ function scene(dt) {
     if (th.t > leafAt) {                                                // from the entry down to its status bit, and the proof's siblings
       const g = clamp((th.t - leafAt) / Math.max(0.001, th.refusedAtBit ? 1 - leafAt : 0.3), 0, 1), end = mix3(th.p.pos, th.path.bit, g);
       L.add(th.p.pos, end, 0.95 * a, th.refusedAtBit ? 2.4 : 1.6, th.refusedAtBit ? 0 : 1);
-      if (!th.refusedAtBit) for (const s of th.path.sib) put(s.pos, 5, 0.85 * a, 1, 1);
+      if (!th.refusedAtBit) for (const x of th.path.sib) run(W.byId[th.p.reg], x.lo, x.hi, 0.8 * a * g, 0);   // the proof is the record's, so it is drawn in ink; blue is yours alone
     }
   }
   threads = threads.filter((th) => th.fade > 0);
@@ -271,11 +267,13 @@ function labels(dt) {
     const tag = tags.find((t) => t.p === n), on = n === sel || n === hover || n === mark;
     let pri = { you: 100, root: 90, registrar: 80, witness: 60, open: 40, epoch: 50, list: 45, head: 42, passport: 20 }[n.kind] ?? 0;
     if (n.kind === "epoch" && !n.cur) { if (!zoomed && !on) continue; pri = 8; }
-    if (n.kind === "passport" && !zoomed && !on && !tag) continue;
+    if ((n.kind === "passport" || n.kind === "head") && !zoomed && !on && !tag) continue;
+    if ((n.kind === "witness" || n.kind === "epoch") && !zoomed && !on && !tour.on) continue;   // named when you come close, point at it, or take the walk
+    if (n.kind === "open" && !on && !(mark && (mark.kind === "head" || mark.kind === "witness"))) continue;
     if (on) pri += 200; if (tag) pri += 150;
     const dim = (n.reg && W.byId[n.reg]?.dim) || n.dim;
     if (dim && !on) continue;
-    const rpx = n.labelAt ? 0 : (n.r + (n.kind === "root" ? 8 : 0)) * scaleCss / p.w;
+    const rpx = n.labelAt ? 0 : (n.r + (n.kind === "root" ? 10 : 0)) * scaleCss / p.w;
     cand.push({ n, p, pri, tag, on, rpx, text: n.kind === "you" ? "YOU ARE HERE" : n.kind === "passport" && n.off && !tag ? `${n.label} · off` : n.label });
   }
   cand.sort((a, b) => b.pri - a.pri || a.p.w - b.p.w);
@@ -283,7 +281,7 @@ function labels(dt) {
   for (const k of cand) {
     const pill = k.n.kind === "you" || k.tag; c.font = `${pill ? 600 : 400} ${pill ? 11 : 12}px ${MONO}`;
     const text = k.tag ? `${k.text} · ${k.tag.text}` : k.text, w = c.measureText(text).width + (pill ? 20 : 0), h = pill ? 22 : 16;
-    const x = k.n.kind === "you" ? clamp(k.p.x - w / 2, 8, vw - w - 8) : pill ? Math.min(k.p.x + k.rpx + 8, vw - w - 8) : k.p.x + k.rpx + 8; let y = k.n.kind === "you" ? k.p.y - k.rpx - 34 : k.p.y - h / 2;
+    const x = k.n.kind === "you" ? clamp(k.p.x - w / 2, 8, vw - w - 8) : pill ? Math.min(k.p.x + k.rpx + 8, vw - w - 8) : k.n.labelCentre ? k.p.x - w / 2 : k.p.x + k.rpx + 8; let y = k.n.kind === "you" ? k.p.y - k.rpx - 34 : k.n.labelCentre ? k.p.y + 2 : k.p.y - h / 2;
     let b = [x - 3, y - 2, w + 6, h + 4];
     const clash = () => boxes.some((o) => b[0] < o[0] + o[2] && b[0] + b[2] > o[0] && b[1] < o[1] + o[3] && b[1] + b[3] > o[1]);
     if (k.tag) for (let t = 0; t < 5 && clash(); t++) { y += h + 4; b = [x - 3, y - 2, w + 6, h + 4]; }      // verdicts stack, they never hide each other
@@ -317,7 +315,8 @@ function pick(x, y) {
   for (const h of hits) if (x >= h.b[0] && x <= h.b[0] + h.b[2] && y >= h.b[1] && y <= h.b[1] + h.b[3]) return h.n;
   for (const r of W.regs) {
     if (r.dim || !r.shown) continue; let bi = -1; bd = 7;
-    for (let i = 0; i < r.list.bit_len; i++) { const p = proj(bitAt(r, i)); if (!p.ok) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; bi = i; } }
+    for (let i = 0; i < r.list.bit_len; i++) { const b = bitAt(r, i); if ((b[0] - r.centre[0]) * (eye[0] - b[0]) + (b[1] - r.centre[1]) * (eye[1] - b[1]) + (b[2] - r.centre[2]) * (eye[2] - b[2]) < 0) continue;   // the far side cannot be pointed at
+      const p = proj(b); if (!p.ok) continue; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; bi = i; } }
     if (bi >= 0) {
       const rec = r.used.get(bi), pp = rec && W.byId[`pp:${rec.sub}`];
       return { id: `bit:${r.id}:${bi}`, kind: "bit", pos: bitAt(r, bi), r: 2.5, shown: true, flash: 0, reg: r.id, info: { k: `STATUS BIT ${bi} · ${r.id.toUpperCase()}`, t: r.bits[bi] ? `Bit ${bi}: set` : `Bit ${bi}: clear`,
@@ -336,10 +335,8 @@ cv.addEventListener("pointerdown", (e) => {
 });
 cv.addEventListener("pointermove", (e) => {
   const was = ptrs.get(e.pointerId);
-  if (was && eng.inkOn && eng.ink && !RM.matches) eng.ink.splat(e.clientX / vw, 1 - e.clientY / vh, (e.clientX - was.x) * 7, -(e.clientY - was.y) * 7, 0, 0, 0.0016);
-  if (!was) {                                                           // hovering: stir the ink a little, name what is under the pointer
-    if (e.pointerType === "mouse") { if (eng.inkOn && eng.ink && !RM.matches && (e.movementX || e.movementY)) eng.ink.splat(e.clientX / vw, 1 - e.clientY / vh, e.movementX * 5, -e.movementY * 5, 0.012, 0, 0.0012);
-      const n = pick(e.clientX, e.clientY); hover = n && n.kind !== "bit" ? n : null; cv.classList.toggle("point", !!n); }
+  if (!was) {                                                           // hovering: name what is under the pointer
+    if (e.pointerType === "mouse") { const n = pick(e.clientX, e.clientY); hover = n && n.kind !== "bit" ? n : null; cv.classList.toggle("point", !!n); }
     return;
   }
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -409,7 +406,7 @@ function select(n) { sel = n; fillSheet(n); openSheet(); poke(); if (n.kind === 
 function faceYaw(r) { const a = Math.atan2(r.side[0], r.side[2]), b = a + Math.PI; const d = (x) => Math.abs(((x - cam.yaw.x) % TAU + TAU + Math.PI) % TAU - Math.PI); return d(a) <= d(b) ? a : b; }
 function focusOn(n) {
   const r = n.reg ? W.byId[n.reg] : n.kind === "registrar" ? n : null, yaw = r ? faceYaw(r) + 0.28 : undefined;
-  flyTo(n.kind === "passport" ? mix3(n.pos, n.bit, 0.35) : n.pos, n.kind === "root" ? 520 : n.kind === "registrar" ? 820 : n.kind === "you" ? 900 : (n.kind === "passport" ? 640 : 560) * (phone() ? 1.5 : 1), { yaw, pitch: 0.3 });
+  flyTo(r ? r.centre : n.pos, n.kind === "root" ? 560 : n.kind === "you" ? 900 : r ? fit(r.ringR) : 560, { yaw: r ? 0.16 : yaw, pitch: 0.32 });   // a registrar and its whole ring, from the front
 }
 $("#sheetX").addEventListener("click", () => closeSheet());
 $("#shFocus").addEventListener("click", () => sel && focusOn(sel));
@@ -433,17 +430,17 @@ $("#shCopyBtn").addEventListener("click", async () => { try { await navigator.cl
 // ---------- the walk-through: seven stops, each a flight you can grab ----------
 const tour = { on: false, i: 0, timer: 0, stops: [] };
 function makeTour() {
-  const r0 = W.regs[0], face = Math.atan2(r0.side[0], r0.side[2]), okP = W.parts.find((n) => n.kind === "passport" && n.reg === r0.id && !n.rec.revoked), ev = W.events.findIndex((e) => e.type === "change" && e.reg === r0.id && e.on);
+  const r0 = W.regs[0], okP = W.parts.find((n) => n.kind === "passport" && n.reg === r0.id && !n.rec.revoked), ev = W.events.findIndex((e) => e.type === "change" && e.reg === r0.id && e.on);
   const offP = ev >= 0 ? W.byId[`pp:${r0.used.get(W.events[ev].idx[0])?.sub}`] : null;
   tour.stops = [
-    { t: "The root", p: "One key pair, kept offline. It signs one thing, the directory of registrars. It issues no passports and sees no traffic. This one is a test root: the real one is made at a public ceremony.", go: () => flyTo([0, 10, 0], 520, { pitch: 0.35, yaw: 0.5 }) },
-    { t: "The directory", p: `The ring is the directory, epoch ${W.CUR}: the short list of registrars the root vouches for, signed again at least every 92 days. The fainter rings inside are the epochs it replaced.`, go: () => flyTo([0, 0, 0], 1050, { pitch: 1.05, yaw: 0.3 }) },
-    { t: "A registrar", p: `${r0.id} issues passports to the agents of the companies it has checked, and it alone can switch them off. It stands on the ring because the directory names it.`, go: () => flyTo(r0.pos, 620, { pitch: 0.3, yaw: face + 0.7 }) },
-    { t: "Its log", p: `Every passport is written into the registrar's log before it counts. The ${r0.size} entries are hashed in pairs up to one signed head, so nothing can be changed or removed without the head changing, and the witness cosigns each head.`, go: () => flyTo([r0.centre[0], 110, r0.centre[2]], 640, { pitch: 0.12, yaw: face + 0.12 }) },
-    { t: "Its status list", p: `${r0.list.bit_len.toLocaleString("en")} bits, signed as one small file. Each passport owns one bit. A dark point is a passport that was switched off. Anyone can hold a copy, so checking needs nobody's permission.`, go: () => flyTo(r0.centre, 640, { pitch: 1.0, yaw: face + 0.2 }) },
-    { t: "You, the verifier", p: "You stand outside the network holding copies. The blue thread is a real check of one passport, run in this tab: its entry, up the log to the signed head, the registrar, the directory, the root, and its status bit.", go: () => { resetView(); mark = okP; if (okP) tour.timer = setTimeout(() => { if (!live()) applyStep(W.events.length, true); check(okP); }, RM.matches ? 0 : 900); } },
+    { t: "The root", p: "One key pair, kept offline. It signs one thing, the directory of registrars. It issues no passports and sees no traffic. This one is a test root: the real one is made at a public ceremony.", go: () => flyTo([0, 10, 0], 560, { pitch: 0.35, yaw: 0.5 }) },
+    { t: "The directory", p: `The orbit is the directory, epoch ${W.CUR}: the short list of registrars the root vouches for, signed again at least every 92 days. The fainter rings inside are the epochs it replaced.`, go: () => flyTo([0, 0, 0], 1350, { pitch: 1.0, yaw: 0.3 }) },
+    { t: "A registrar", p: `${r0.id} issues passports to the agents of the companies it has checked, and it alone can switch them off. It stands on the orbit because the directory names it.`, go: () => flyTo(r0.centre, fit(r0.ringR) * 1.1, { pitch: 0.3, yaw: 0.2 }) },
+    { t: "Its log", p: `Every passport is written into the registrar's log before it counts. The ring around the globe is that log: ${r0.size} entries in order, each passport a moon at its own entry. All of them are hashed into one signed head, so nothing can be changed or removed unseen, and the witness cosigns each head.`, go: () => { mark = W.byId[r0.headId]; flyTo(r0.centre, fit(r0.ringR), { pitch: 0.42, yaw: 0.1 }); } },
+    { t: "Its status list", p: `The ${r0.list.bit_len.toLocaleString("en")} dots of this globe are the registrar's status list, signed as one small file. Each passport owns one dot, counted from the top. A dark dot is a passport that was switched off. Anyone can hold a copy, so checking needs nobody's permission.`, go: () => flyTo([r0.centre[0], r0.centre[1] + r0.globeR * 0.5, r0.centre[2]], fit(r0.globeR) * 1.05, { pitch: 0.7, yaw: 0.25 }) },
+    { t: "You, the verifier", p: "You stand outside the network holding copies. The blue thread is a real check of one passport, run in this tab: its entry in the log, the registrar, the directory, the root, and its status bit. The heavy arcs are its proof: a few hashes that stand for the rest of the log.", go: () => { resetView(); mark = okP; if (okP) tour.timer = setTimeout(() => { if (!live()) applyStep(W.events.length, true); check(okP); }, RM.matches ? 0 : 900); } },
     { t: "The off switch", p: offP ? `Watch ${short(offP.rec.sub)}. Its registrar sets one bit, and from the next check on, every verifier everywhere refuses that agent, with no call to anyone. The refusal you see is this tab's own.` : "A registrar sets one bit, and every verifier refuses that passport from the next check on.", go: () => {
-      if (!offP) return; mark = offP; flyTo(mix3(offP.pos, offP.bit, 0.6), 600, { pitch: 0.5, yaw: face + 0.3 });
+      if (!offP) return; mark = offP; flyTo([r0.centre[0], r0.centre[1] + r0.globeR * 0.6, r0.centre[2]], fit(r0.ringR) * 0.9, { pitch: 0.6, yaw: 0.2 });
       applyStep(ev, true); tour.timer = setTimeout(() => { applyStep(ev + 1); tour.timer = setTimeout(() => { applyStep(W.events.length, true); offP.verdict = null; check(offP); }, RM.matches ? 0 : 1300); }, RM.matches ? 0 : 1200); } },
   ];
   const lad = $("#ladder"); tour.stops.forEach((s, i) => { const li = document.createElement("li"), b = document.createElement("button"); b.type = "button"; b.title = s.t; b.setAttribute("aria-label", `Stop ${i + 1}: ${s.t}`); b.addEventListener("click", () => tourShow(i)); li.append(b); lad.append(li); });
@@ -477,7 +474,7 @@ function makeSeg(box, opts, start, onChoose) {
   return { set };
 }
 let regSeg = null;
-function setReg(id) { for (const r of W.regs) r.dim = id !== "all" && r.id !== id; for (const r of W.regs) fillBits(r); regSeg.set(id); stats(); if (sel && sel.reg && W.byId[sel.reg].dim) closeSheet(); if (id !== "all") { const r = W.byId[id]; flyTo([r.centre[0] * 0.85, 50, r.centre[2] * 0.85], 900, { yaw: faceYaw(r) + 0.3, pitch: 0.4 }); } else resetView(); }
+function setReg(id) { for (const r of W.regs) r.dim = id !== "all" && r.id !== id; for (const r of W.regs) fillBits(r); regSeg.set(id); stats(); if (sel && sel.reg && W.byId[sel.reg].dim) closeSheet(); if (id !== "all") { const r = W.byId[id]; flyTo(r.centre, fit(r.ringR) * 1.1, { yaw: 0.2, pitch: 0.3 }); } else resetView(); }
 
 // ---------- the list: the same record as a table, checked for real ----------
 let listRun = 0;
@@ -511,10 +508,12 @@ $("#play").addEventListener("click", () => setPlaying(!playing));
 
 // ---------- tools ----------
 $("#zIn").addEventListener("click", () => zoomBy(0.72)); $("#zOut").addEventListener("click", () => zoomBy(1.38)); $("#zReset").addEventListener("click", resetView);
-$("#inkBtn").addEventListener("click", () => { eng.inkOn = !eng.inkOn; $("#inkBtn").setAttribute("aria-pressed", String(eng.inkOn)); try { localStorage.setItem("ainra-world-ink", eng.inkOn ? "on" : "off"); } catch { /* storage unavailable */ } });
-$("#aboutBtn").addEventListener("click", () => { const a = $("#about"), on = a.hidden; a.hidden = !on; $("#aboutBtn").setAttribute("aria-expanded", String(on)); });
-$("#feedToggle").addEventListener("click", () => { const c = $("#feed").classList.toggle("closed"); $("#feedToggle").textContent = c ? "Show" : "Hide"; $("#feedToggle").setAttribute("aria-expanded", String(!c)); });
-function frameOnce() { matrices(); scene(0); labels(0); eng.frame({ vp, scale: scaleCss * dpr, focus: focusDist(), dof: 0.36, fogA: cam.dist.x * 0.7, fogB: cam.dist.x * 2.1, ink: INK, signal: SIG, dpr }, sets(), 0); }
+let viewSeg = null;
+$("#aboutBtn").addEventListener("click", () => { const a = $("#about"), on = a.hidden; a.hidden = !on; $("#aboutBtn").setAttribute("aria-expanded", String(on)); if (on && viewSeg) viewSeg.set(eng.view); });   // the pill is measured once the panel is on screen
+$("#feedToggle").addEventListener("click", () => { const c = $("#feed").classList.toggle("closed"); $("#feedToggle").textContent = c ? "Show the checks" : "Hide"; $("#feedToggle").setAttribute("aria-expanded", String(!c)); if (!sel && !tour.on) resetView(); });
+const LIGHT = (() => { const v = [-0.5, 0.72, 0.48], l = Math.hypot(...v); return v.map((x) => x / l); })();   // where the light comes from: up and to the left
+const look = () => ({ vp, scale: scaleCss * dpr, focus: focusDist(), dof: 0.14, fogA: cam.dist.x * 0.72, fogB: cam.dist.x * 2.2, ink: INK, signal: SIG, dpr, eye, light: LIGHT });
+function frameOnce() { matrices(); scene(0); labels(0); eng.frame(look(), sets()); }
 $("#stillBtn").addEventListener("click", () => {                       // a still, made in the tab: nothing is uploaded
   frameOnce(); const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; const x = c.getContext("2d");
   x.fillStyle = paperCss; x.fillRect(0, 0, c.width, c.height); x.drawImage(cv, 0, 0); x.drawImage(lab, 0, 0);
@@ -540,20 +539,19 @@ async function start() {
   readTheme(); paintIcons(); swapIcon($("#playIc"), "play"); swapIcon($("#shCopyIc"), "copy");
   eng = new URLSearchParams(location.search).has("nogl") ? null : createEngine(cv);          // ?nogl shows what a browser without WebGL2 gets
   if (!eng) { toggleListFallback(); return; }
-  eng.font = MONO; let inkPref = null; try { inkPref = localStorage.getItem("ainra-world-ink"); } catch { /* storage unavailable */ }
-  eng.inkOn = inkPref !== "off" && !RM.matches; $("#inkBtn").setAttribute("aria-pressed", String(eng.inkOn));
+  eng.font = MONO;
   import("./world-mark.mjs").then((m) => m.metalMark($("#bootMetal"), $("#bootMark"), () => INK, RM)).catch(() => {});
   R = await loadRecord("net", bootStep);
   const bitsTotal = Object.values(R.lists).reduce((a, l) => a + l.list.bit_len, 0);
   boot.querySelector('li[data-s="lists"]').textContent = `${R.registry.registrars.length} signed status lists, ${bitsTotal.toLocaleString("en")} bits`; bootStep("lists", null, null, true);
   bootStep("world", "Placing every part", 88);
   W = buildWorld(R);
-  for (const r of W.regs) r.set = eng.pointSet(r.list.bit_len);
+  for (const r of W.regs) { r.set = eng.pointSet(r.list.bit_len); r.set.globe = [...r.centre, r.globeR]; }
   nodeSet = eng.pointSet(W.parts.length * 3 + 96, true); lineSet = eng.lineSet(1600);
   resize(); addEventListener("resize", () => { resize(); placeSheet(); });
   makeTrack(); makeTour();
   regSeg = makeSeg($("#regSeg"), [{ id: "all", label: "All registrars" }, ...W.regs.map((r) => ({ id: r.id, label: phone() ? `${r.id.replace("registrar-", "r-")} · ${r.recs.length}` : `${r.id} · ${r.recs.length}`, title: `${r.recs.length} passports` }))], "all", setReg);
-  makeSeg($("#viewSeg"), [{ id: 0, label: "Points" }, { id: 1, label: "Text" }, { id: 2, label: "Braille" }, { id: 3, label: "Dither" }], 0, (v) => { eng.view = v; });
+  viewSeg = makeSeg($("#viewSeg"), [{ id: 0, label: "Points" }, { id: 1, label: "Text" }, { id: 2, label: "Braille" }, { id: 3, label: "Dither" }], 0, (v) => { eng.view = v; });
   applyStep(W.events.length, true);
   order = W.parts.filter((n) => n.kind === "passport"); for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
   bootStep("world", "Ready", 100, true); setTimeout(() => boot.classList.add("done"), RM.matches ? 0 : 240);
@@ -561,18 +559,18 @@ async function start() {
   if (RM.matches) { cam.yaw.jump(h.yaw); cam.dist.jump(h.dist); } else { cam.yaw.jump(h.yaw - 1.1); cam.dist.jump(h.dist * 2.6); cam.yaw.set(1.6, 1).go(h.yaw); cam.dist.set(1.4, 1).go(h.dist); }   // the world arrives from afar
   poke(); placeSheet();
   let last = performance.now(), nextCheck = last + 2200, slow = 0, frames = 0, acc = 0;
-  const stat = (window.__world = { fps: 0, ms: 0, ink: eng.inkOn, dpr, parts: W.parts.length, events: W.events.length });
+  const stat = (window.__world = { fps: 0, ms: 0, dpr, parts: W.parts.length, events: W.events.length });
   stat.probe = () => ({ sel: sel && { id: sel.id, shown: sel.shown, at: proj(sel.pos), bit: sel.bit && proj(sel.bit) }, cam: { yaw: cam.yaw.x, pitch: cam.pitch.x, dist: cam.dist.x, t: [cam.tx.x, cam.ty.x, cam.tz.x] }, vw, vh, dpr, cw: cv.width, ch: cv.height, sheet: sheetPos.x, lift: lift.x, INK, SIG, nodes: nodeSet.count, lines: lineSet.count, view: eng.view, focus: focusDist(), eye });
   const frame = (now) => {
     const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
     if (!document.hidden) {
       frames++; acc += raw; if (frames === 50) { const ms = (acc / frames) * 1000; stat.ms = ms; stat.fps = 1000 / ms; frames = 0; acc = 0;
-        // measured, not assumed: if frames are slow the ink goes first, then the extra pixels
-        if (!FIXED && ms > 30 && ++slow >= 2) { slow = 0; if (eng.inkOn) { eng.inkOn = false; $("#inkBtn").setAttribute("aria-pressed", "false"); } else if (dprCap > 1) { dprCap = 1; resize(); } stat.ink = eng.inkOn; stat.dpr = dprCap; } else if (ms <= 30) slow = 0; }
+        // measured, not assumed: if frames are slow, the extra pixels go
+        if (!FIXED && ms > 30 && ++slow >= 2) { slow = 0; if (dprCap > 1) { dprCap = 1; resize(); } stat.dpr = dprCap; } else if (ms <= 30) slow = 0; }
       if (playing) { playT += dt; if (playT > (RM.matches ? 0.9 : 0.5)) { playT = 0; applyStep(step + 1); if (live()) setPlaying(false); } }
       if (now >= nextCheck && live() && !tour.on && !listOpen && !playing && order.length) { check(order[cursor++ % order.length]); nextCheck = now + (RM.matches ? 3000 : 1700); }
       physics(dt); lift.step(dt); capShift.step(dt); sheetPos.step(dt); placeSheet(); matrices(); scene(dt); labels(dt);
-      eng.frame({ vp, scale: scaleCss * dpr, focus: focusDist(), dof: 0.36, fogA: cam.dist.x * 0.7, fogB: cam.dist.x * 2.1, ink: INK, signal: SIG, dpr }, sets(), dt);
+      eng.frame(look(), sets());
     }
     requestAnimationFrame(frame);
   };

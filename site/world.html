@@ -66,24 +66,25 @@
 
 <section class="about" id="about" aria-label="About this world" hidden><div class="about__in">
   <h2>The test network, as its record states&nbsp;it</h2>
-  <p><b>Every part comes from the record.</b> The root, its directory, the registrars and every passport are the ones the test network published. Each flat spiral is a registrar's signed status list, one point per bit, 4,096 each: bit 0 at the centre. A dark point is a passport its registrar switched off.</p>
-  <p><b>The tree above each list is that registrar's log,</b> in the shape a log of that size has. Every pair of entries is hashed into the node above it, up to one signed head. A passport's proof is its own short path up that tree.</p>
-  <p><b>You are the verifier.</b> This tab holds the directory, checked against the root's two keys. Each blue thread is a real check of one passport, run here by the verifier the site ships, along that passport's own proof. It contacts nobody while it checks.</p>
+  <p><b>Every part comes from the record.</b> The root, its directory, the registrars and every passport are the ones the test network published. Each globe of dots is a registrar's signed status list, one dot per bit, 4,096 each, counted from the top. A dark dot is a passport its registrar switched off.</p>
+  <p><b>The ring around each globe is that registrar's log,</b> its entries in order. Each passport is a moon at its own entry; a hollow moon is switched off. All entries are hashed into one signed head, and a passport's proof is a few hashes that stand for the rest of the log.</p>
+  <p><b>You are the verifier.</b> This tab holds the directory, checked against the root's two keys. Each blue thread is a real check of one passport, run here by the verifier the site ships. It contacts nobody while it checks.</p>
   <p><b>The timeline replays the record in its own order,</b> with the dates the record carries. Until 23 November 2026 the test network kept a fixed test date, so its early entries share two days in April.</p>
-  <p><b>Drawn by us:</b> where things sit in space, the slow turn, and the ink, which marks a check or a <span class="nw">switch-off</span> and then fades.</p>
+  <p><b>Drawn by us:</b> where things sit in space, the light, and the slow turn.</p>
   <p class="about__links"><a href="https://github.com/AINRA-organization/ainra/blob/main/kits/witness/README.md">Run a witness</a><a href="https://github.com/AINRA-organization/ainra/blob/main/kits/registrar/README.md">Become a registrar</a><a href="net/registry.json">The record itself</a></p>
+  <div class="about__view"><span>Draw it as</span><div class="seg seg--view" id="viewSeg" role="group" aria-label="How the world is drawn"></div><button class="btn" id="stillBtn" type="button">Save a still</button></div>
   <p class="about__keys">Drag to turn · scroll or pinch to zoom · click any part · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>+</kbd><kbd>−</kbd> zoom · <kbd>0</kbd> reset · <kbd>Space</kbd> replay · <kbd>L</kbd> list</p>
 </div></section>
 
-<aside class="feed" id="feed" aria-label="Checks in this tab">
+<aside class="feed closed" id="feed" aria-label="Checks in this tab">
   <dl class="stats" id="stats">
     <div><dt>In service</dt><dd id="stIn">–</dd></div>
     <div><dt>Switched off</dt><dd id="stOff">–</dd></div>
     <div><dt>One check</dt><dd id="stMs">–</dd></div>
   </dl>
-  <div class="feed__h"><span>Checks in this tab</span><button class="link" id="feedToggle" type="button" aria-expanded="true">Hide</button></div>
+  <div class="feed__h"><span>Checks in this tab</span><button class="link" id="feedToggle" type="button" aria-expanded="false">Show the checks</button></div>
   <ol id="checks" aria-live="off"></ol>
-  <p class="feed__note" id="feedNote">Starting the verifier…</p>
+  <p class="feed__note" id="feedNote"></p>
 </aside>
 
 <section class="list" id="list" aria-label="Every passport, as a table" hidden>
@@ -129,14 +130,9 @@
 </div>
 
 <div class="tools" id="tools">
-  <div class="seg seg--view" id="viewSeg" role="group" aria-label="How the world is drawn"></div>
-  <button class="btn" id="inkBtn" type="button" aria-pressed="true">Ink</button>
-  <button class="btn" id="stillBtn" type="button">Save a still</button>
-  <span class="tools__z">
-    <button class="btn btn--icon" id="zIn" type="button" aria-label="Zoom in" data-icon="plus"></button>
-    <button class="btn btn--icon" id="zOut" type="button" aria-label="Zoom out" data-icon="minus"></button>
-    <button class="btn btn--icon" id="zReset" type="button" aria-label="Reset the view" data-icon="reset"></button>
-  </span>
+  <button class="btn btn--icon" id="zIn" type="button" aria-label="Zoom in" data-icon="plus"></button>
+  <button class="btn btn--icon" id="zOut" type="button" aria-label="Zoom out" data-icon="minus"></button>
+  <button class="btn btn--icon" id="zReset" type="button" aria-label="Reset the view" data-icon="reset"></button>
 </div>
 
 <footer class="time" id="time">
