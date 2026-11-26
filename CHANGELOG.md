@@ -10,6 +10,16 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
 
 ## [Unreleased]
 
+### Added — AINRA World, a page that draws the test network from its record (site)
+
+- `site/world.html`: the root, the directory's orbit, each registrar as a globe of dots (its signed status list, one
+  dot per bit) with its log as a ring of entries around it, the witness, and every passport. Each check runs in the
+  tab with the verifier the site ships; its proof is drawn as the runs of entries its hashes stand for.
+- It has a replay with the record's dates, a table of every passport checked for real (also what a browser without
+  WebGL2 gets), a seven-stop walk-through that ends on a real switch-off, and three character views.
+- No library is added: `site/js/world-gl.mjs` is the page's own WebGL2 drawing code. Reduced motion stops all travel.
+- What is drawn rather than read from the record (positions, light, motion) is named on the page.
+
 ### Changed — the repository's home is the AINRA-organization GitHub organisation (D-126)
 
 - The repositories move from a personal account to the `AINRA-organization` organisation. The old URLs redirect.

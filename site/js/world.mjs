@@ -77,7 +77,7 @@ let R = null, W = null, eng = null, nodeSet = null, lineSet = null;
 let vw = 0, vh = 0, dpr = 1, dprCap = 2, vp = new Array(16).fill(0), eye = [0, 0, 1], scaleCss = 1;
 let step = 0, playing = false, playT = 0, seenEpoch = 0;
 let sel = null, hover = null, mark = null, tags = [], threads = [], hits = [];   // mark: the part a walk-through stop points at
-const times = []; let nValid = 0, nRefused = 0, order = [], cursor = 0, idleAt = 0, listOpen = false;
+const times = []; let nValid = 0, nRefused = 0, order = [], cursor = 0, listOpen = false;
 const live = () => step === W.events.length;
 
 // ---------- camera: an orbit around a target, every part a spring ----------
@@ -93,13 +93,12 @@ function flyTo(t, dist, { yaw, pitch } = {}) {                                  
   cam.tx.go(t[0]); cam.ty.go(t[1]); cam.tz.go(t[2]); cam.dist.go(clamp(dist, DIST[0], DIST[1])); cam.vyaw = cam.vpitch = 0;
   if (pitch !== undefined) cam.pitch.go(pitch);
   if (yaw !== undefined) { let d = (yaw - cam.yaw.x) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; cam.yaw.go(cam.yaw.x + d); }
-  poke();
+ 
 }
 // How far back the camera must be for a ball of this radius to fit the narrower side of the screen.
 const fit = (radius) => radius * 1.3 / (Math.tan(FOV / 2) * Math.min(1, (vw - feedW()) / vh));
 const resetView = () => { const h = home(); flyTo(h.t, h.dist, { yaw: h.yaw, pitch: h.pitch }); };
-const zoomBy = (f) => { cam.dist.set(0.35, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * f, DIST[0], DIST[1])); poke(); };
-const poke = () => { idleAt = performance.now() + 7000; };
+const zoomBy = (f) => { cam.dist.set(0.35, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * f, DIST[0], DIST[1])); };
 function matrices() {
   const cp = Math.cos(cam.pitch.x), t = [cam.tx.x, cam.ty.x, cam.tz.x];
   eye = [t[0] + cam.dist.x * cp * Math.sin(cam.yaw.x), t[1] + cam.dist.x * Math.sin(cam.pitch.x), t[2] + cam.dist.x * cp * Math.cos(cam.yaw.x)];
@@ -363,7 +362,7 @@ function pick(x, y) {
 
 const ptrs = new Map(); let drag = null, pinch = null, moved = 0, hist = [];
 cv.addEventListener("pointerdown", (e) => {
-  cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); poke();
+  cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   for (const s of [cam.yaw, cam.pitch, cam.dist]) { s.on = false; s.v = 0; } cam.vyaw = cam.vpitch = 0;       // grab it mid-flight
   if (ptrs.size === 1) { drag = { x: e.clientX, y: e.clientY, yaw: cam.yaw.x, pitch: cam.pitch.x }; moved = 0; hist = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }]; cv.classList.add("grabbing"); }
   else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: cam.dist.x }; drag = null; }
@@ -375,13 +374,13 @@ cv.addEventListener("pointermove", (e) => {
     return;
   }
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pinch && ptrs.size === 2) { const [a, b] = [...ptrs.values()]; let d = pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)); if (d < DIST[0]) d = DIST[0] - rubber(DIST[0] - d, 300); if (d > DIST[1]) d = DIST[1] + rubber(d - DIST[1], 600); cam.dist.jump(d); poke(); return; }
+  if (pinch && ptrs.size === 2) { const [a, b] = [...ptrs.values()]; let d = pinch.dist * pinch.d / Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)); if (d < DIST[0]) d = DIST[0] - rubber(DIST[0] - d, 300); if (d > DIST[1]) d = DIST[1] + rubber(d - DIST[1], 600); cam.dist.jump(d); return; }
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; moved = Math.max(moved, Math.hypot(dx, dy));
   if (moved < 6) return;                                                // a small threshold before a press becomes a drag
   cam.yaw.jump(drag.yaw - dx * 0.0052); let p = drag.pitch + dy * 0.0042;
   if (p < PITCH[0]) p = PITCH[0] - rubber(PITCH[0] - p, 0.5); if (p > PITCH[1]) p = PITCH[1] + rubber(p - PITCH[1], 0.5);
-  cam.pitch.jump(p); hist.push({ t: e.timeStamp, x: e.clientX, y: e.clientY }); if (hist.length > 6) hist.shift(); poke();
+  cam.pitch.jump(p); hist.push({ t: e.timeStamp, x: e.clientX, y: e.clientY }); if (hist.length > 6) hist.shift();
 });
 function release(e) {
   if (!ptrs.has(e.pointerId)) return; ptrs.delete(e.pointerId); cv.classList.remove("grabbing");
@@ -397,7 +396,7 @@ function release(e) {
 }
 cv.addEventListener("pointerup", release); cv.addEventListener("pointercancel", release);
 cv.addEventListener("pointerleave", () => { hover = null; cv.classList.remove("point"); });
-cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist.set(0.3, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * Math.exp(e.deltaY * 0.0012), DIST[0], DIST[1])); poke(); }, { passive: false });
+cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist.set(0.3, 1).go(clamp((cam.dist.on ? cam.dist.to : cam.dist.x) * Math.exp(e.deltaY * 0.0012), DIST[0], DIST[1])); }, { passive: false });
 function physics(dt) {
   if (!drag) {
     if (cam.vyaw || cam.vpitch) {                                       // momentum, decaying like a scroll
@@ -436,7 +435,7 @@ function fillSheet(n, keepAction) {
   $("#shProof").hidden = !pp; $("#shCopy").hidden = !pp; act.hidden = !pp; $("#shFocus").hidden = n.kind === "bit";
   if (pp && !keepAction) setAct("idle");
 }
-function select(n) { sel = n; fillSheet(n); openSheet(); poke(); if (n.kind === "passport" && live() && !n.verdict) check(n); }
+function select(n) { sel = n; fillSheet(n); openSheet(); if (n.kind === "passport" && live() && !n.verdict) check(n); }
 function focusOn(n) {
   const r = n.reg ? W.byId[n.reg] : n.kind === "registrar" ? n : null;
   flyTo(r ? r.centre : n.pos, n.kind === "root" ? 560 : n.kind === "you" ? 900 : r ? fit(r.ringR) : 560, { yaw: r ? 0.16 : undefined, pitch: 0.32 });   // a registrar and its whole ring, from the front
@@ -557,8 +556,8 @@ addEventListener("keydown", (e) => {
   if (e.target.closest?.("input,textarea")) return;
   if (e.key === "Escape") { if (!$("#about").hidden) $("#aboutBtn").click(); else if (listOpen) toggleList(false); else if (sel) closeSheet(); else if (tour.on) tourEnd(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey || listOpen) return;
-  if (e.key === "ArrowLeft") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) + 0.3); poke(); } else if (e.key === "ArrowRight") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) - 0.3); poke(); }
-  else if (e.key === "ArrowUp") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) + 0.15, ...PITCH)); poke(); } else if (e.key === "ArrowDown") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) - 0.15, ...PITCH)); poke(); }
+  if (e.key === "ArrowLeft") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) + 0.3); } else if (e.key === "ArrowRight") { cam.yaw.set(0.35, 1).go((cam.yaw.on ? cam.yaw.to : cam.yaw.x) - 0.3); }
+  else if (e.key === "ArrowUp") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) + 0.15, ...PITCH)); } else if (e.key === "ArrowDown") { cam.pitch.set(0.35, 1).go(clamp((cam.pitch.on ? cam.pitch.to : cam.pitch.x) - 0.15, ...PITCH)); }
   else if (e.key === "+" || e.key === "=") zoomBy(0.72); else if (e.key === "-" || e.key === "_") zoomBy(1.38); else if (e.key === "0") resetView();
   else if (e.key === " " && e.target === document.body) { e.preventDefault(); setPlaying(!playing); } else if (e.key === "l" || e.key === "L") toggleList();
 });
@@ -594,9 +593,10 @@ async function start() {
   bootStep("world", "Ready", 100, true); setTimeout(() => boot.classList.add("done"), RM.matches ? 0 : 240);
   const h = home(); cam.tx.jump(h.t[0]); cam.ty.jump(h.t[1]); cam.tz.jump(h.t[2]); cam.pitch.jump(h.pitch);
   if (RM.matches) { cam.yaw.jump(h.yaw); cam.dist.jump(h.dist); } else { cam.yaw.jump(h.yaw - 1.1); cam.dist.jump(h.dist * 2.6); cam.yaw.set(1.6, 1).go(h.yaw); cam.dist.set(1.4, 1).go(h.dist); }   // the world arrives from afar
-  poke(); placeSheet();
+  placeSheet();
   let last = performance.now(), nextCheck = last + 2200, slow = 0, frames = 0, acc = 0;
   const stat = (window.__world = { fps: 0, ms: 0, dpr, parts: W.parts.length, events: W.events.length });
+  // For measuring and for tests only: where the chosen part and the camera are. The page itself never reads it.
   stat.probe = () => ({ sel: sel && { id: sel.id, shown: sel.shown, at: proj(sel.pos), bit: sel.bit && proj(sel.bit) }, cam: { yaw: cam.yaw.x, pitch: cam.pitch.x, dist: cam.dist.x, t: [cam.tx.x, cam.ty.x, cam.tz.x] }, vw, vh, dpr, cw: cv.width, ch: cv.height, sheet: sheetPos.x, lift: lift.x, INK, SIG, nodes: nodeSet.count, lines: lineSet.count, view: eng.view, focus: focusDist(), eye });
   const frame = (now) => {
     const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
