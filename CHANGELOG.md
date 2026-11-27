@@ -25,6 +25,19 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
   900 px wide the registrar filter steps aside for the walk, as it did on a phone, and a registrar chosen in the
   filter is set back to all when the walk starts. Ending the walk during a replay stops the replay.
 
+### Changed — the home page's way in to AINRA World is alive (site)
+
+- The round window pinned on the home page showed a still picture under its name. It now holds a small drawing in
+  World's own vocabulary (`site/js/world-dot.mjs`): a globe of dots turning, a ring of entries circling it, and the
+  reader's point checking an entry now and then. It is a drawing, not the record: no number is read from it.
+- Its name moved from the middle of the window to a tab at its foot, so the picture is not covered.
+- While the page is scrolled fast the window steps out of the way; it returns when the reader slows down (one
+  wheel notch or an arrow-key press does not count as fast). While the Details panel is open in the same corner, the
+  window stands beside it and no longer on its links. Keyboard focus always shows it. On a phone it still waits
+  until the hero is scrolled past.
+- It runs on the page's one motion loop: about half a millisecond a frame, one still frame with motion off, asleep
+  while the tab is hidden. Without scripts the still picture remains.
+
 ### Docs — the landscape, re-checked 27 November 2026
 
 - `docs/LANDSCAPE.md` has a section for the weekly pass of 27 November 2026, each item read at its own source that
