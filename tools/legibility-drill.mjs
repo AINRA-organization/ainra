@@ -157,7 +157,10 @@ else console.log(`  ok    ${caughtUnlogged}/${notLogged.length} not-logged vecto
 }
 
 mkdirSync(join(ROOT, "docs/drills"), { recursive: true });
-writeFileSync(join(ROOT, "docs/drills/FORMAT-LEGIBILITY.md"),
+// The report carries the time of the run. A run that finds exactly what the last one found keeps the report as it
+// is, time included, so that running the drill does not change a file whose findings have not changed.
+const REPORT = join(ROOT, "docs/drills/FORMAT-LEGIBILITY.md"), RUN_LINE = /^\*\*Run\.\*\* \S+ · /m;
+const report =
 `<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Drill — can the format be recovered from paper?
 
@@ -190,7 +193,9 @@ check only one of the two signatures has performed **partial verification** and 
 
 Everything else is fully recoverable: structure, canonical JSON, the validity window, the RFC 6962 leaf and
 inclusion proof, and the revocation bit including its fail-closed out-of-range rule.
-`);
+`;
+let before = ""; try { before = readFileSync(REPORT, "utf8"); } catch { /* first run: no report yet */ }
+if (before.replace(RUN_LINE, "") !== report.replace(RUN_LINE, "")) writeFileSync(REPORT, report);
 
 console.log(`\nreport → docs/drills/FORMAT-LEGIBILITY.md`);
 if (bad) { console.error(`LEGIBILITY-DRILL FAILED — ${bad} disagreement(s) between the primer and the corpus.`); process.exit(1); }

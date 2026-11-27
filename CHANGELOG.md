@@ -19,6 +19,25 @@ We **publicly own fixed security bugs** — hiding them would be the opposite of
   WebGL2 gets), a seven-stop walk-through that ends on a real switch-off, and three character views.
 - No library is added: `site/js/world-gl.mjs` is the page's own WebGL2 drawing code. Reduced motion stops all travel.
 - What is drawn rather than read from the record (positions, light, motion) is named on the page.
+- The walk-through's fifth and seventh stops aim at the globe, so the whole globe and the whole ring of entries
+  stand inside the free part of the screen (measured from 320x568 to 1920x1080, low windows such as 1000x530
+  included). On a wide screen each stop is now fitted and centred between the top bar and the timeline. Up to
+  900 px wide the registrar filter steps aside for the walk, as it did on a phone, and a registrar chosen in the
+  filter is set back to all when the walk starts. Ending the walk during a replay stops the replay.
+
+### Docs — the landscape, re-checked 27 November 2026
+
+- `docs/LANDSCAPE.md` has a section for the weekly pass of 27 November 2026, each item read at its own source that
+  day: the Agent Name Service's log measured again, five Internet-Drafts on revocation and delegation, one identity
+  provider's beta for personal agents, and four entries not in the file before (the OpenID Foundation's Agent Auth
+  working group, ARIA at aria.bar, the UK Financial Conduct Authority's page on agentic AI, and one vendor's index
+  of its own agents). Not a sweep: the counts stay the August floor.
+
+### Changed — two drill reports no longer change when nothing was found to have changed
+
+- `docs/drills/STALENESS-DRILL.md` is regenerated from the record published on 23 November 2026.
+- `tools/legibility-drill.mjs` keeps its report, time of run included, when a run finds exactly what the last one
+  found. Before, every run rewrote the time and left the working tree changed.
 
 ### Changed — the repository's home is the AINRA-organization GitHub organisation (D-126)
 

@@ -700,6 +700,60 @@ counts above stay the August floor, and items not named here were not re-read.
   List (draft-21) is still in the RFC Editor queue, "In Progress (Second Edit)" since 18 November 2026: an RFC to be,
   not yet an RFC.
 
+## Re-checked 27 November 2026 (the weekly pass)
+
+A re-read at each party's own source on 27 November 2026, with items dated since the last pass. Not a sweep: the
+counts above stay the August floor, and items not named here were not re-read. Of the 20 November entries, only the
+Agent Name Service and the Token Status List were re-read.
+
+- **Agent Name Service, measured again.** The production checkpoint at 16:04 UTC covered 464,751 entries; both of its
+  signatures verify under the log's own key, with no outside witness. The list of known registries (an open pull
+  request when read on 20 November) was merged on 21 November: it names one registry, GoDaddy, and says a listing
+  "is not an endorsement, it does not make the registry trusted, and no entry is a default". The status token was
+  not re-read.
+  <https://transparency.ans.godaddy.com/v1/log/checkpoint>
+  <https://github.com/agentnameservice/ans-spec/tree/main/registries>
+- **OpenID Foundation, Agent Auth (AAuth) Working Group**, not in this file before. Announced on 24 November 2026, its
+  charter "approved by the Specifications Council". The scope includes "Discovery and trust. Metadata, key discovery,
+  and binding keys and metadata to entities" and "token expiry and revocation"; it names no registry of agents and no
+  log. The first meeting, on 30 November, is to decide on the scope, an editor and six drafts. The first,
+  `draft-hardt-oauth-aauth-protocol-11`, says of revocation endpoints: "A server without one honors a revoked token
+  until its exp" (§11.12). <https://openid.net/announcing-the-agent-auth-aauth-working-group/>
+  <https://openid.net/wg/aauth/> <https://github.com/openid/aauth/blob/main/charter.md>
+- **Internet-Drafts on revocation and delegation, dated 20 to 26 November** (not RFCs; only the parts cited were read;
+  each is on datatracker.ietf.org under its name). `draft-ietf-agentproto-usecases-requirements-00` is a working-group
+  document ("WG Document") of the IETF agentproto group: "The protocol is required to support signaling that a
+  presented credential has been revoked or is otherwise invalid" (CMN-9). Individual drafts:
+  `draft-cea-list-vaultys-oauth-agent-deleg-reqs-gaps-00`, "Current specifications do not define cascading revocation"
+  (§3.3); `draft-mcguinness-oauth-actor-profile-02`, "Token revocation ([RFC7009]) does not by itself revoke a
+  delegation relationship" (§13.11); `draft-chen-oauth-agent-intent-token-02`, "Authorization Servers SHOULD support
+  [RFC7009] Token Revocation for Intent Tokens and publish revocation state via OAuth Status Lists
+  [I-D.ietf-oauth-status-list] when external PDPs are deployed" (§5.5);
+  `draft-uppalapati-wimse-pq-agent-identity-02`, a "Publicly witnessed hash commitment" toward which "Witness
+  cosignatures under classical algorithms do not count".
+- **Okta, Auth for Personal Agents** (press release, 23 November 2026), "a new solution from Auth0" for the Personal
+  Agent Protocol: consumers have "the ability to easily revoke that access at any time". It is a beta ("the Auth for
+  Personal Agents Beta Program"); the release names no general-availability date, key type or status mechanism.
+  <https://www.okta.com/newsroom/press-releases/okta-introduces-auth-for-personal-agents-to-secure-agentic-commerce-transactions/>
+- **ARIA** (aria.bar, "Agent Registry for Identity & Authorization"; not the UK research agency above), not in this
+  file before. Credentials at four levels, with revocation in a W3C Bitstring Status List "valid 24 hours and
+  re-signed hourly". Steward: TrustLayer Foundation A.C. (TLF), "Constituted March 20, 2026 as a Mexican Asociación
+  Civil"; a separate company operates the registry. Its own pages say today: the running issuer "is a demonstration:
+  its credentials are not a production guarantee"; "TLF root distribution" is "[PLANNED]"; the Technical Steering
+  Committee is "COMING Q4 2026"; "Internet-Draft in preparation for the WIMSE Working Group. Nothing submitted yet."
+  Its public routes are read-only ("there is no write endpoint on this host"). A "Trust Ledger" is "modeled on
+  Certificate Transparency (RFC 9162)"; no route for it and no witness were found on the pages read.
+  <https://aria.bar/developers> <https://aria.bar/governance> <https://aria.bar/spec>
+- **UK Financial Conduct Authority (FCA), "Our approach to Agentic AI"** ("Last updated: 24/11/2026"), not in this
+  file before. When customers use AI agents to deal with them, regulated firms should consider "how you establish that
+  you are dealing with an agent, what consents are in place, what an AI agent is allowed to do". The page names no
+  standard, registry or method for this. <https://www.fca.org.uk/firms/innovation/ai-approach/agentic-ai>
+- **Trulioo, Know Your Agent (KYA)**, not in this file before. Its index of its own agents (`"updated": "2026-11-23"`)
+  lists five and states: "Witnessing is self-cosigned, without independent witness quorum or split-view detection."
+  The agents' cards and the issuer's key set were not opened. <https://agents.trulioo.com/.well-known/agents.json>
+- **Citation, unchanged.** The OAuth Token Status List (draft-21) is still in the RFC Editor queue, "In Progress
+  (Second Edit)" since 18 November 2026: an RFC to be, not yet an RFC.
+
 ## Corrections applied before publishing
 
 An adversarial pass re-checked every claim against primary sources. Claims that did not survive were removed, not
